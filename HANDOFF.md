@@ -8,7 +8,7 @@ _Last updated: 2026-08-20. Read this first when resuming; it is the single entry
 deterministic scanners **and** agentic LLM CLIs in parallel against an isolated copy of a repo,
 normalizes their disparate output into one finding model, clusters by root cause, computes
 category-aware cross-vendor corroboration, optionally cross-validates each finding with an
-adversarial LLM panel, and emits spec-valid SARIF + a run manifest with CI exit codes.
+adversarial LLM panel, and emits spec-valid SARIF + a **markdown executive summary** + a run manifest with CI exit codes.
 
 **It runs today.** From the repo root:
 
@@ -16,7 +16,8 @@ adversarial LLM panel, and emits spec-valid SARIF + a run manifest with CI exit 
 python3 -m security_council.cli doctor
 python3 -m security_council.cli scan tests/fixtures/seedrepo --arms claude,semgrep,gitleaks,osv-scanner
 python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --validate-max 2
-python3 -m pytest tests/ -q        # 104 tests, ~0.7s
+python3 -m security_council.cli report <run_dir> --format md      # regenerate summary.md
+python3 -m pytest tests/ -q        # 119 tests, ~0.7s
 ```
 
 Proven live: the claude arm found the cross-file **IDOR (CWE-639)** that deterministic scanners
@@ -45,11 +46,11 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-11 commits, 3,018 LOC, **104 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
+12 commits, ~3,515 LOC (package), **119 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
-  → [optional] cross-vendor validation → merged+raw SARIF + findings.json + manifest.json → exit code
+  → [optional] cross-vendor validation → merged+raw SARIF + findings.json + summary.md + manifest.json → exit code
 ```
 
 | Layer | Module(s) | State |
@@ -58,6 +59,7 @@ isolate(copy) → parallel arms → normalize → cluster(root-cause) → catego
 | **Fingerprints + clustering** | `fingerprint.py` (line-drift-stable), `cluster.py` (union-find, 4 tiers) | done |
 | **Normalization** | `normalize/{paths,snippets,cwe,cwe_table,severity,base,coverage}.py`, `normalize/sources/{sarif_generic,agent_envelope}.py`, `normalize/registry.py` | done |
 | **SARIF export** | `export/sarif.py` (merged+raw, lossless round-trip, validated vs official 2.1.0 schema) | done |
+| **Markdown exec summary** | `export/markdown.py` (`summary.md`: gate, at-a-glance, method & model attestation incl. D8 substitution, register, details, demoted-not-hidden appendix; one hardened escaping boundary for all LLM/repo-derived text) | done |
 | **Scanner arms** | `arms/scanner.py` (semgrep/gitleaks/osv via docker or local), `proc.py` | done |
 | **LLM-CLI arms** | `arms/llm_cli.py` (claude/codex/agy house-prompt), `arms/registry.py` | done |
 | **Isolation** | `workspace.py` (scratch copy; arms/validator write there, discarded) | done |
@@ -92,7 +94,8 @@ ruff check security_council/ tests/                       # lint
 python3 -m security_council.cli doctor                    # which arms are available
 python3 -m security_council.cli scan <path> [--arms a,b] [--validate] [--fail-on-severity high]
 python3 -m security_council.cli scan <path> --inplace     # skip the isolated copy (faster on huge repos)
-python3 -m security_council.cli report <run_dir>          # summarize a prior run
+python3 -m security_council.cli report <run_dir>          # summarize a prior run (json)
+python3 -m security_council.cli report <run_dir> --format md [--detail-limit N]   # regenerate summary.md
 ```
 
 Arms: scanners `semgrep`, `gitleaks`, `osv-scanner` (docker or local binary); LLM `claude`, `codex`, `agy`.
@@ -103,7 +106,7 @@ Default arms if `--arms` omitted: `semgrep,gitleaks,osv-scanner` (see `config.py
 
 Run outputs land in `<target>/.security-council/runs/<id>/` (or `--out DIR`): `merged.sarif`,
 `raw.sarif`, `findings.json`, `manifest.json`, `raw/<arm>/…`. All `.security-council/` and `.spikes/`
-paths are gitignored.
+paths are gitignored. `summary.md` is the human-readable report (also regenerable from `findings.json`+`manifest.json`).
 
 ## 6. Environment specifics / gotchas (READ before running live)
 
@@ -120,26 +123,26 @@ paths are gitignored.
 2. **Validator verdict fidelity**: parses an explicit `VERDICT:` line from the transcript (S2 pattern). Works, but a redacted-secret finding validates to `needs_human` (no snippet to cite) — safe but blunt.
 3. **claude-security / codex-security dedicated arms not built** (only the generic house-prompt arm). They produce more/better findings and their own SARIF; both proven headless in M0. Now safe to add (isolation done).
 4. **No `score.py`/`policy.py`** → v1 sets `disposition.state` but **never auto-suppresses** (lifecycle stays `open`; refuted findings render as SARIF `suppressions[underReview]`). The calibrated confidence function, shadow mode, decision store, and OpenVEX suppression are deferred — safe, because nothing is hidden yet.
-5. **Reports:** only SARIF + JSON + manifest. Missing: `export/markdown.py` (exec summary), OpenVEX, OSCAL AR/POA&M, **eMASS static-code-scans** (DoD, CWE-keyed — high value/low effort), CKLB (ASD STIG V6R4), SBOM.
+5. **Reports:** SARIF + JSON + manifest + `summary.md`. Missing: OpenVEX, OSCAL AR/POA&M, **eMASS static-code-scans** (DoD, CWE-keyed — high value/low effort), CKLB (ASD STIG V6R4), SBOM, CSV, HTML/PDF.
 6. **No MCP server yet** (`mcp_server.py`), no Azure DevOps template (`ci/azure_devops.py`), no GitHub Action.
 7. **No Red-tier / PoC** (deferred by design; needs the authorization block + sandbox).
 8. **Baseline/delta, decision store, `outcome mark` feedback loop** not built.
 9. **gitleaks/osv can't path-exclude via CLI** — isolation (scratch copy excluding runtime dirs) is what keeps scans clean; don't remove it.
+10. **`coverage.CATEGORY_POLICY` is keyed by arm name** (`POLICY_ALIASES` maps `claude`/`codex` → `house`). A new arm without an entry/alias is `unknown` for every family → never eligible → its findings mislabel as singleton/uncovered. Add a policy row when adding an arm.
 
 ## 8. Recommended next steps (in rough priority)
 
-1. **`export/markdown.py`** — the human-readable executive summary; completes the M1 "scan → validated findings → readable report" story. Pure/fast, no external deps.
-2. **Dedicated `arms/claude_security.py` + `arms/codex_security.py`** — the heavy agentic scanners (their own SARIF), now safe with isolation. Biggest finding-quality boost.
-3. **`score.py` + `policy.py` + decision store + shadow mode** — the calibrated confidence + suppression machinery (the `true_positive_suppression_rate` CI gate, crypto carve-out already structural in the model).
-4. **Gov/DoD exporters** — eMASS static-code-scans first (CWE-keyed, no STIG mapping), then OpenVEX, OSCAL, CKLB.
-5. **`mcp_server.py`** (copy llm-council's `_serve` pattern, root env `SECURITY_COUNCIL_MCP_ROOT`) + **Azure DevOps template**.
-6. **Eval harness** (`eval/metrics.py` + seeded corpus): restore llm-council's deleted `eval/metrics.py` (`git -C ../llm-council show ce8acd1^:llm_council/eval/metrics.py`); wire `true_positive_suppression_rate ≤ 5%` / crypto `0%` as CI gates.
+1. **Dedicated `arms/claude_security.py` + `arms/codex_security.py`** — the heavy agentic scanners (their own SARIF), now safe with isolation. Biggest finding-quality boost.
+2. **`score.py` + `policy.py` + decision store + shadow mode** — the calibrated confidence + suppression machinery (the `true_positive_suppression_rate` CI gate, crypto carve-out already structural in the model).
+3. **Gov/DoD exporters** — eMASS static-code-scans first (CWE-keyed, no STIG mapping), then OpenVEX, OSCAL, CKLB.
+4. **`mcp_server.py`** (copy llm-council's `_serve` pattern, root env `SECURITY_COUNCIL_MCP_ROOT`) + **Azure DevOps template**.
+5. **Eval harness** (`eval/metrics.py` + seeded corpus): restore llm-council's deleted `eval/metrics.py` (`git -C ../llm-council show ce8acd1^:llm_council/eval/metrics.py`); wire `true_positive_suppression_rate ≤ 5%` / crypto `0%` as CI gates.
 
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 104 green).
-3. `git log --oneline` (expect to be at `bbbaeae` LLM-CLI arms or later).
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 119 green).
+3. `git log --oneline` (expect to be at `ce68b71` export/markdown.py or later).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
