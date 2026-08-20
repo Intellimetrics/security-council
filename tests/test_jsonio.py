@@ -21,3 +21,24 @@ def test_finding_to_dict_roundtrips_through_json():
     assert json.loads(jsonio.dumps(d)) == d
     assert d["id"] == f.id
     assert d["taxonomy"]["cwe_family"] == "crypto"
+
+
+def test_finding_from_dict_roundtrips():
+    from security_council import jsonio as j
+    from tests.test_model import valid_finding
+    f = valid_finding()
+    rebuilt = j.finding_from_dict(j.to_dict(f))
+    assert j.dumps(rebuilt) == j.dumps(f)
+    assert rebuilt.fingerprints.root_cause == f.fingerprints.root_cause
+    assert rebuilt.taxonomy.cwe_family == "crypto"
+
+
+def test_finding_from_dict_rejects_invalid():
+    import pytest
+    from security_council import jsonio as j
+    from security_council.model import FindingInvariantError
+    from tests.test_model import valid_finding
+    d = j.to_dict(valid_finding())
+    d["id"] = "tampered"
+    with pytest.raises(FindingInvariantError):
+        j.finding_from_dict(d)
