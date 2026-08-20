@@ -37,6 +37,7 @@ def cmd_scan(args) -> int:
         return EXIT_USAGE
     run = run_scan(target, _build_arms(names), config,
                    out_dir=Path(args.out) if args.out else None,
+                   isolate=not args.inplace,
                    validate=args.validate, validate_max_findings=args.validate_max,
                    validate_budget_usd=args.validate_budget)
     if args.json:
@@ -95,6 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--inplace", action="store_true", help="scan the target directly (no isolated copy)")
     s.add_argument("--validate", action="store_true", help="run the cross-vendor validator panel")
     s.add_argument("--validate-max", type=int, help="cap findings sent to validation")
     s.add_argument("--validate-budget", type=float, default=0.5, help="max USD per validated finding")

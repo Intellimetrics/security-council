@@ -1,0 +1,65 @@
+"""Scan workspace isolation.
+
+Arms and the validator both WRITE into the directory they operate on (scanner
+output, claude-security's report dir, llm-council transcripts). Scanning the real
+target therefore pollutes it and, worse, the next scan re-ingests those artifacts.
+The default `copy` mode gives arms a throwaway copy (runtime/vcs dirs excluded);
+reports are written to an out_dir outside the copy, and the copy is discarded.
+Findings carry repo-relative paths, so they remain valid against the original.
+"""
+
+from __future__ import annotations
+
+import shutil
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import proc
+
+DEFAULT_EXCLUDES = frozenset({
+    ".git", ".hg", ".svn", ".llm-council", ".security-council", ".spikes",
+    "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", ".venv",
+    "node_modules", ".tox",
+})
+
+
+@dataclass
+class Workspace:
+    root: Path              # where arms scan (copy, or the original for inplace)
+    original: Path          # the real target (source of git provenance)
+    mode: str               # copy | inplace
+    _tmp: Path | None = None
+
+    def git_info(self) -> dict:
+        r = proc.run_command(["git", "-C", str(self.original), "rev-parse", "HEAD"], timeout=15)
+        if not r.ok:
+            return {"git_commit": None, "dirty": None, "branch": None}
+        st = proc.run_command(["git", "-C", str(self.original), "status", "--porcelain"], timeout=15)
+        br = proc.run_command(["git", "-C", str(self.original), "rev-parse", "--abbrev-ref", "HEAD"],
+                              timeout=15)
+        return {"git_commit": r.stdout.strip(), "dirty": bool(st.stdout.strip()),
+                "branch": br.stdout.strip() if br.ok else None}
+
+    def cleanup(self) -> None:
+        if self._tmp is not None and self._tmp.exists():
+            shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def __enter__(self) -> "Workspace":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.cleanup()
+
+
+def prepare_workspace(target: str | Path, *, mode: str = "copy",
+                      extra_excludes: frozenset[str] = frozenset()) -> Workspace:
+    target = Path(target).resolve()
+    if mode == "inplace":
+        return Workspace(root=target, original=target, mode="inplace")
+    excludes = DEFAULT_EXCLUDES | set(extra_excludes)
+    tmp = Path(tempfile.mkdtemp(prefix="sc-ws-"))
+    dst = tmp / target.name
+    shutil.copytree(target, dst, ignore=shutil.ignore_patterns(*excludes),
+                    symlinks=False, ignore_dangling_symlinks=True)
+    return Workspace(root=dst, original=target, mode="copy", _tmp=tmp)
