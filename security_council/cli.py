@@ -36,7 +36,9 @@ def cmd_scan(args) -> int:
         print(f"error: unknown arms {unknown}; known: {list(SCANNER_SPECS)}", file=sys.stderr)
         return EXIT_USAGE
     run = run_scan(target, _build_arms(names), config,
-                   out_dir=Path(args.out) if args.out else None)
+                   out_dir=Path(args.out) if args.out else None,
+                   validate=args.validate, validate_max_findings=args.validate_max,
+                   validate_budget_usd=args.validate_budget)
     if args.json:
         print(json.dumps({"run_id": run.run_id, "out_dir": str(run.out_dir),
                           "exit_code": run.exit_code, "counts": run.manifest["counts"],
@@ -93,6 +95,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--validate", action="store_true", help="run the cross-vendor validator panel")
+    s.add_argument("--validate-max", type=int, help="cap findings sent to validation")
+    s.add_argument("--validate-budget", type=float, default=0.5, help="max USD per validated finding")
     s.set_defaults(fn=cmd_scan)
     d = sub.add_parser("doctor", help="check arm availability")
     d.set_defaults(fn=cmd_doctor)

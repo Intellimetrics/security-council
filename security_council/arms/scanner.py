@@ -33,9 +33,11 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
     "semgrep": ScannerSpec(
         name="semgrep", family="semgrep", bin="semgrep", image="semgrep/semgrep",
         local_args=("scan", "--config=p/default", "--sarif", "--output={out}/semgrep.sarif",
-                    "--metrics=off", "{target}"),
+                    "--metrics=off", "--exclude=.llm-council", "--exclude=.security-council",
+                    "{target}"),
         docker_args=("semgrep", "scan", "--config=p/default", "--sarif",
-                     "--output=/out/semgrep.sarif", "--metrics=off", _MOUNT),
+                     "--output=/out/semgrep.sarif", "--metrics=off",
+                     "--exclude=.llm-council", "--exclude=.security-council", _MOUNT),
         sarif_name="semgrep.sarif", success_exit_codes=(0, 1),
         version_args=("--version",), network=True),
     "gitleaks": ScannerSpec(

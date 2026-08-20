@@ -58,8 +58,11 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
     policy = config.get("policy", {})
     threshold = _SEV_RANK.get(policy.get("fail_on_severity", "high"), 4)
     min_arms = int(policy.get("min_arms_ok", 1))
+    # gate on real/unresolved findings at/above threshold; a validated false
+    # positive (state "refuted") is demoted and does not fail the build.
     gating = [f for f in merged
               if f.disposition.lifecycle in ("open", "reopened")
+              and f.disposition.state != "refuted"
               and not f.disposition.sarif_suppression
               and _SEV_RANK[f.severity.label] >= threshold]
     ok = [r for r in results if r.ok]
@@ -75,7 +78,9 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
     return 0, degr
 
 
-def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path | None = None) -> ScanRun:
+def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path | None = None,
+             validate: bool = False, validate_max_findings: int | None = None,
+             validate_budget_usd: float = 0.5) -> ScanRun:
     target = Path(target).resolve()
     run_id, collected_at = _utc_stamp()
     finished_holder = {}
@@ -96,6 +101,11 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         min_distinct_vendors=mdv)
     merged = [coverage.apply(merge_cluster(c), run_ctx) for c in clusters]
     merged.sort(key=lambda f: (-_SEV_RANK[f.severity.label], f.taxonomy.cwe_family))
+
+    if validate and merged:
+        from .validate import panel as _vpanel
+        _vpanel.validate_findings(merged, repo_root=target, max_findings=validate_max_findings,
+                                  max_cost_usd=validate_budget_usd)
 
     reports_dir = out_dir
     (reports_dir / "merged.sarif").write_text(dumps(sarif.to_sarif(
