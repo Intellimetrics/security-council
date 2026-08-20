@@ -1,0 +1,139 @@
+version: 1
+replace_defaults: true
+transcripts_dir: .llm-council/runs
+defaults:
+  mode: quick
+  synthesize: false
+  synthesizer: null
+  mcp_request_timeout_seconds: 1200
+  secret_scan: warn
+  secret_scan_allowlist: .llm-council-secrets-allow
+  require_sections: true
+  strict_evidence: false
+  skip_terse_retry_when_quorum_met: true
+  origin_policy: any
+  max_concurrency: 4
+  transparent: false
+  max_deliberation_rounds: 2
+  convergence_thresholds:
+    converged: 0.8
+    refining: 0.5
+  catalog_auto_refresh: true
+  auto_open_browser: false
+  cost_warn_usd: null
+participants:
+  claude:
+    type: cli
+    family: claude
+    origin: US / Anthropic
+    command: claude
+    args:
+    - -p
+    - --permission-mode
+    - manual
+    - --tools
+    - Read,Grep,Glob,LS
+    - --no-session-persistence
+    - --strict-mcp-config
+    - --exclude-dynamic-system-prompt-sections
+    model: null
+    timeout: 240
+    max_prompt_chars: 120000
+    stdin_prompt: true
+    env_passthrough:
+    - ANTHROPIC_API_KEY
+    fallback_chain:
+    - claude-opus-4-6
+    - claude-sonnet-4-6
+  codex:
+    type: cli
+    family: codex
+    origin: US / OpenAI
+    command: codex
+    args:
+    - exec
+    - --sandbox
+    - read-only
+    - --ephemeral
+    - --skip-git-repo-check
+    - -c
+    - mcp_servers={}
+    - --cd
+    - '{cwd}'
+    - '-'
+    model: null
+    timeout: 240
+    max_prompt_chars: 120000
+    stdin_prompt: true
+    env_passthrough:
+    - OPENAI_API_KEY
+    fallback_chain:
+    - gpt-5.4
+    - gpt-5.3-codex
+    - gpt-5.4-mini
+  antigravity:
+    type: cli
+    family: antigravity
+    origin: US / Google
+    command: agy
+    args:
+    - --print
+    - '{prompt}'
+    - --sandbox
+    - --mode
+    - plan
+    - --new-project
+    model: null
+    timeout: 240
+    max_prompt_chars: 120000
+    stdin_prompt: false
+    env_passthrough:
+    - GEMINI_API_KEY
+    - GOOGLE_API_KEY
+    - ANTIGRAVITY_API_KEY
+    fallback_chain: []
+modes:
+  quick:
+    strategy: other_cli_peers
+    include_current: true
+    description: Ask available native CLI participants from the Claude/Codex and Gemini
+      (Antigravity) families.
+  peer-only:
+    strategy: other_cli_peers
+    include_current: false
+    description: Ask only other available native CLI participants, excluding the current
+      host.
+  plan:
+    strategy: other_cli_peers
+    include_current: true
+    description: Native CLI participants for independent planning.
+  review:
+    strategy: other_cli_peers
+    include_current: true
+    description: Native CLI participants reviewing the change.
+  review-with-tools:
+    strategy: other_cli_peers
+    include_current: true
+    experimental: true
+    timeout_multiplier: 1.8
+    tool_call_voting: false
+    description: "EXPERIMENTAL \u2014 Claude/Codex/Antigravity directed to use their\
+      \ file-read / grep / glob tools to verify diff claims before voting. CLI participants\
+      \ only; hosted participants do not participate."
+  deliberate:
+    strategy: other_cli_peers
+    include_current: true
+    deliberate: true
+    timeout_multiplier: 1.5
+    description: Expensive opt-in second round when first-round responses disagree.
+  consensus:
+    strategy: other_cli_peers
+    include_current: true
+    stances:
+      claude: for
+      codex: against
+      antigravity: neutral
+    timeout_multiplier: 2.0
+    description: Assigned-stance debate to attack groupthink and sycophancy. Each
+      native CLI peer takes a for/against/neutral role; the ethical-override clause
+      keeps any peer from defending a harmful proposal or contriving false objections.

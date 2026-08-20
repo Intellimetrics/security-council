@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "security-council"
+version = "0.0.0"
+description = "Parallel multi-agent security scanning with cross-validated findings and standards-based reports"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Chad Lindell", email = "chad.lindell@gmail.com" }]
+dependencies = [
+  "pyyaml>=6",
+]
+# Runtime tool dependency (not a Python import): the `llm-council` CLI must be on
+# PATH — security-council shells out to `llm-council run --json` for the validator
+# panel (see plan D2). Install with `uv tool install llm-council` or the dev checkout.
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "jsonschema>=4",   # test-time SARIF / envelope schema validation only
+]
+
+[project.scripts]
+security-council = "security_council.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["security_council*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

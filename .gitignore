@@ -1,0 +1,16 @@
+# LLM Council local machine config and runtime data
+.mcp.json
+.llm-council/runs/
+.llm-council/inputs/
+.llm-council/cache/
+.llm-council/*.log
+.llm-council.env
+
+
+# spike scratch outputs
+.spikes/
+
+# council runtime artifacts anywhere (e.g. inside fixtures)
+**/.llm-council/runs/
+**/.llm-council/inputs/
+**/.llm-council/cache/

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SecurityCouncilAgentFindings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scan", "findings"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["sc-agent-finding/1"]},
+    "scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["angle", "files_examined", "coverage_notes", "declined_categories"],
+      "properties": {
+        "angle": {"type": "string"},
+        "files_examined": {"type": "array", "maxItems": 500, "items": {"type": "string"}},
+        "coverage_notes": {"type": "string"},
+        "declined_categories": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["local_id","title","description","cwe","category","severity","confidence","locations","data_flow","entry_point","exploit_precondition","remediation","evidence"],
+        "properties": {
+          "local_id": {"type": "string"},
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "cwe": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string"}},
+          "category": {"type": "string", "enum": ["injection","authz","authn","crypto","secrets","deserialization","ssrf","path_traversal","xss","memory","supply_chain","config","llm_safety","dos","logging","other"]},
+          "severity": {"type": "string", "enum": ["critical","high","medium","low","info"]},
+          "confidence": {"type": "string", "enum": ["high","medium","low"]},
+          "locations": {
+            "type": "array", "minItems": 1, "maxItems": 10,
+            "items": {"type": "object", "additionalProperties": false,
+              "required": ["path","start_line","end_line","role","symbol","snippet"],
+              "properties": {
+                "path": {"type": "string"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "end_line": {"type": "integer", "minimum": 1},
+                "role": {"type": "string", "enum": ["primary","source","sink","sanitizer","related"]},
+                "symbol": {"type": ["string","null"]},
+                "snippet": {"type": "string", "maxLength": 2000}}}},
+          "data_flow": {
+            "type": "array", "maxItems": 20,
+            "items": {"type": "object", "additionalProperties": false,
+              "required": ["step","path","start_line","note"],
+              "properties": {
+                "step": {"type": "integer", "minimum": 1},
+                "path": {"type": "string"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "note": {"type": "string"}}}},
+          "entry_point": {"type": ["string","null"]},
+          "exploit_precondition": {"type": "string"},
+          "remediation": {"type": "string"},
+          "evidence": {
+            "type": "array", "minItems": 1, "maxItems": 10,
+            "items": {"type": "object", "additionalProperties": false,
+              "required": ["path","start_line","end_line","claim"],
+              "properties": {
+                "path": {"type": "string"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "end_line": {"type": "integer", "minimum": 1},
+                "claim": {"type": "string"}}}}
+        }
+      }
+    }
+  }
+}
