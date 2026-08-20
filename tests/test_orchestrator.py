@@ -68,7 +68,7 @@ def test_two_arms_cluster_and_gate_high(tmp_path):
     m.assert_invariants(merged)
     assert merged.corroboration.count == 2                 # two distinct sources
     assert run.exit_code == 1                              # high finding gates
-    for f in ("merged.sarif", "raw.sarif", "findings.json", "manifest.json"):
+    for f in ("merged.sarif", "raw.sarif", "findings.json", "manifest.json", "summary.md"):
         assert (run.out_dir / f).is_file()
     assert run.manifest["counts"]["total"] == 1
 

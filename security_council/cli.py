@@ -60,7 +60,7 @@ def _print_summary(run) -> None:
     print(f"findings: {c['total']} clusters  severity={c['by_severity']}")
     if run.degradations:
         print(f"degradations: {run.degradations}")
-    print(f"reports: {run.out_dir}")
+    print(f"reports: {run.out_dir}  (summary.md, merged.sarif, findings.json, manifest.json)")
     print(f"exit {run.exit_code}")
 
 
@@ -80,7 +80,14 @@ def cmd_report(args) -> int:
         print(f"error: no manifest.json in {args.run_dir}", file=sys.stderr)
         return EXIT_USAGE
     m = json.load(open(mf))
-    print(json.dumps({"run_id": m["run_id"], "counts": m["counts"],
+    if args.format == "md":
+        from .export import markdown
+        from .jsonio import finding_from_dict
+        fj = Path(args.run_dir) / "findings.json"
+        findings = [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
+        print(markdown.to_markdown(findings, m, detail_limit=args.detail_limit))
+        return 0
+    print(json.dumps({"run_id": m["run_id"], "counts": m["counts"], "exit_code": m.get("exit_code"),
                       "reports": [r["path"] for r in m["reports"]]}, indent=2))
     return 0
 
@@ -105,6 +112,9 @@ def build_parser() -> argparse.ArgumentParser:
     d.set_defaults(fn=cmd_doctor)
     r = sub.add_parser("report", help="summarize a previous run directory")
     r.add_argument("run_dir")
+    r.add_argument("--format", choices=["json", "md"], default="json",
+                   help="json summary (default) or regenerate the markdown report")
+    r.add_argument("--detail-limit", type=int, default=50, help="findings rendered in full (md)")
     r.set_defaults(fn=cmd_report)
     return p
 

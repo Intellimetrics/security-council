@@ -192,7 +192,8 @@ class LlmCliArm:
                            cli_version=None)
         findings, meta = registry.normalize_envelope(parsed.envelope, ctx)
         completion = (meta or {}).get("completion")
-        cov = {"normalized": len(findings), "completion": completion,
+        raw_n = len(parsed.envelope.get("findings") or []) if isinstance(parsed.envelope, dict) else None
+        cov = {"raw_results": raw_n, "normalized": len(findings), "completion": completion,
                "declined_categories": (meta or {}).get("declined_categories", [])}
         if not findings and completion != "complete":
             cov["coverage_unverified"] = True    # zero findings but not a clean complete scan

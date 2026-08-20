@@ -35,6 +35,12 @@ CATEGORY_POLICY: dict[str, dict[str, str]] = {
             "*": "reports"},
 }
 
+# Arm names (arms/registry) that run the generic house prompt and therefore carry
+# the "house" stance table. Without this, a source with no policy entry is
+# "unknown" for every family and can never count as eligible -- which mislabels
+# a 2-vendor-corroborated finding as singleton-by-policy.
+POLICY_ALIASES: dict[str, str] = {"claude": "house", "codex": "house"}
+
 
 @dataclass
 class SourceRun:
@@ -52,7 +58,7 @@ class RunContext:
 
 
 def stance_of(source_id: str, family: str) -> str:
-    pol = CATEGORY_POLICY.get(source_id)
+    pol = CATEGORY_POLICY.get(source_id) or CATEGORY_POLICY.get(POLICY_ALIASES.get(source_id, ""))
     if pol is None:
         return "unknown"
     return pol.get(family, pol.get("*", "unknown"))

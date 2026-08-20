@@ -38,6 +38,14 @@ def _rc(sources):
     return cov.RunContext(sources=[cov.SourceRun(*s) for s in sources])
 
 
+def test_house_prompt_arm_names_alias_to_house_policy():
+    # the registry names the house-prompt arms "claude"/"codex"; they must not be "unknown"
+    assert cov.stance_of("claude", "injection") == "reports"
+    assert cov.stance_of("codex", "authz") == "reports"
+    assert cov.stance_of("agy", "llm_safety") == "reports"
+    assert cov.stance_of("nobody", "injection") == "unknown"
+
+
 def test_declining_eligible_arms_raise_decline_ratio():
     f = _finding([("house", "agent_cli", "claude")])  # only house reported
     rc = _rc([("semgrep", "scanner", "semgrep"), ("house", "agent_cli", "claude"),

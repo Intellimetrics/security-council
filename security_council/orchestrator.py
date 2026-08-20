@@ -10,7 +10,7 @@ from pathlib import Path
 from . import __version__
 from .arms.base import Arm, ArmResult
 from .cluster import cluster_findings, merge_cluster
-from .export import sarif
+from .export import markdown, sarif
 from .jsonio import dumps, to_dict
 from .manifest import build_manifest
 from .model import Finding
@@ -109,9 +109,11 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         manifest = build_manifest(
             run_id=run_id, target=str(target), arm_results=results, merged=merged, config=config,
             started_at=collected_at, finished_at=finished_at, git=ws.git_info(),
-            degradations=degradations,
+            degradations=degradations, exit_code=exit_code,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
-                     (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"))])
+                     (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
+                      ("summary.md", "markdown"), ("manifest.json", "json"))])
+        (out_dir / "summary.md").write_text(markdown.to_markdown(merged, manifest))
         (out_dir / "manifest.json").write_text(dumps(manifest))
     finally:
         ws.cleanup()
