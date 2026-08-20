@@ -1,0 +1,111 @@
+"""security-council command-line interface."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+from pathlib import Path
+
+from . import __version__
+from .arms.scanner import SCANNER_SPECS, ScannerArm
+from .config import load_config
+from .orchestrator import run_scan
+
+EXIT_USAGE = 2
+
+
+def _build_arms(names: list[str]):
+    return [ScannerArm(n) for n in names]
+
+
+def cmd_scan(args) -> int:
+    target = Path(args.path).resolve()
+    if not target.is_dir():
+        print(f"error: {target} is not a directory", file=sys.stderr)
+        return EXIT_USAGE
+    config = load_config(target)
+    if args.fail_on_severity:
+        config["policy"]["fail_on_severity"] = args.fail_on_severity
+    if args.min_arms is not None:
+        config["policy"]["min_arms_ok"] = args.min_arms
+    names = [n.strip() for n in args.arms.split(",")] if args.arms else config["arms"]["enabled"]
+    unknown = [n for n in names if n not in SCANNER_SPECS]
+    if unknown:
+        print(f"error: unknown arms {unknown}; known: {list(SCANNER_SPECS)}", file=sys.stderr)
+        return EXIT_USAGE
+    run = run_scan(target, _build_arms(names), config,
+                   out_dir=Path(args.out) if args.out else None)
+    if args.json:
+        print(json.dumps({"run_id": run.run_id, "out_dir": str(run.out_dir),
+                          "exit_code": run.exit_code, "counts": run.manifest["counts"],
+                          "degradations": run.degradations}, indent=2))
+    else:
+        _print_summary(run)
+    return run.exit_code
+
+
+def _print_summary(run) -> None:
+    m = run.manifest
+    print(f"security-council scan {run.run_id}  (target {m['target']['root']})")
+    for a in m["arms"]:
+        status = "ok" if a["ok"] else f"FAILED: {a['error']}"
+        print(f"  {a['name']:<13} {status:<24} raw={a['raw_results']} "
+              f"normalized={a['normalized']} {a['elapsed_seconds']}s")
+    c = m["counts"]
+    print(f"findings: {c['total']} clusters  severity={c['by_severity']}")
+    if run.degradations:
+        print(f"degradations: {run.degradations}")
+    print(f"reports: {run.out_dir}")
+    print(f"exit {run.exit_code}")
+
+
+def cmd_doctor(args) -> int:
+    print("security-council doctor")
+    docker = shutil.which("docker")
+    print(f"  docker         {'ready  ' + docker if docker else 'MISSING'}")
+    for name in SCANNER_SPECS:
+        ok, detail = ScannerArm(name).available()
+        print(f"  {name:<13} {'ready' if ok else 'unavailable':<11} {detail}")
+    return 0
+
+
+def cmd_report(args) -> int:
+    mf = Path(args.run_dir) / "manifest.json"
+    if not mf.is_file():
+        print(f"error: no manifest.json in {args.run_dir}", file=sys.stderr)
+        return EXIT_USAGE
+    m = json.load(open(mf))
+    print(json.dumps({"run_id": m["run_id"], "counts": m["counts"],
+                      "reports": [r["path"] for r in m["reports"]]}, indent=2))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="security-council")
+    p.add_argument("--version", action="version", version=__version__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("scan", help="scan a repository")
+    s.add_argument("path")
+    s.add_argument("--arms", help="comma-separated arm names (default: config)")
+    s.add_argument("--fail-on-severity", choices=["critical", "high", "medium", "low", "info"])
+    s.add_argument("--min-arms", type=int)
+    s.add_argument("--out", help="output directory")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_scan)
+    d = sub.add_parser("doctor", help="check arm availability")
+    d.set_defaults(fn=cmd_doctor)
+    r = sub.add_parser("report", help="summarize a previous run directory")
+    r.add_argument("run_dir")
+    r.set_defaults(fn=cmd_report)
+    return p
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

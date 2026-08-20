@@ -113,9 +113,13 @@ def cluster_findings(findings: list[Finding], *, min_distinct_vendors: int = 2) 
         for j in idxs[1:]:
             ds.union(idxs[0], j, "root_cause")
 
-    # T3 context_hash + family — hash bucket, O(n)
+    # T3 context_hash + family — hash bucket, O(n). Package findings excluded: their
+    # "context" is the manifest file (identical for every advisory), so they must
+    # cluster only by root_cause (T1) and package+advisory (T4).
     by_ctx: dict[tuple[str, str], list[int]] = defaultdict(list)
     for i, f in enumerate(findings):
+        if f.package is not None:
+            continue
         by_ctx[(f.fingerprints.context_hash, f.taxonomy.cwe_family)].append(i)
     for idxs in by_ctx.values():
         for j in idxs[1:]:
@@ -131,9 +135,13 @@ def cluster_findings(findings: list[Finding], *, min_distinct_vendors: int = 2) 
         for j in idxs[1:]:
             ds.union(idxs[0], j, "package")
 
-    # T2 location — bucket by (primary path, family), pairwise overlap within bucket
+    # T2 location — bucket by (primary path, family), pairwise overlap within bucket.
+    # Package/dependency findings are excluded: they all sit at the manifest file,
+    # so location overlap would wrongly merge distinct advisories (they cluster via T4).
     by_pf: dict[tuple[str, str], list[int]] = defaultdict(list)
     for i, f in enumerate(findings):
+        if f.package is not None:
+            continue
         by_pf[(primary_location(f).uri, f.taxonomy.cwe_family)].append(i)
     for idxs in by_pf.values():
         for a in range(len(idxs)):

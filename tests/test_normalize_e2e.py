@@ -94,3 +94,12 @@ def test_agent_envelope_normalizes():
     assert f.taxonomy.cwe_family == "crypto" and f.taxonomy.cwe_confidence == "exact"
     assert f.corroboration.agent_sources == ["house"]
     assert meta["completion"] == "complete"
+
+
+def test_osv_findings_cluster_by_advisory_not_by_manifest():
+    from security_council import cluster as cl
+    fs = registry.normalize_sarif(_load("osv"), "osv-scanner", _ctx("osv-scanner", "osv"))
+    clusters = cl.cluster_findings(fs)
+    # 34 CVEs across several advisories must NOT collapse into a single manifest cluster
+    assert len(clusters) > 5, f"expected many advisory clusters, got {len(clusters)}"
+    assert all(c.representative.taxonomy.cwe_family == "supply_chain" for c in clusters)
