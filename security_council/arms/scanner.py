@@ -25,7 +25,8 @@ class ScannerSpec:
     docker_args: tuple[str, ...]    # run inside container; {out} is /out
     sarif_name: str
     success_exit_codes: tuple[int, ...]
-    version_args: tuple[str, ...]
+    version_args: tuple[str, ...]           # local: [bin, *version_args]
+    docker_version_args: tuple[str, ...]    # docker: [run IMAGE, *docker_version_args]
     network: bool                   # docker: allow network (rules/db)
 
 
@@ -39,7 +40,7 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
                      "--output=/out/semgrep.sarif", "--metrics=off",
                      "--exclude=.llm-council", "--exclude=.security-council", _MOUNT),
         sarif_name="semgrep.sarif", success_exit_codes=(0, 1),
-        version_args=("--version",), network=True),
+        version_args=("--version",), docker_version_args=("semgrep", "--version"), network=True),
     "gitleaks": ScannerSpec(
         name="gitleaks", family="gitleaks", bin="gitleaks", image="zricethezav/gitleaks:latest",
         local_args=("detect", "--source={target}", "--no-git", "--report-format=sarif",
@@ -47,13 +48,13 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
         docker_args=("detect", "--source=" + _MOUNT, "--no-git", "--report-format=sarif",
                      "--report-path=/out/gitleaks.sarif", "--redact"),
         sarif_name="gitleaks.sarif", success_exit_codes=(0, 1),
-        version_args=("version",), network=False),
+        version_args=("version",), docker_version_args=("version",), network=False),
     "osv-scanner": ScannerSpec(
         name="osv-scanner", family="osv", bin="osv-scanner", image="ghcr.io/google/osv-scanner:latest",
         local_args=("scan", "source", "--format=sarif", "--output={out}/osv.sarif", "{target}"),
         docker_args=("scan", "source", "--format=sarif", "--output=/out/osv.sarif", _MOUNT),
         sarif_name="osv.sarif", success_exit_codes=(0, 1),
-        version_args=("--version",), network=True),
+        version_args=("--version",), docker_version_args=("--version",), network=True),
 }
 
 
@@ -77,11 +78,13 @@ class ScannerArm:
     def _version(self, use_docker: bool) -> str | None:
         try:
             if use_docker:
-                r = proc.run_command(["docker", "run", "--rm", self.spec.image, *self.spec.version_args],
-                                     timeout=60)
+                r = proc.run_command(["docker", "run", "--rm", self.spec.image,
+                                      *self.spec.docker_version_args], timeout=90)
             else:
                 r = proc.run_command([self.spec.bin, *self.spec.version_args], timeout=30)
-            return (r.stdout or r.stderr).strip().splitlines()[0] if (r.stdout or r.stderr) else None
+            if not r.ok or not r.stdout.strip():
+                return None
+            return r.stdout.strip().splitlines()[0]
         except Exception:
             return None
 

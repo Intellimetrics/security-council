@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .arms.scanner import SCANNER_SPECS, ScannerArm
+from .arms.registry import build_arm, known_arms
 from .config import load_config
 from .orchestrator import run_scan
 
@@ -17,7 +17,7 @@ EXIT_USAGE = 2
 
 
 def _build_arms(names: list[str]):
-    return [ScannerArm(n) for n in names]
+    return [build_arm(n) for n in names]
 
 
 def cmd_scan(args) -> int:
@@ -31,9 +31,9 @@ def cmd_scan(args) -> int:
     if args.min_arms is not None:
         config["policy"]["min_arms_ok"] = args.min_arms
     names = [n.strip() for n in args.arms.split(",")] if args.arms else config["arms"]["enabled"]
-    unknown = [n for n in names if n not in SCANNER_SPECS]
+    unknown = [n for n in names if n not in known_arms()]
     if unknown:
-        print(f"error: unknown arms {unknown}; known: {list(SCANNER_SPECS)}", file=sys.stderr)
+        print(f"error: unknown arms {unknown}; known: {known_arms()}", file=sys.stderr)
         return EXIT_USAGE
     run = run_scan(target, _build_arms(names), config,
                    out_dir=Path(args.out) if args.out else None,
@@ -68,8 +68,8 @@ def cmd_doctor(args) -> int:
     print("security-council doctor")
     docker = shutil.which("docker")
     print(f"  docker         {'ready  ' + docker if docker else 'MISSING'}")
-    for name in SCANNER_SPECS:
-        ok, detail = ScannerArm(name).available()
+    for name in known_arms():
+        ok, detail = build_arm(name).available()
         print(f"  {name:<13} {'ready' if ok else 'unavailable':<11} {detail}")
     return 0
 
