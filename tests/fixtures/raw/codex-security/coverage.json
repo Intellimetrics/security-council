@@ -1,0 +1,28 @@
+{
+  "documentType": "codex-security.coverage",
+  "schemaVersion": "1.0",
+  "scanId": "scan_seedrepo_fixture_001",
+  "mode": "repository",
+  "completeness": "complete",
+  "inventoryStrategy": "repository",
+  "includePaths": [
+    "."
+  ],
+  "excludePaths": [],
+  "surfaces": [
+    {
+      "id": "surface_http_api",
+      "label": "Flask HTTP API",
+      "disposition": "reported",
+      "receiptRefs": []
+    },
+    {
+      "id": "surface_crypto",
+      "label": "Password hashing",
+      "disposition": "reported",
+      "receiptRefs": []
+    }
+  ],
+  "explicitExclusions": [],
+  "deferred": []
+}

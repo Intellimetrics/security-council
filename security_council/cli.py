@@ -16,8 +16,9 @@ from .orchestrator import run_scan
 EXIT_USAGE = 2
 
 
-def _build_arms(names: list[str]):
-    return [build_arm(n) for n in names]
+def _build_arms(names: list[str], config: dict | None = None):
+    options = ((config or {}).get("arms") or {}).get("options") or {}
+    return [build_arm(n, options=options.get(n)) for n in names]
 
 
 def cmd_scan(args) -> int:
@@ -35,7 +36,7 @@ def cmd_scan(args) -> int:
     if unknown:
         print(f"error: unknown arms {unknown}; known: {known_arms()}", file=sys.stderr)
         return EXIT_USAGE
-    run = run_scan(target, _build_arms(names), config,
+    run = run_scan(target, _build_arms(names, config), config,
                    out_dir=Path(args.out) if args.out else None,
                    isolate=not args.inplace,
                    validate=args.validate, validate_max_findings=args.validate_max,

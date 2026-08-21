@@ -111,6 +111,10 @@ def build_finding(raw: RawFinding, ctx: ParseContext) -> Optional[Finding]:
         context_hash=fp.context_hash(snip.raw_context),
         root_cause=fp.root_cause(cwe_family=cwe_a.family, root_symbol=raw.symbol or path,
                                  sink_expr=raw.snippet or sink, package=raw.package),
+        # the producer's own identity keys (semgrep matchBasedId, claude-security-plugin/v2,
+        # codex-security/v1 ...), namespaced by source so they never collide across arms
+        source_fingerprints={f"{ctx.source_id}:{k}": str(v)
+                             for k, v in (raw.source_fingerprints or {}).items() if v is not None},
     )
     loc = CodeLocation(
         uri=path, start_line=raw.start_line, end_line=max(raw.start_line, raw.end_line),

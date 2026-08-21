@@ -1,0 +1,217 @@
+{
+  "documentType": "codex-security.findings",
+  "schemaVersion": "1.0",
+  "scanId": "scan_seedrepo_fixture_001",
+  "findings": [
+    {
+      "findingId": "csf_0a1b2c3d4e5f60718293a4b5",
+      "occurrenceId": "occ_1111111111111111aaaaaaaa",
+      "ruleId": "command-injection.os-system",
+      "identity": {
+        "anchor": "os-system-shell-string-from-request"
+      },
+      "fingerprints": {
+        "algorithm": "codex-security/v1",
+        "primary": "codex-security/v1:sha256:abe619387500ddaad9a4e07a249ac7a359b781f8d85509657490004b71064de1"
+      },
+      "title": "OS command injection through the report format parameter",
+      "summary": "`build_report()` interpolates the request-derived `fmt` into an `os.system()` shell string; `/bin/sh -c` interprets metacharacters, so any caller of `/api/reports` executes commands as the service user.",
+      "severity": {
+        "level": "critical",
+        "score": 9.8,
+        "scoringSystem": "CVSS:3.1"
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Direct source trace from `request.args['format']` in `app/routes.py` to `os.system` with no validation."
+      },
+      "taxonomy": {
+        "category": "command-injection",
+        "cwe": [
+          "CWE-78"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/routes.py",
+          "startLine": 5,
+          "endLine": 5,
+          "role": "user_input"
+        },
+        {
+          "path": "app/reports.py",
+          "startLine": 11,
+          "endLine": 11,
+          "role": "sink"
+        }
+      ],
+      "codeEvidence": [
+        {
+          "id": "sink",
+          "label": "Shell string built from fmt",
+          "path": "app/reports.py",
+          "startLine": 11,
+          "endLine": 11,
+          "language": "python",
+          "role": "sink",
+          "code": "os.system(f\"/usr/bin/render --format {fmt} --rows {len(rows)}\")",
+          "explanation": "`fmt` reaches the shell unchanged."
+        }
+      ],
+      "rootCause": {
+        "summary": "The renderer is invoked through a shell with attacker-controlled text instead of an argument vector.",
+        "evidenceRefs": [
+          "sink"
+        ]
+      },
+      "remediation": "Allow-list `fmt` and invoke the renderer with `subprocess.run([...], shell=False)`.",
+      "validation": {
+        "method": "static-trace",
+        "disposition": "reportable",
+        "confidence": "high"
+      },
+      "attackPath": {
+        "decision": "reportable",
+        "reachability": "unauthenticated HTTP",
+        "impact": "high",
+        "likelihood": "high",
+        "severity": "critical"
+      },
+      "remediationTests": [
+        "Assert that `format=pdf;id` is rejected with 400 and nothing executes."
+      ],
+      "preventiveControls": [
+        "Ban `os.system`/`shell=True` via a lint rule."
+      ],
+      "provenance": {
+        "source": "local_plugin"
+      },
+      "extensions": {}
+    },
+    {
+      "findingId": "csf_7f6e5d4c3b2a19081726354c",
+      "occurrenceId": "occ_2222222222222222bbbbbbbb",
+      "ruleId": "authorization.missing-object-ownership-check",
+      "identity": {
+        "anchor": "order-lookup-by-primary-key-only"
+      },
+      "fingerprints": {
+        "algorithm": "codex-security/v1",
+        "primary": "codex-security/v1:sha256:4085741eb4dead6ff9d57feae7df80fbb69cdf4c3f08cca53c3ea2697c200cf0"
+      },
+      "title": "Insecure direct object reference on /api/orders/<id>",
+      "summary": "`get_order()` loads the row by primary key with no tenant or owner predicate, and the route performs no authentication, so any caller can enumerate every tenant's orders.",
+      "severity": {
+        "level": "high",
+        "score": 7.5,
+        "scoringSystem": "CVSS:3.1"
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Route -> repository trace shows no ownership check on either side."
+      },
+      "taxonomy": {
+        "category": "authorization",
+        "cwe": [
+          "CWE-639",
+          "CWE-862"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/order_repo.py",
+          "startLine": 12,
+          "endLine": 12,
+          "role": "root_control"
+        }
+      ],
+      "remediation": "Scope the query by the session tenant: `WHERE id = ? AND tenant_id = ?`.",
+      "validation": null,
+      "attackPath": null,
+      "provenance": {
+        "source": "local_plugin"
+      },
+      "extensions": {}
+    },
+    {
+      "findingId": "csf_abcdefabcdefabcdefabcdef",
+      "occurrenceId": "occ_3333333333333333cccccccc",
+      "ruleId": "secrets.hardcoded-cloud-credential",
+      "identity": {
+        "anchor": "aws-secret-access-key-literal"
+      },
+      "fingerprints": {
+        "algorithm": "codex-security/v1",
+        "primary": "codex-security/v1:sha256:20675ea770c73c3b12fef3a1d5040e20dc0f872c66beed84bc6a607be8966663"
+      },
+      "title": "Hard-coded AWS credentials in app/settings.py",
+      "summary": "An AWS access key id and secret access key are committed as string literals.",
+      "severity": {
+        "level": "high"
+      },
+      "confidence": {
+        "level": "high",
+        "rationale": "Literal matches the AWS key format and is not an example value."
+      },
+      "taxonomy": {
+        "category": "secrets",
+        "cwe": [
+          "CWE-798"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/settings.py",
+          "startLine": 2,
+          "endLine": 3,
+          "role": "sink"
+        }
+      ],
+      "remediation": "Rotate the keys and load them from the environment or a secrets manager.",
+      "provenance": {
+        "source": "local_plugin"
+      },
+      "extensions": {}
+    },
+    {
+      "findingId": "csf_9999999999999999deadbeef",
+      "occurrenceId": "occ_4444444444444444dddddddd",
+      "ruleId": "configuration.debug-enabled",
+      "identity": {
+        "anchor": "debug-true-in-settings"
+      },
+      "fingerprints": {
+        "algorithm": "codex-security/v1",
+        "primary": "codex-security/v1:sha256:2b2a6a86c45034871b6a6f0d66474adf9d2693ed04dec884bb54fb752ecdf361"
+      },
+      "title": "DEBUG enabled in committed settings",
+      "summary": "`DEBUG = True` is hard-coded; if deployed unchanged, verbose errors and the debugger are exposed.",
+      "severity": {
+        "level": "informational"
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "Depends on deployment configuration."
+      },
+      "taxonomy": {
+        "category": "configuration",
+        "cwe": [
+          "CWE-489"
+        ]
+      },
+      "locations": [
+        {
+          "path": "app/settings.py",
+          "startLine": 4,
+          "endLine": 4,
+          "role": "sink"
+        }
+      ],
+      "remediation": "Default DEBUG to False; enable only via environment in development.",
+      "provenance": {
+        "source": "local_plugin"
+      },
+      "extensions": {}
+    }
+  ]
+}

@@ -9,7 +9,10 @@ import yaml
 
 DEFAULT_CONFIG: dict = {
     "defaults": {"max_concurrency": 4, "min_distinct_vendors": 2},
-    "arms": {"enabled": ["semgrep", "gitleaks", "osv-scanner"]},
+    # options: per-arm constructor kwargs, e.g.
+    #   arms.options.claude-security: {effort: low, max_budget_usd: 10}
+    #   arms.options.codex-security:  {mode: standard, max_cost_usd: 5}
+    "arms": {"enabled": ["semgrep", "gitleaks", "osv-scanner"], "options": {}},
     "policy": {"fail_on_severity": "high", "min_arms_ok": 1},
     "reports": {"outdir": ".security-council/runs"},
 }

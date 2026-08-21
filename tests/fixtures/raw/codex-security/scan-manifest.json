@@ -1,0 +1,41 @@
+{
+  "documentType": "codex-security.scan-manifest",
+  "schemaVersion": "1.0",
+  "scan": {
+    "id": "scan_seedrepo_fixture_001",
+    "producer": {
+      "name": "codex-security-plugin",
+      "version": "0.1.22"
+    },
+    "status": "completed",
+    "startedAt": "2026-08-20T12:00:00Z",
+    "completedAt": "2026-08-20T12:07:30Z",
+    "sealedAt": "2026-08-20T12:07:30Z",
+    "target": {
+      "kind": "directory_snapshot",
+      "targetId": "target_sha256_seedrepo_fixture",
+      "displayName": "seedrepo",
+      "snapshotDigest": "codex-security-snapshot/v1:sha256:abababababababababababababababababababababababababababababababab"
+    },
+    "scope": {
+      "includePaths": [
+        "."
+      ],
+      "excludePaths": []
+    },
+    "coverageRef": "coverage.json",
+    "findingsRef": "findings.json",
+    "artifacts": [
+      {
+        "path": "findings.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "mediaType": "application/json"
+      },
+      {
+        "path": "coverage.json",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "mediaType": "application/json"
+      }
+    ]
+  }
+}

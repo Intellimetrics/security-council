@@ -1,0 +1,471 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Claude Security Plugin for Claude Code",
+          "organization": "Anthropic",
+          "informationUri": "https://claude.com/product/claude-security",
+          "version": "0.10.1",
+          "rules": [
+            {
+              "id": "CWE-916",
+              "name": "UseOfPasswordHashWithInsufficientComputationalEffort",
+              "shortDescription": {
+                "text": "Use of Password Hash With Insufficient Computational Effort"
+              },
+              "fullDescription": {
+                "text": "Use of Password Hash With Insufficient Computational Effort (CWE-916, CWE 4.20): findings whose CWE is this entry of the Simplified Mapping view or rolls up to it, reported by Claude Security Plugin for Claude Code from static review of the source."
+              },
+              "help": {
+                "text": "Each alert's message names the finding's own CWE and states the impact, exploit scenario, preconditions and recommended fix; the finding appears under its F<n> id in CLAUDE-SECURITY-RESULTS.md."
+              },
+              "helpUri": "https://cwe.mitre.org/data/definitions/916.html",
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-916"
+                ]
+              }
+            },
+            {
+              "id": "CWE-639",
+              "name": "AuthorizationBypassThroughUserControlledKey",
+              "shortDescription": {
+                "text": "Authorization Bypass Through User-Controlled Key"
+              },
+              "fullDescription": {
+                "text": "Authorization Bypass Through User-Controlled Key (CWE-639, CWE 4.20): findings whose CWE is this entry of the Simplified Mapping view or rolls up to it, reported by Claude Security Plugin for Claude Code from static review of the source."
+              },
+              "help": {
+                "text": "Each alert's message names the finding's own CWE and states the impact, exploit scenario, preconditions and recommended fix; the finding appears under its F<n> id in CLAUDE-SECURITY-RESULTS.md."
+              },
+              "helpUri": "https://cwe.mitre.org/data/definitions/639.html",
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-639"
+                ]
+              }
+            },
+            {
+              "id": "CWE-798",
+              "name": "UseOfHardCodedCredentials",
+              "shortDescription": {
+                "text": "Use of Hard-coded Credentials"
+              },
+              "fullDescription": {
+                "text": "Use of Hard-coded Credentials (CWE-798, CWE 4.20): findings whose CWE is this entry of the Simplified Mapping view or rolls up to it, reported by Claude Security Plugin for Claude Code from static review of the source."
+              },
+              "help": {
+                "text": "Each alert's message names the finding's own CWE and states the impact, exploit scenario, preconditions and recommended fix; the finding appears under its F<n> id in CLAUDE-SECURITY-RESULTS.md."
+              },
+              "helpUri": "https://cwe.mitre.org/data/definitions/798.html",
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-798"
+                ]
+              }
+            },
+            {
+              "id": "CWE-78",
+              "name": "OSCommandInjection",
+              "shortDescription": {
+                "text": "OS Command Injection"
+              },
+              "fullDescription": {
+                "text": "Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection') (CWE-78, CWE 4.20): findings whose CWE is this entry of the Simplified Mapping view or rolls up to it, reported by Claude Security Plugin for Claude Code from static review of the source."
+              },
+              "help": {
+                "text": "Each alert's message names the finding's own CWE and states the impact, exploit scenario, preconditions and recommended fix; the finding appears under its F<n> id in CLAUDE-SECURITY-RESULTS.md."
+              },
+              "helpUri": "https://cwe.mitre.org/data/definitions/78.html",
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-78"
+                ]
+              }
+            },
+            {
+              "id": "uncategorized",
+              "name": "Uncategorized",
+              "shortDescription": {
+                "text": "Uncategorized"
+              },
+              "fullDescription": {
+                "text": "Findings whose CWE is not an entry of the CWE Simplified Mapping view and rolls up to none, reported by Claude Security Plugin for Claude Code from static review of the source."
+              },
+              "help": {
+                "text": "Each alert's message names the finding's own CWE and states the impact, exploit scenario, preconditions and recommended fix; the finding appears under its F<n> id in CLAUDE-SECURITY-RESULTS.md."
+              },
+              "properties": {
+                "tags": [
+                  "security"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "automationDetails": {
+        "id": "claude-security-plugin/scan/41f6b769-9df4-4f07-8260-a8757263eae0",
+        "guid": "41f6b769-9df4-4f07-8260-a8757263eae0"
+      },
+      "invocations": [
+        {
+          "executionSuccessful": true
+        }
+      ],
+      "originalUriBaseIds": {
+        "%SRCROOT%": {
+          "description": {
+            "text": "The top level of the scanned repository, or the scanned directory when the scan did not run inside a git checkout."
+          }
+        }
+      },
+      "results": [
+        {
+          "ruleId": "CWE-916",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Passwords hashed with unsalted MD5.\n\nhash_password() computes hashlib.md5(pw).hexdigest() with no salt and no work factor.\n\nImpact: Any leak of the stored hashes yields plaintext passwords for most users.\n\nExploit scenario: An attacker who obtains the hash store runs a GPU dictionary attack and recovers passwords in minutes.\n\nPreconditions: Read access to the stored hashes.\n\nRecommendation: Use argon2id/bcrypt/scrypt with a per-user salt.\n\nCWE-916. Severity HIGH, confidence high."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/crypto_util.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 7,
+                  "snippet": {
+                    "text": "return hashlib.md5(pw.encode()).hexdigest()"
+                  }
+                }
+              },
+              "logicalLocations": [
+                {
+                  "name": "hash_password",
+                  "fullyQualifiedName": "hash_password"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "claude-security-plugin/v2": "14a0e93eae03810866443957dd599b59e7041d86a4ceea0342a45be4b41245f7"
+          },
+          "properties": {
+            "claudeSecurityPlugin": {
+              "id": "F1",
+              "title": "Passwords hashed with unsalted MD5",
+              "impact": "Any leak of the stored hashes yields plaintext passwords for most users.",
+              "file": "app/crypto_util.py",
+              "line": 7,
+              "description": "hash_password() computes hashlib.md5(pw).hexdigest() with no salt and no work factor.",
+              "exploit_scenario": "An attacker who obtains the hash store runs a GPU dictionary attack and recovers passwords in minutes.",
+              "preconditions": [
+                "Read access to the stored hashes"
+              ],
+              "category": "Use of Password Hash With Insufficient Computational Effort",
+              "severity": "HIGH",
+              "confidence": "high",
+              "recommendation": "Use argon2id/bcrypt/scrypt with a per-user salt.",
+              "cwe_id": "CWE-916",
+              "snippet": "return hashlib.md5(pw.encode()).hexdigest()",
+              "symbol": "hash_password",
+              "verification": {
+                "panel": {
+                  "true": 3,
+                  "false": 0,
+                  "voters": 3
+                }
+              }
+            }
+          }
+        },
+        {
+          "ruleId": "CWE-639",
+          "ruleIndex": 1,
+          "level": "error",
+          "message": {
+            "text": "Order lookup has no tenant/owner check (IDOR).\n\nget_order() selects by primary key only; routes.py passes the URL id straight through and there is no authentication on the route.\n\nImpact: Any caller can read every tenant's order records by enumerating ids.\n\nExploit scenario: GET /api/orders/1, /2, /3 ... returns other tenants' orders including tenant_id and total.\n\nRecommendation: Derive the tenant from the session and add AND tenant_id = ? to the query.\n\nCWE-639. Severity HIGH, confidence high."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/order_repo.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 12,
+                  "snippet": {
+                    "text": "cur.execute(\"SELECT id, tenant_id, total FROM orders WHERE id = ?\", (order_id,))"
+                  }
+                }
+              },
+              "logicalLocations": [
+                {
+                  "name": "get_order",
+                  "fullyQualifiedName": "get_order"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "claude-security-plugin/v2": "3eb7bec7e7bad9ee6c8b9ce9ca3a26b72bab76838197758a12c4b3b07e00a9cb"
+          },
+          "properties": {
+            "claudeSecurityPlugin": {
+              "id": "F2",
+              "title": "Order lookup has no tenant/owner check (IDOR)",
+              "impact": "Any caller can read every tenant's order records by enumerating ids.",
+              "file": "app/order_repo.py",
+              "line": 12,
+              "description": "get_order() selects by primary key only; routes.py passes the URL id straight through and there is no authentication on the route.",
+              "exploit_scenario": "GET /api/orders/1, /2, /3 ... returns other tenants' orders including tenant_id and total.",
+              "preconditions": [],
+              "category": "Authorization Bypass Through User-Controlled Key",
+              "severity": "HIGH",
+              "confidence": "high",
+              "recommendation": "Derive the tenant from the session and add AND tenant_id = ? to the query.",
+              "cwe_id": "CWE-639",
+              "snippet": "cur.execute(\"SELECT id, tenant_id, total FROM orders WHERE id = ?\", (order_id,))",
+              "symbol": "get_order",
+              "verification": {
+                "panel": {
+                  "true": 3,
+                  "false": 0,
+                  "voters": 3
+                }
+              }
+            }
+          }
+        },
+        {
+          "ruleId": "CWE-798",
+          "ruleIndex": 2,
+          "level": "error",
+          "message": {
+            "text": "Hard-coded AWS secret access key in settings.py.\n\nAWS_SECRET_ACCESS_KEY is a literal string in source.\n\nImpact: Anyone with repository or artifact access holds live cloud credentials.\n\nExploit scenario: Clone the repo, export the two variables, call the AWS API as the application identity.\n\nPreconditions: Repository read access.\n\nRecommendation: Rotate the key; load credentials from the environment or a secrets manager.\n\nThe source line is not quoted because it holds the credential.\n\nCWE-798. Severity HIGH, confidence high."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/settings.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 3
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "claude-security-plugin/v2": "26ce9f9884275e0a69c4f67caf5c14dc58e2a0036092e7b70de1a512d70a0621"
+          },
+          "properties": {
+            "claudeSecurityPlugin": {
+              "id": "F3",
+              "title": "Hard-coded AWS secret access key in settings.py",
+              "impact": "Anyone with repository or artifact access holds live cloud credentials.",
+              "file": "app/settings.py",
+              "line": 3,
+              "description": "AWS_SECRET_ACCESS_KEY is a literal string in source.",
+              "exploit_scenario": "Clone the repo, export the two variables, call the AWS API as the application identity.",
+              "preconditions": [
+                "Repository read access"
+              ],
+              "category": "Use of Hard-coded Credentials",
+              "severity": "HIGH",
+              "confidence": "high",
+              "recommendation": "Rotate the key; load credentials from the environment or a secrets manager.",
+              "cwe_id": "CWE-798",
+              "snippet": "",
+              "symbol": "",
+              "verification": {
+                "panel": {
+                  "true": 3,
+                  "false": 0,
+                  "voters": 3
+                }
+              }
+            }
+          }
+        },
+        {
+          "ruleId": "CWE-78",
+          "ruleIndex": 3,
+          "level": "error",
+          "message": {
+            "text": "OS command injection via report format parameter.\n\nbuild_report() interpolates the request-derived fmt into an os.system() shell string.\n\nImpact: Remote command execution as the web server user.\n\nExploit scenario: GET /api/reports?format=pdf;id>/tmp/pwned runs id on the server.\n\nRecommendation: Allow-list fmt and call subprocess.run([...], shell=False).\n\nCWE-78. Severity HIGH, confidence medium."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/reports.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 11,
+                  "snippet": {
+                    "text": "os.system(f\"/usr/bin/render --format {fmt} --rows {len(rows)}\")"
+                  }
+                }
+              },
+              "logicalLocations": [
+                {
+                  "name": "build_report",
+                  "fullyQualifiedName": "build_report"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "claude-security-plugin/v2": "f43b036e004121b1f23d23cb19d321f0292346005222c783d179957f7b742671"
+          },
+          "properties": {
+            "claudeSecurityPlugin": {
+              "id": "F4",
+              "title": "OS command injection via report format parameter",
+              "impact": "Remote command execution as the web server user.",
+              "file": "app/reports.py",
+              "line": 11,
+              "description": "build_report() interpolates the request-derived fmt into an os.system() shell string.",
+              "exploit_scenario": "GET /api/reports?format=pdf;id>/tmp/pwned runs id on the server.",
+              "preconditions": [],
+              "category": "OS Command Injection",
+              "severity": "HIGH",
+              "confidence": "medium",
+              "recommendation": "Allow-list fmt and call subprocess.run([...], shell=False).",
+              "cwe_id": "CWE-78",
+              "snippet": "os.system(f\"/usr/bin/render --format {fmt} --rows {len(rows)}\")",
+              "symbol": "build_report",
+              "verification": {
+                "panel": {
+                  "true": 2,
+                  "false": 1,
+                  "voters": 3
+                }
+              }
+            }
+          }
+        },
+        {
+          "ruleId": "uncategorized",
+          "ruleIndex": 4,
+          "level": "note",
+          "message": {
+            "text": "Debug mode enabled in settings.\n\nDEBUG = True is hard-coded.\n\nImpact: Verbose errors and the Werkzeug debugger may be exposed if this config reaches production.\n\nExploit scenario: Trigger an exception and read the stack trace / open the debugger console.\n\nPreconditions: Configuration deployed unchanged to a reachable host.\n\nRecommendation: Default DEBUG to False and enable only via environment in local dev.\n\nCWE-489. Severity LOW, confidence medium."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/settings.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 4,
+                  "snippet": {
+                    "text": "DEBUG = True"
+                  }
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "claude-security-plugin/v2": "84ef179f72c0a36c204791f179d6a77ffcefb350cb9fd961e54a7da597762e20"
+          },
+          "properties": {
+            "claudeSecurityPlugin": {
+              "id": "F5",
+              "title": "Debug mode enabled in settings",
+              "impact": "Verbose errors and the Werkzeug debugger may be exposed if this config reaches production.",
+              "file": "app/settings.py",
+              "line": 4,
+              "description": "DEBUG = True is hard-coded.",
+              "exploit_scenario": "Trigger an exception and read the stack trace / open the debugger console.",
+              "preconditions": [
+                "Configuration deployed unchanged to a reachable host"
+              ],
+              "category": "Uncategorized",
+              "severity": "LOW",
+              "confidence": "medium",
+              "recommendation": "Default DEBUG to False and enable only via environment in local dev.",
+              "cwe_id": "CWE-489",
+              "snippet": "DEBUG = True",
+              "symbol": "",
+              "verification": {
+                "panel": {
+                  "true": 2,
+                  "false": 1,
+                  "voters": 3
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "claudeSecurityPlugin": {
+          "generated_at": "2026-08-21T00:33:20+00:00",
+          "scan_id": "41f6b769-9df4-4f07-8260-a8757263eae0",
+          "mode": "scan",
+          "scan_prefix": "",
+          "scope": [],
+          "revision": {
+            "versioned": false
+          },
+          "revision_source": "self-reported",
+          "effort": "low",
+          "run_shape": {
+            "requested_effort": "low",
+            "collapsed": null,
+            "source": "coverage.json",
+            "diff_files": null,
+            "diff_lines": null,
+            "scope_files": null,
+            "empty_diff": false,
+            "empty_scope": false,
+            "researchers_dispatched": null,
+            "skipped_components": [],
+            "completeness_check_outcome": "not-applicable",
+            "unaccounted_top_level_dirs": [],
+            "inventory_fallback": null,
+            "top_level_dir_count": null
+          },
+          "findings": {
+            "total": 5,
+            "high": 4,
+            "medium": 0,
+            "low": 1
+          },
+          "verification": {
+            "status": "verified",
+            "candidates": 7,
+            "candidates_deduped": 6,
+            "panel_votes": 18,
+            "panel_reviewed_findings": 5,
+            "panel_quorum_findings": 5,
+            "unreviewed_candidate_sites": 0,
+            "incomplete_panel_candidates": 0,
+            "attested_findings": 0,
+            "reason": null,
+            "researchers_dispatched": 1,
+            "researchers_returned": 1
+          },
+          "target_kind": "local-path"
+        }
+      }
+    }
+  ]
+}

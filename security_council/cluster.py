@@ -16,7 +16,7 @@ published FP filters lose ~22% of true positives).
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .fingerprint import purl_without_version
 from .model import (
@@ -250,7 +250,10 @@ def merge_cluster(cluster: FindingCluster) -> Finding:
         independence_warning=cluster.independence_warning,
     )
     provenance = [p for m in members for p in m.provenance]
-    fp = rep.fingerprints
+    merged_sfp: dict[str, str] = {}
+    for mem in members:
+        merged_sfp.update(mem.fingerprints.source_fingerprints or {})
+    fp = replace(rep.fingerprints, source_fingerprints=merged_sfp)
     return Finding(
         id=finding_id(fp),
         schema_version=SCHEMA_VERSION,
