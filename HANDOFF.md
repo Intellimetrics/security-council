@@ -17,7 +17,7 @@ python3 -m security_council.cli doctor
 python3 -m security_council.cli scan tests/fixtures/seedrepo --arms claude,semgrep,gitleaks,osv-scanner
 python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --validate-max 2
 python3 -m security_council.cli report <run_dir> --format md      # regenerate summary.md
-python3 -m pytest tests/ -q        # 119 tests, ~0.7s
+python3 -m pytest tests/ -q        # 140 tests, ~0.8s
 ```
 
 Proven live: the claude arm found the cross-file **IDOR (CWE-639)** that deterministic scanners
@@ -46,7 +46,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-12 commits, ~3,515 LOC (package), **119 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
+13 commits, ~3,515 LOC (package), **140 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -62,6 +62,7 @@ isolate(copy) → parallel arms → normalize → cluster(root-cause) → catego
 | **Markdown exec summary** | `export/markdown.py` (`summary.md`: gate, at-a-glance, method & model attestation incl. D8 substitution, register, details, demoted-not-hidden appendix; one hardened escaping boundary for all LLM/repo-derived text) | done |
 | **Scanner arms** | `arms/scanner.py` (semgrep/gitleaks/osv via docker or local), `proc.py` | done |
 | **LLM-CLI arms** | `arms/llm_cli.py` (claude/codex/agy house-prompt), `arms/registry.py` | done |
+| **Dedicated agentic arms** | `arms/claude_security.py` (Anthropic claude-security plugin, headless gate-collapse prompt, budget fuse, ingests its SARIF+panel+verification stamp) · `arms/codex_security.py` (OpenAI codex-security CLI, private 0700 output dir, ingests the sealed canonical bundle) · adapters `normalize/sources/{claude_security,codex_security}.py` · fixtures `tests/fixtures/raw/{claude-security,codex-security}/` | **built + tested offline; live run pending** |
 | **Isolation** | `workspace.py` (scratch copy; arms/validator write there, discarded) | done |
 | **Validator panel** | `validate/{council_client,prompts,panel}.py` (via `llm-council run --json`) | done, council-reviewed (R2) |
 | **Orchestrator + CLI** | `orchestrator.py`, `cli.py` (`scan`/`doctor`/`report`), `config.py`, `manifest.py` | done |
@@ -98,7 +99,9 @@ python3 -m security_council.cli report <run_dir>          # summarize a prior ru
 python3 -m security_council.cli report <run_dir> --format md [--detail-limit N]   # regenerate summary.md
 ```
 
-Arms: scanners `semgrep`, `gitleaks`, `osv-scanner` (docker or local binary); LLM `claude`, `codex`, `agy`.
+Arms: scanners `semgrep`, `gitleaks`, `osv-scanner` (docker or local binary); LLM house-prompt `claude`, `codex`, `agy`; dedicated agentic scanners `claude-security`, `codex-security`.
+Per-arm options come from `.security-council.yaml` → `arms.options.<name>` (constructor kwargs), e.g.
+`arms: {options: {claude-security: {effort: low, max_budget_usd: 10, model: claude-fable-5}, codex-security: {mode: standard, max_cost_usd: 5}}}`.
 Default arms if `--arms` omitted: `semgrep,gitleaks,osv-scanner` (see `config.py:DEFAULT_CONFIG`).
 
 **Exit codes:** 0 clean · 1 gating finding at/above `fail_on_severity` (excludes validated FPs) ·
@@ -115,13 +118,15 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 - **LLM arms cost real tokens/time.** claude arm ≈ 2–3 min. `codex-security` (not yet an arm) is heavy (~$4 / >7 min per M0). Native CLI council peers are ~$0 but ~1–2 min each.
 - **Gated models:** Mythos (`claude-mythos-5`) = Fable 5 with safeguards lifted, invite-only. Daybreak Blue = gated alias over GA `gpt-5.6-sol`; Red = distinct `gpt-5.6-cyber`. **Not provisioned on this machine** (checked). Design supports declaring entitlements per (CLI, tier, model) but routing to them is unbuilt.
 - **`~/.codex/config.toml` model is `gpt-5.6-sol`** with reasoning `ultra`; the codex arm passes `--ignore-user-config` to shed the operator's memories/skills (without it, codex hangs trying to patch `~/.codex/memories`).
+- **claude-security arm** (`arms/claude_security.py`): runs `claude -p "/claude-security scan-codebase --effort E …"` with the plugin's documented gate-collapse (job + shape + effort + the sentence *"I understand it may take a while and use a significant number of tokens"*), `--max-budget-usd` fuse (default 10), `--dangerously-skip-permissions --no-session-persistence --strict-mcp-config`. Needs the plugin installed (`claude plugin install claude-security@claude-plugins-official`, v0.10.1 here) and the **Workflow tool** in the session. It writes `CLAUDE-SECURITY-<ts>/` into the scanned dir → the arm moves it to `raw/claude-security/`. A run that exhausts the budget before `render_report.py` runs leaves **no report** → arm fails loudly (raw unverified findings salvaged). The scratch copy has no `.git`, so the plugin stamps `UNVERSIONED`; our manifest carries git provenance from the original.
+- **codex-security arm** (`arms/codex_security.py`): resolves the CLI as env `SECURITY_COUNCIL_CODEX_SECURITY_CMD` > `codex-security` on PATH > the **npx cache** (`~/.npm/_npx/*/node_modules/@openai/codex-security/bin/codex-security.mjs` via `node`, v0.1.16 cached here) — it never auto-installs. Output dir must be outside the worktree, 0700, with trusted ancestors → the arm scans into `mkdtemp` and copies the sealed bundle to `raw/codex-security/`. `--max-cost` fuse (default 5 USD), standard mode ≈ 7–8 min / ~$4 on the 12-file fixture (M0). Needs `~/.codex` at 700 (done). Exit 2 = incomplete coverage *or* runtime error → success is decided by the sealed `scan-manifest.json`.
 - **Trivy is banned as a default** (supply-chain compromised Mar 2026, GHSA-69fq-xp46-6x23). Use cdxgen/syft/grype for future SBOM/SCA.
 
 ## 7. Known limitations / deferred (honest list)
 
 1. **Validator prompt is SAST-shaped; doesn't fit SCA/dependency findings** → `supply_chain` is skipped from LLM validation (osv is authoritative). A dep-reachability validator is a future lane. (See R2.)
 2. **Validator verdict fidelity**: parses an explicit `VERDICT:` line from the transcript (S2 pattern). Works, but a redacted-secret finding validates to `needs_human` (no snippet to cite) — safe but blunt.
-3. **claude-security / codex-security dedicated arms not built** (only the generic house-prompt arm). They produce more/better findings and their own SARIF; both proven headless in M0. Now safe to add (isolation done).
+3. **claude-security / codex-security dedicated arms built offline only** — every code path is covered by fakes + real-shaped fixtures (the claude-security fixture was rendered by the plugin's own renderer), but **no live run has been made through the arms yet**. Next session: `security-council scan tests/fixtures/seedrepo --arms claude-security,codex-security,semgrep` (≈ $3–5 + $4, ~10 min) and fix whatever the live CLIs do differently (stdout envelope keys for codex-security `--format json` are best-effort guesses: `turnResult.model`, `cost.totalUsd`).
 4. **No `score.py`/`policy.py`** → v1 sets `disposition.state` but **never auto-suppresses** (lifecycle stays `open`; refuted findings render as SARIF `suppressions[underReview]`). The calibrated confidence function, shadow mode, decision store, and OpenVEX suppression are deferred — safe, because nothing is hidden yet.
 5. **Reports:** SARIF + JSON + manifest + `summary.md`. Missing: OpenVEX, OSCAL AR/POA&M, **eMASS static-code-scans** (DoD, CWE-keyed — high value/low effort), CKLB (ASD STIG V6R4), SBOM, CSV, HTML/PDF.
 6. **No MCP server yet** (`mcp_server.py`), no Azure DevOps template (`ci/azure_devops.py`), no GitHub Action.
@@ -132,7 +137,7 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 
 ## 8. Recommended next steps (in rough priority)
 
-1. **Dedicated `arms/claude_security.py` + `arms/codex_security.py`** — the heavy agentic scanners (their own SARIF), now safe with isolation. Biggest finding-quality boost.
+1. **Live-verify the dedicated arms** (`claude-security`, `codex-security`) on the seed fixture — see §7.3 for the command and cost; then add them to a recommended `arms.enabled` profile.
 2. **`score.py` + `policy.py` + decision store + shadow mode** — the calibrated confidence + suppression machinery (the `true_positive_suppression_rate` CI gate, crypto carve-out already structural in the model).
 3. **Gov/DoD exporters** — eMASS static-code-scans first (CWE-keyed, no STIG mapping), then OpenVEX, OSCAL, CKLB.
 4. **`mcp_server.py`** (copy llm-council's `_serve` pattern, root env `SECURITY_COUNCIL_MCP_ROOT`) + **Azure DevOps template**.
@@ -141,8 +146,8 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 119 green).
-3. `git log --oneline` (expect to be at `ce68b71` export/markdown.py or later).
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 140 green).
+3. `git log --oneline` (expect to be at `e31d1c9` dedicated arms or later).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
