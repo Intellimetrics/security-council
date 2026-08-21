@@ -10,6 +10,9 @@
 # spike scratch outputs
 .spikes/
 
+# security-council run outputs anywhere (e.g. inside fixtures)
+**/.security-council/
+
 # council runtime artifacts anywhere (e.g. inside fixtures)
 **/.llm-council/runs/
 **/.llm-council/inputs/
