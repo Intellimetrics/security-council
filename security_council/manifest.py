@@ -29,6 +29,9 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
             "elapsed_seconds": round(r.elapsed_seconds, 2),
             "raw_results": r.coverage.get("raw_results"), "normalized": r.coverage.get("normalized"),
             "completion": r.coverage.get("completion"),
+            "cost_usd": r.coverage.get("cost_usd"),
+            "cost_stopped": bool(r.coverage.get("cost_stopped")),
+            "model_unattested": bool(r.coverage.get("model_unattested")),
             "coverage_unverified": bool(r.coverage.get("coverage_unverified")),
             "classifier_fallback": bool(r.coverage.get("classifier_fallback")),   # D8
             "error": r.error or None,

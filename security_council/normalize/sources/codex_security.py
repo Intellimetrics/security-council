@@ -60,9 +60,21 @@ def _description(f: dict) -> str:
             line += f" — {conf['rationale']}"
         parts.append(line + ".")
     val = f.get("validation")
-    if isinstance(val, dict) and (val.get("method") or val.get("disposition")):
-        parts.append(f"Validation: {val.get('method') or '?'} → {val.get('disposition') or '?'}"
-                     + (f" ({val['confidence']})" if val.get("confidence") else "") + ".")
+    if isinstance(val, dict):
+        # live bundles (producer 0.1.22) say result="confirmed"/"confirmed-with-prerequisite"
+        # + status="validated"; older drafts said disposition. Render only what exists.
+        outcome = val.get("result") or val.get("disposition") or val.get("status")
+        method = val.get("method")
+        if outcome and method:
+            line = f"Validation: {outcome} — {method}"
+        elif outcome or method:
+            line = f"Validation: {outcome or method}"
+        else:
+            line = None
+        if line:
+            if val.get("confidence"):
+                line += f" ({val['confidence']})"
+            parts.append(line.rstrip(".") + ".")
     ap = f.get("attackPath")
     if isinstance(ap, dict) and ap.get("decision"):
         bits = [f"decision {ap['decision']}"]

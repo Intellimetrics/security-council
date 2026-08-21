@@ -19,8 +19,23 @@ this arm satisfies rather than fights:
   2 = incomplete coverage *or* runtime error — so success is decided by the
   sealed manifest, not the exit code.
 
-D8 applies: the served model comes from the JSON result's ``turnResult.model``
-and a pin mismatch drops the arm loudly.
+D8 applies: a pin mismatch drops the arm loudly — but note the live caveat below.
+
+Live-run facts (2026-08-21, CLI 0.1.16 / sealed producer ``codex-security-plugin``
+0.1.22, seedrepo fixture):
+- **stdout is empty**; all progress goes to stderr as timestamped lines
+  (``[MM:SS] Estimated cost: $X of $Y limit``). ``--format json`` shapes the
+  bundle, not stdout. The JSON-envelope parse is kept as a fallback for future
+  versions; cost is recovered from the stderr progress lines.
+- **the served model is reported nowhere** (stdout, stderr, bundle) — so a pin
+  cannot be positively attested; ``model_unattested`` is set in coverage.
+- a scan that hits ``--max-cost`` mid-run prints ``Scan stopped: estimated cost
+  $X exceeded the $Y limit`` and exits 2, but may still have **sealed a complete
+  bundle first** (the stop can land in a post-seal extension phase such as
+  "analyzing attack paths"). Success stays bundle-decided; ``cost_stopped`` is
+  surfaced in coverage.
+- full stderr is preserved as ``raw/codex-security/stderr.log`` (the result-json
+  fallback keeps only a 4000-char tail).
 """
 
 from __future__ import annotations
@@ -28,6 +43,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import shlex
 import shutil
 import stat
@@ -148,6 +164,8 @@ class CodexSecurityArm:
             (raw_dir / "codex-security-result.json").write_text(json.dumps(
                 outer if outer is not None else {"stdout": r.stdout[-4000:], "stderr": r.stderr[-4000:]},
                 indent=2))
+            if (r.stderr or "").strip():
+                (raw_dir / "stderr.log").write_text(r.stderr)
             manifest_path = _find_manifest(Path(tmp_out))
             scan_dir = manifest_path.parent if manifest_path else None
             if scan_dir:
@@ -157,7 +175,12 @@ class CodexSecurityArm:
 
         served = _served_model(outer)
         cost = _cost_usd(outer)
-        base_cov = {"cost_usd": cost, "mode": self.mode, "exit_code": r.exit_code}
+        if cost is None:
+            cost = _stderr_cost(r.stderr)
+        base_cov = {"cost_usd": cost, "mode": self.mode, "exit_code": r.exit_code,
+                    "cost_stopped": _cost_stopped(r.stderr)}
+        if served is None:
+            base_cov["model_unattested"] = True
         if r.timed_out:
             return self._fail(cmd, r, error=f"timed out after {self.timeout}s", cov=base_cov)
         if self.model and served and not _model_matches(self.model, served):
@@ -263,6 +286,22 @@ def _cost_usd(outer: dict | None) -> float | None:
             if isinstance(v, (int, float)):
                 return float(v)
     return None
+
+
+_COST_LINE = re.compile(r"(?:estimated cost:?|cost:)\s*\$([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
+_COST_STOP = re.compile(r"scan stopped: estimated cost \$[0-9.]+ exceeded", re.IGNORECASE)
+
+
+def _stderr_cost(stderr: str | None) -> float | None:
+    """Last cost figure from the stderr progress lines (stdout carries nothing live)."""
+    last = None
+    for m in _COST_LINE.finditer(stderr or ""):
+        last = m.group(1)
+    return float(last) if last is not None else None
+
+
+def _cost_stopped(stderr: str | None) -> bool:
+    return bool(_COST_STOP.search(stderr or ""))
 
 
 def _bundle_prompt_sha(manifest: dict | None) -> str:

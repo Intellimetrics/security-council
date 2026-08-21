@@ -66,9 +66,13 @@
       },
       "remediation": "Allow-list `fmt` and invoke the renderer with `subprocess.run([...], shell=False)`.",
       "validation": {
-        "method": "static-trace",
-        "disposition": "reportable",
-        "confidence": "high"
+        "method": "Offline static source review with focused forward/backward dataflow confirmation.",
+        "status": "validated",
+        "result": "confirmed",
+        "evidenceRefs": [
+          "cmd-source",
+          "cmd-sink"
+        ]
       },
       "attackPath": {
         "decision": "reportable",

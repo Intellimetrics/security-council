@@ -130,7 +130,8 @@ def test_codex_security_bundle_normalizes():
     assert cmdi.locations[0].uri == "app/reports.py" and cmdi.locations[0].start_line == 11
     assert cmdi.severity.label == "critical" and cmdi.taxonomy.cwe_family == "injection"
     assert "Root cause:" in cmdi.description and "Codex Security confidence: high" in cmdi.description
-    assert "Validation: static-trace → reportable" in cmdi.description
+    assert ("Validation: confirmed — Offline static source review "
+            "with focused forward/backward dataflow confirmation." in cmdi.description)
     assert cmdi.locations[0].snippet and "os.system" in cmdi.locations[0].snippet
     idor = by_rule["codex-security/authorization.missing-object-ownership-check"]
     assert idor.taxonomy.cwe == ["CWE-639", "CWE-862"] and idor.taxonomy.cwe_family == "authz"
@@ -291,7 +292,7 @@ def _codex_stdout(model="gpt-5.6-sol", cost=3.9):
                         "manifest": {"scan": {"id": "scan_seedrepo_fixture_001"}}}))
 
 
-def _fake_codex(monkeypatch, *, stdout, plant=True, returncode=0, nested=False):
+def _fake_codex(monkeypatch, *, stdout, stderr="", plant=True, returncode=0, nested=False):
     calls = []
 
     def fake_run(cmd, **kw):
@@ -308,7 +309,7 @@ def _fake_codex(monkeypatch, *, stdout, plant=True, returncode=0, nested=False):
                     shutil.copy2(f, dest / f.name)
             (dest / "exports").mkdir(exist_ok=True)
             (dest / "exports" / "results.sarif").write_text('{"version":"2.1.0","runs":[]}')
-        return _FakeProc(returncode, stdout)
+        return _FakeProc(returncode, stdout, stderr)
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setenv("SECURITY_COUNCIL_CODEX_SECURITY_CMD", "codex-security")
     return calls
@@ -340,6 +341,33 @@ def test_codex_security_arm_happy_path(monkeypatch, tmp_path):
     assert not str(out_dir).startswith(str(tgt))           # outside the scanned tree (tool requirement)
     assert not out_dir.exists()                             # private temp dir removed afterwards
     assert kw["cwd"] == str(tgt) and kw["env"]["SECURITY_COUNCIL_NESTED"] == "1"
+
+
+LIVE_CODEX_STDERR = (
+    "[00:11] Scan phase: enumerating files (0/9 files).\n"
+    "[10:38] Running scan: reviewing files | Files: 9/9 | Tokens: 2,302,727 input, "
+    "2,059,776 cached, 48,119 output | Cost: $3.688213\n"
+    "[18:13] Estimated cost: $5.429646 of $5.00 limit\n"
+    "Scan stopped: estimated cost $5.429646 exceeded the $5.00 limit; "
+    "partial output remains at /tmp/security-council-codexsec-xyz.\n"
+)
+
+
+def test_codex_security_live_shape_empty_stdout_cost_from_stderr(monkeypatch, tmp_path):
+    # observed live 2026-08-21 (CLI 0.1.16): stdout is EMPTY, progress + cost go to
+    # stderr, and a cost-stop can land after the bundle sealed complete.
+    tgt = _scratch_target(tmp_path)
+    _fake_codex(monkeypatch, stdout="", stderr=LIVE_CODEX_STDERR, returncode=2)
+    res = CodexSecurityArm().run(tgt, tmp_path / "out", run_id="r", collected_at="t")
+    assert res.ok and len(res.findings) == 4
+    cov = res.coverage
+    assert cov["cost_usd"] == 5.429646 and cov["cost_stopped"] is True
+    assert cov["model_unattested"] is True and res.tool_version is None
+    assert cov["completion"] == "complete" and cov["exit_code"] == 2
+    raw = tmp_path / "out" / "raw" / "codex-security"
+    assert (raw / "stderr.log").read_text() == LIVE_CODEX_STDERR
+    saved = json.loads((raw / "codex-security-result.json").read_text())
+    assert set(saved) == {"stdout", "stderr"}          # fallback envelope, no JSON on stdout
 
 
 def test_codex_security_no_bundle_is_failure_and_cleans_up(monkeypatch, tmp_path):

@@ -228,8 +228,8 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
 
 def _method(findings: list[Finding], manifest: dict) -> list[str]:
     out = ["## Method & attestation", "",
-           "| Arm | Kind | Vendor | Model / version | Status | Raw → merged | Time |",
-           "|---|---|---|---|---|---|---|"]
+           "| Arm | Kind | Vendor | Model / version | Status | Raw → merged | Time | Cost |",
+           "|---|---|---|---|---|---|---|---|"]
     substituted = []
     for a in manifest.get("arms", []) or []:
         status = "ok" if a.get("ok") else f"**FAILED** — {_cell(a.get('error') or '', 120)}"
@@ -237,15 +237,19 @@ def _method(findings: list[Finding], manifest: dict) -> list[str]:
             status += " · ⚠ coverage unverified"
         if a.get("completion") and a.get("completion") != "complete":
             status += f" · completion {_cell(a['completion'])}"
+        if a.get("cost_stopped"):
+            status += " · ⚠ cost-stopped"
         if a.get("classifier_fallback"):
             status = f"**MODEL SUBSTITUTION** — {_cell(a.get('error') or '', 120)}"
             substituted.append(a.get("name", "?"))
+        model = a.get("tool_version") or ("unattested" if a.get("model_unattested") else "—")
         raw = a.get("raw_results")
         norm = a.get("normalized")
         cnt = f"{raw if raw is not None else '?'} → {norm if norm is not None else '?'}"
+        cost = a.get("cost_usd")
         out.append(f"| {_cell(a.get('name'))} | {_enum(a.get('kind'))} | {_cell(a.get('family'))} | "
-                   f"{_cell(a.get('tool_version') or '—', 60)} | {status} | {cnt} | "
-                   f"{a.get('elapsed_seconds', 0)}s |")
+                   f"{_cell(model, 60)} | {status} | {cnt} | "
+                   f"{a.get('elapsed_seconds', 0)}s | {f'${cost:.2f}' if isinstance(cost, (int, float)) else '—'} |")
     out.append("")
     if substituted:
         out.append(f"> ❌ **Model substitution detected** on {', '.join(_code(s) for s in substituted)}: "
