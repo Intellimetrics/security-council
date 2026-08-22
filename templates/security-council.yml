@@ -1,0 +1,90 @@
+# security-council — Azure DevOps Server pipeline step template (D4).
+#
+# Copy this file into your repo (or reference it from a shared templates repo)
+# and extend from your pipeline:
+#
+#   steps:
+#     - template: templates/security-council.yml
+#       parameters:
+#         scanPath: '$(Build.SourcesDirectory)'
+#         arms: 'semgrep,gitleaks,osv-scanner'
+#         failOnSeverity: 'high'
+#         gateBaseline: 'new'     # brownfield: gate only findings absent from
+#                                 # the committed baseline (security-council baseline set)
+#
+# Requirements on the agent: python 3.11+, `pip install security-council`,
+# and docker for the scanner arms. Install the "SARIF SAST Scans Tab"
+# marketplace extension to render the CodeAnalysisLogs artifact on the build.
+# For PR comment threads, grant the build service "Contribute to pull
+# requests" on the repo and keep postPrThread true.
+#
+# Shape: the scan runs first and its exit code is CAPTURED, not raised —
+# artifacts and annotations always publish; the final "gate" step re-raises
+# the scan's exit code (0 clean · 1 gate · 2 usage · 3 degraded).
+
+parameters:
+  - name: scanPath
+    type: string
+    default: '$(Build.SourcesDirectory)'
+  - name: arms
+    type: string
+    default: 'semgrep,gitleaks,osv-scanner'
+  - name: failOnSeverity
+    type: string
+    default: 'high'
+  - name: gateBaseline
+    type: string
+    default: 'all'
+  - name: extraScanArgs
+    type: string
+    default: ''
+  - name: postPrThread
+    type: boolean
+    default: true
+
+steps:
+  - bash: |
+      set +e
+      python3 -m security_council.cli scan "${{ parameters.scanPath }}" \
+        --arms "${{ parameters.arms }}" \
+        --fail-on-severity "${{ parameters.failOnSeverity }}" \
+        --gate-baseline "${{ parameters.gateBaseline }}" \
+        ${{ parameters.extraScanArgs }}
+      SCAN_EXIT=$?
+      RUN_DIR=$(ls -d "${{ parameters.scanPath }}/.security-council/runs"/*/ 2>/dev/null | sort | tail -1)
+      echo "##vso[task.setvariable variable=securityCouncilExit]${SCAN_EXIT}"
+      echo "##vso[task.setvariable variable=securityCouncilRunDir]${RUN_DIR%/}"
+      exit 0
+    displayName: 'security-council: scan'
+
+  - bash: |
+      set -e
+      mkdir -p "$(Build.ArtifactStagingDirectory)/CodeAnalysisLogs"
+      cp "$(securityCouncilRunDir)/merged.sarif" "$(Build.ArtifactStagingDirectory)/CodeAnalysisLogs/"
+      cp "$(securityCouncilRunDir)/raw.sarif" "$(Build.ArtifactStagingDirectory)/CodeAnalysisLogs/" || true
+      cp "$(securityCouncilRunDir)/summary.md" "$(Build.ArtifactStagingDirectory)/CodeAnalysisLogs/" || true
+    condition: and(always(), ne(variables['securityCouncilRunDir'], ''))
+    displayName: 'security-council: stage SARIF'
+
+  - task: PublishBuildArtifacts@1
+    condition: and(always(), ne(variables['securityCouncilRunDir'], ''))
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)/CodeAnalysisLogs'
+      ArtifactName: 'CodeAnalysisLogs'
+    displayName: 'security-council: publish CodeAnalysisLogs'
+
+  - bash: |
+      EXTRA=""
+      if [ "${POST_PR_THREAD}" = "True" ] || [ "${POST_PR_THREAD}" = "true" ]; then
+        EXTRA="--post-pr-thread"
+      fi
+      python3 -m security_council.ci.azure_devops "$(securityCouncilRunDir)" ${EXTRA}
+    condition: and(always(), ne(variables['securityCouncilRunDir'], ''))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      POST_PR_THREAD: ${{ parameters.postPrThread }}
+    displayName: 'security-council: annotate (logissue, summary, PR thread)'
+
+  - bash: exit "$(securityCouncilExit)"
+    condition: always()
+    displayName: 'security-council: gate'

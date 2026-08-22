@@ -31,6 +31,8 @@ def cmd_scan(args) -> int:
         config["policy"]["fail_on_severity"] = args.fail_on_severity
     if args.min_arms is not None:
         config["policy"]["min_arms_ok"] = args.min_arms
+    if getattr(args, "gate_baseline", None):
+        config["policy"]["gate_baseline"] = args.gate_baseline
     names = [n.strip() for n in args.arms.split(",")] if args.arms else config["arms"]["enabled"]
     unknown = [n for n in names if n not in known_arms()]
     if unknown:
@@ -236,6 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("path")
     s.add_argument("--arms", help="comma-separated arm names (default: config)")
     s.add_argument("--fail-on-severity", choices=["critical", "high", "medium", "low", "info"])
+    s.add_argument("--gate-baseline", choices=["all", "new"],
+                   help='"new" gates only findings absent from the operator-set baseline')
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")

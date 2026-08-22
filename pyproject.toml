@@ -24,9 +24,13 @@ dev = [
   "ruff>=0.5",
   "jsonschema>=4",   # test-time SARIF / envelope schema validation only
 ]
+mcp = [
+  "mcp>=2,<3",       # MCP server mode only; handlers work without it
+]
 
 [project.scripts]
 security-council = "security_council.cli:main"
+security-council-mcp = "security_council.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["security_council*"]
