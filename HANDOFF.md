@@ -143,10 +143,34 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 
 ## 8. Recommended next steps (in rough priority)
 
-1. **`decisions.py` decision store + `outcome mark`** — persist suppressions/human decisions per root cause (append-only `history[]`, atomic writes, `.security-council/decisions/by-root-cause/`), feed the score `history` term, make G6 expiry/reopen and G8 context-drift explicit, store the shadow-run counter. (`score.py`+`policy.py`+shadow landed 2026-08-22.)
-2. **Gov/DoD exporters** — eMASS static-code-scans first (CWE-keyed, no STIG mapping), then OpenVEX, OSCAL, CKLB.
-3. **`mcp_server.py`** (copy llm-council's `_serve` pattern, root env `SECURITY_COUNCIL_MCP_ROOT`) + **Azure DevOps template**.
-4. **Eval harness** (`eval/metrics.py` + seeded corpus): restore llm-council's deleted `eval/metrics.py` (`git -C ../llm-council show ce8acd1^:llm_council/eval/metrics.py`); wire `true_positive_suppression_rate ≤ 5%` / crypto `0%` as CI gates; fit score weights → `calibration: fitted` (ECE reported).
+_Ordering council-reviewed 2026-08-22 (R3, `docs/reviews/R3-scope-eval-first.md`): eval gate
+before the decision store — never wire the history feedback loop onto an unmeasured scorer._
+
+1. **Eval gate (minimal, replay-based)** — replay `tests/fixtures/raw/` (all arm families)
+   through normalize → cluster → coverage → panel-verdict fixture → score → policy; match against
+   `tests/fixtures/EXPECTED.yaml`; **gate on ZERO TP demotions/suppressions and crypto 0%**
+   (the ≤5% figure is not resolvable at n=7 — one wrongful suppression is already 14%; keep 5%
+   as the target for a future larger corpus). Must include a validated-run replay (panel-verdict
+   fixture, else only the no-op branch of `apply_policy` is exercised) and an adversarial-history
+   scenario. Calibration fitting explicitly deferred (fitting 7+ weights on 7 TPs overfits).
+2. **`decisions.py` decision store + `outcome mark` + baseline/delta** — persist suppressions/human
+   decisions per root cause (append-only `history[]`, atomic writes,
+   `.security-council/decisions/by-root-cause/`), feed the score `history` term, make G6
+   expiry/reopen and G8 context-drift explicit, store the shadow-run counter (**reset it on
+   policy-config change** — a stored counter flips the census's fail-safe direction; and don't
+   burn shadow runs on uncalibrated scores). **Baseline/delta folded in** (R3 found it in §7.8
+   but missing from this roadmap; it is the CI-template adoption blocker on brownfield repos).
+   Re-run the eval gate with adversarial history counts (`W_HISTORY` must not push a decoy past
+   `suppress_below`).
+3. **eMASS static-code-scans exporter** (CWE-keyed, no STIG mapping; pure render from
+   `findings.jsonl` per D7 — zero policy risk, strongest DoD demo artifact). **Verify field names
+   against a real eMASS import template first** — a rejected import kills the demo value. Then
+   OpenVEX, OSCAL, CKLB on demand.
+4. **`mcp_server.py`** (copy llm-council's `_serve` pattern, root env `SECURITY_COUNCIL_MCP_ROOT`)
+   + **Azure DevOps template** — last unless a pilot/demo is scheduled; its real usability blocker
+   (baseline/delta) is item 2.
+5. **Calibration fitting** — deferred past all of the above until a larger corpus exists
+   (OWASP Benchmark importer lane); `calibration: "prior"` stays honestly labeled until then.
 
 (§8.1 live verification of the dedicated arms was completed 2026-08-21 — run `20260821_130516`,
 kept under `tests/fixtures/seedrepo/.security-council/runs/` (gitignored) as the live reference.
