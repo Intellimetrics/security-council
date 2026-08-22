@@ -17,7 +17,8 @@ python3 -m security_council.cli doctor
 python3 -m security_council.cli scan tests/fixtures/seedrepo --arms claude,semgrep,gitleaks,osv-scanner
 python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --validate-max 2
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
-python3 -m pytest tests/ -q        # 178 tests, ~0.9s
+python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
+python3 -m pytest tests/ -q        # 185 tests, ~0.9s (includes the eval gate)
 ```
 
 Proven live twice: the claude house arm found the cross-file **IDOR (CWE-639)** that deterministic
@@ -50,7 +51,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-18 commits, ~4,350 LOC (package), **178 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
+21 commits, ~4,700 LOC (package), **185 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -71,6 +72,7 @@ isolate(copy) → parallel arms → normalize → cluster(root-cause) → catego
 | **Isolation** | `workspace.py` (scratch copy; arms/validator write there, discarded) | done |
 | **Validator panel** | `validate/{council_client,prompts,panel}.py` (via `llm-council run --json`) | done, council-reviewed (R2) |
 | **Score + disposition policy** | `score.py` (transparent log-odds p_true: prior −1.2, 7 named terms, fail-safe clamps — crypto floor 0.50, deterministic floor 0.60, unreliable cap + human flag; `calibration: prior` until fitted) · `policy.py` (guardrails G1–G8: demote-never-close, double-gated auto-suppress + 5 shadow runs, crypto/critical never suppressed, G2 deterministic refutation needs a fully-verified defender else escalates `needs_human`, root-cause-scoped 90-day suppressions, `assert_invariants` on every mutation) · `policy.json` audit artifact every run | done |
+| **Eval gate** | `eval/{metrics,runner}.py` (replay recorded fixtures through the real pipeline; path + exact-CWE-over-family matcher vs `EXPECTED.yaml`; zero-tolerance wrongful-suppression gate, crypto rate reported; panel-verdict fixture exercises demote/suppress branches; adversarial-history + wrong-panel meta-test) · CLI `eval` subcommand · runs inside pytest = the CI gate | done, council-directed (R3) |
 | **Orchestrator + CLI** | `orchestrator.py`, `cli.py` (`scan`/`doctor`/`report`), `config.py`, `manifest.py` | done |
 | **Seed fixture** | `tests/fixtures/seedrepo` (vulns across families + FP decoy + injection payload), `EXPECTED.yaml` | done |
 | **Envelope schema** | `security_council/schemas/agent_finding_envelope.v1.json` (portable strict-mode subset) | done |
@@ -146,13 +148,13 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 _Ordering council-reviewed 2026-08-22 (R3, `docs/reviews/R3-scope-eval-first.md`): eval gate
 before the decision store — never wire the history feedback loop onto an unmeasured scorer._
 
-1. **Eval gate (minimal, replay-based)** — replay `tests/fixtures/raw/` (all arm families)
-   through normalize → cluster → coverage → panel-verdict fixture → score → policy; match against
-   `tests/fixtures/EXPECTED.yaml`; **gate on ZERO TP demotions/suppressions and crypto 0%**
-   (the ≤5% figure is not resolvable at n=7 — one wrongful suppression is already 14%; keep 5%
-   as the target for a future larger corpus). Must include a validated-run replay (panel-verdict
-   fixture, else only the no-op branch of `apply_policy` is exercised) and an adversarial-history
-   scenario. Calibration fitting explicitly deferred (fitting 7+ weights on 7 TPs overfits).
+1. ~~**Eval gate (minimal, replay-based)**~~ — **DONE 2026-08-22** (`security_council/eval/`,
+   `tests/test_eval_gate.py`, `security-council eval`): replays `tests/fixtures/raw/` (all arm
+   families; new `house-claude.envelope.json` closes the AES-ECB + decoy coverage gap) with
+   panel verdicts from `tests/fixtures/eval/panel_verdicts.yaml`; **zero-tolerance gate** on TP
+   demotion/suppression (≤5% not resolvable at n=7; keep 5% as the target for a larger corpus).
+   Pinned: recall 7/7, decoy demoted-not-hidden even fully-armed past-shadow, adversarial
+   history moves nothing, wrong-panel meta-test caught. Calibration fitting stays deferred (§8.5).
 2. **`decisions.py` decision store + `outcome mark` + baseline/delta** — persist suppressions/human
    decisions per root cause (append-only `history[]`, atomic writes,
    `.security-council/decisions/by-root-cause/`), feed the score `history` term, make G6
@@ -179,8 +181,8 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 178 green).
-3. `git log --oneline` (expect to be at `344fd40` score+policy or later).
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 185 green).
+3. `git log --oneline` (expect to be at `a5a1cf7` eval gate or later).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
