@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__
+from . import __version__, policy as policy_mod
 from .arms.base import Arm, ArmResult
 from .cluster import cluster_findings, merge_cluster
 from .export import markdown, sarif
@@ -98,6 +98,13 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             _vpanel.validate_findings(merged, repo_root=ws.root, max_findings=validate_max_findings,
                                       max_cost_usd=validate_budget_usd)
 
+        # score + disposition policy (mutates dispositions; must precede exports/gate)
+        _, decided_at = _utc_stamp()
+        decisions = policy_mod.apply_policy(
+            merged, config, now_iso=decided_at,
+            prior_runs=policy_mod.count_prior_runs(out_dir.parent, run_id))
+        (out_dir / "policy.json").write_text(dumps(policy_mod.decisions_to_json(decisions)))
+
         (out_dir / "merged.sarif").write_text(dumps(sarif.to_sarif(
             merged, tool_version=__version__, run_id=run_id)))
         by_source = {r.name: r.findings for r in results if r.findings}
@@ -110,9 +117,11 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             run_id=run_id, target=str(target), arm_results=results, merged=merged, config=config,
             started_at=collected_at, finished_at=finished_at, git=ws.git_info(),
             degradations=degradations, exit_code=exit_code,
+            disposition_actions=policy_mod.decisions_summary(decisions),
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
                      (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
-                      ("summary.md", "markdown"), ("manifest.json", "json"))])
+                      ("summary.md", "markdown"), ("manifest.json", "json"),
+                      ("policy.json", "json"))])
         (out_dir / "summary.md").write_text(markdown.to_markdown(merged, manifest))
         (out_dir / "manifest.json").write_text(dumps(manifest))
     finally:

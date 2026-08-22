@@ -13,7 +13,14 @@ DEFAULT_CONFIG: dict = {
     #   arms.options.claude-security: {effort: low, max_budget_usd: 10}
     #   arms.options.codex-security:  {mode: standard, max_cost_usd: 5}
     "arms": {"enabled": ["semgrep", "gitleaks", "osv-scanner"], "options": {}},
-    "policy": {"fail_on_severity": "high", "min_arms_ok": 1},
+    # auto_suppress additionally requires accept_suppression_risk: true (the
+    # operator's explicit acknowledgement) and runs shadow for the first
+    # policy.shadow_runs runs; crypto and critical findings are never
+    # auto-suppressed regardless (guardrails G1/G7, structural via I6/I7).
+    "policy": {"fail_on_severity": "high", "min_arms_ok": 1,
+               "auto_suppress": False, "accept_suppression_risk": False,
+               "shadow_runs": 5, "suppress_below": 0.10,
+               "suppression_expiry_days": 90},
     "reports": {"outdir": ".security-council/runs"},
 }
 

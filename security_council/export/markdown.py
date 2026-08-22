@@ -179,8 +179,11 @@ def _header(manifest: dict, findings: list[Finding]) -> list[str]:
     out.append(f"- **Run:** {_esc(manifest.get('started_at', '?'))} → "
                f"{_esc(manifest.get('finished_at', '?'))} · security-council {_code(tool)}")
     pol = manifest.get("policy", {}) or {}
+    armed = bool(pol.get("auto_suppress")) and bool(pol.get("accept_suppression_risk"))
+    acts = manifest.get("disposition_actions") or {}
+    suppress = "off" if not armed else ("shadow" if acts.get("shadow_suppress") else "on")
     out.append(f"- **Policy:** fail on ≥ {_code(pol.get('fail_on_severity', 'high'))} · "
-               f"min arms ok {_code(pol.get('min_arms_ok', 1))}")
+               f"min arms ok {_code(pol.get('min_arms_ok', 1))} · auto-suppress {suppress}")
     if exit_code is not None:
         out.append(f"- **Gate:** {EXIT_LABELS.get(exit_code, f'exit {exit_code}')} (exit {exit_code})")
     out.append("")
