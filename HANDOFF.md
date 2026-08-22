@@ -18,7 +18,8 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --arms claude,semgr
 python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --validate-max 2
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 199 tests, ~0.9s (includes the eval gate)
+python3 -m pytest tests/ -q        # 206 tests, ~1s (includes the eval gate)
+python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 # operator loop: baseline + human decisions (persist under <target>/.security-council/)
 python3 -m security_council.cli baseline set --target <path>          # gate_baseline: "new" gates only new findings
 python3 -m security_council.cli suppress <finding_id> --operator NAME --justification "..." --target <path>
@@ -55,7 +56,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-25 commits, ~5,200 LOC (package), **199 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
+27 commits, ~5,350 LOC (package), **206 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -80,6 +81,7 @@ isolate(copy) → parallel arms → normalize → cluster(root-cause) → catego
 | **Score + disposition policy** | `score.py` (transparent log-odds p_true: prior −1.2, 7 named terms, fail-safe clamps — crypto floor 0.50, deterministic floor 0.60, unreliable cap + human flag; `calibration: prior` until fitted) · `policy.py` (guardrails G1–G8: demote-never-close, double-gated auto-suppress + 5 shadow runs, crypto/critical never suppressed, G2 deterministic refutation needs a fully-verified defender else escalates `needs_human`, root-cause-scoped 90-day suppressions, `assert_invariants` on every mutation) · `policy.json` audit artifact every run | done |
 | **Eval gate** | `eval/{metrics,runner}.py` (replay recorded fixtures through the real pipeline; path + exact-CWE-over-family matcher vs `EXPECTED.yaml`; zero-tolerance wrongful-suppression gate, crypto rate reported; panel-verdict fixture exercises demote/suppress branches; adversarial-history + wrong-panel meta-test) · CLI `eval` subcommand · runs inside pytest = the CI gate | done, council-directed (R3) |
 | **Decision store + baseline** | `decisions.py` (per-root-cause records, append-only `history[]`, atomic writes; reapply on scan with **G6 expiry→reopen** and **G8 drift→reopen+deactivate**; anti-poisoning: score `history` term fed ONLY by human `outcome mark`; armed-run shadow counter resets on suppression-config change; baseline snapshot + greedy 1:1 root_cause→context_hash→path_cwe_sink delta, SARIF `baselineState`, `policy.gate_baseline: "new"`) · CLI `outcome mark` / `baseline set\|show` / `suppress` (human, I6-attributed, expiring) | done, live-verified |
+| **eMASS exporter** | `export/emass.py` (`report --format emass`): CWE-keyed rows, stable `codeCheckName` "CWE-n (family)", numeric-string `cweId` (no prefix), medium→`Moderate`, D7 disposition withholding (suppressed/refuted never exported), noinfo skipped loudly, clear-findings body; contract verified against the official `eMASSRestOpenApi.yaml` + emasser client BEFORE coding (R3), conformance schema vendored in `tests/fixtures/schemas/` | done, live-verified |
 | **Orchestrator + CLI** | `orchestrator.py`, `cli.py` (`scan`/`doctor`/`report`), `config.py`, `manifest.py` | done |
 | **Seed fixture** | `tests/fixtures/seedrepo` (vulns across families + FP decoy + injection payload), `EXPECTED.yaml` | done |
 | **Envelope schema** | `security_council/schemas/agent_finding_envelope.v1.json` (portable strict-mode subset) | done |
@@ -143,7 +145,7 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 2. **Validator verdict fidelity**: parses an explicit `VERDICT:` line from the transcript (S2 pattern). Works, but a redacted-secret finding validates to `needs_human` (no snippet to cite) — safe but blunt.
 3. **codex-security served model is unattestable** — the CLI reports it nowhere (stdout empty, not in stderr or the sealed bundle), so a D8 model pin can only fail open: the arm sets `model_unattested` in coverage and the summary renders "unattested", but a silent substitution by the vendor would be invisible. Revisit if a future CLI version surfaces the model.
 4. **`calibration` stays `"prior"`** — the seven score weights are hand-set; the eval gate is zero-tolerance on the 7-TP corpus, and fitting waits for a larger corpus (§8.5). Never say "calibrated" in any report until `calibration == "fitted"`.
-5. **Reports:** SARIF + JSON + manifest + `summary.md`. Missing: OpenVEX, OSCAL AR/POA&M, **eMASS static-code-scans** (DoD, CWE-keyed — high value/low effort), CKLB (ASD STIG V6R4), SBOM, CSV, HTML/PDF.
+5. **Reports:** SARIF + JSON + manifest + `summary.md` + **eMASS static-code-scans** (`report --format emass`). Missing: OpenVEX, OSCAL AR/POA&M, CKLB (ASD STIG V6R4), SBOM, CSV, HTML/PDF.
 6. **No MCP server yet** (`mcp_server.py`), no Azure DevOps template (`ci/azure_devops.py`), no GitHub Action.
 7. **No Red-tier / PoC** (deferred by design; needs the authorization block + sandbox).
 8. **The decision store is target-local and unsigned** (`<target>/.security-council/decisions/`). Our own gitignore excludes all of `.security-council/`, so a team that wants shared suppressions/baselines must un-ignore `decisions/` + `baseline/` in *their* repo (run outputs should stay ignored) — a decision-sync/central-store + record-signing lane is future work. (Baseline/delta, the store, and `outcome mark` themselves landed 2026-08-22.)
@@ -173,10 +175,10 @@ before the decision store — never wire the history feedback loop onto an unmea
    but missing from this roadmap; it is the CI-template adoption blocker on brownfield repos).
    Re-run the eval gate with adversarial history counts (`W_HISTORY` must not push a decoy past
    `suppress_below`).
-3. **eMASS static-code-scans exporter** (CWE-keyed, no STIG mapping; pure render from
-   `findings.jsonl` per D7 — zero policy risk, strongest DoD demo artifact). **Verify field names
-   against a real eMASS import template first** — a rejected import kills the demo value. Then
-   OpenVEX, OSCAL, CKLB on demand.
+3. ~~**eMASS static-code-scans exporter**~~ — **DONE 2026-08-22** (`export/emass.py`,
+   `report --format emass`; contract verified against the official spec + emasser client first,
+   conformance schema vendored, live-verified on the reference run). Remaining exporter lane:
+   OpenVEX, OSCAL AR/POA&M, CKLB — on demand.
 4. **`mcp_server.py`** (copy llm-council's `_serve` pattern, root env `SECURITY_COUNCIL_MCP_ROOT`)
    + **Azure DevOps template** — last unless a pilot/demo is scheduled; its real usability blocker
    (baseline/delta) is item 2.
@@ -190,8 +192,8 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 199 green).
-3. `git log --oneline` (expect to be at `222b4e0` decision store or later).
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 206 green).
+3. `git log --oneline` (expect to be at `705e416` eMASS exporter or later).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
