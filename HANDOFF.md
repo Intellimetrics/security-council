@@ -17,7 +17,7 @@ python3 -m security_council.cli doctor
 python3 -m security_council.cli scan tests/fixtures/seedrepo --arms claude,semgrep,gitleaks,osv-scanner
 python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --validate-max 2
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
-python3 -m pytest tests/ -q        # 141 tests, ~0.8s
+python3 -m pytest tests/ -q        # 178 tests, ~0.9s
 ```
 
 Proven live twice: the claude house arm found the cross-file **IDOR (CWE-639)** that deterministic
@@ -50,11 +50,12 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-14 commits, ~3,600 LOC (package), **141 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
+18 commits, ~4,350 LOC (package), **178 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
-  → [optional] cross-vendor validation → merged+raw SARIF + findings.json + summary.md + manifest.json → exit code
+  → [optional] cross-vendor validation → score(log-odds p_true) → disposition policy (G1–G8)
+  → merged+raw SARIF + findings.json + summary.md + policy.json + manifest.json → exit code
 ```
 
 | Layer | Module(s) | State |
@@ -69,6 +70,7 @@ isolate(copy) → parallel arms → normalize → cluster(root-cause) → catego
 | **Dedicated agentic arms** | `arms/claude_security.py` (Anthropic claude-security plugin, headless gate-collapse prompt, budget fuse, ingests its SARIF+panel+verification stamp) · `arms/codex_security.py` (OpenAI codex-security CLI, private 0700 output dir, ingests the sealed canonical bundle, cost from stderr progress lines) · adapters `normalize/sources/{claude_security,codex_security}.py` · fixtures `tests/fixtures/raw/{claude-security,codex-security}/` (validation shape matches live producer 0.1.22) | **done — live-verified 2026-08-21** |
 | **Isolation** | `workspace.py` (scratch copy; arms/validator write there, discarded) | done |
 | **Validator panel** | `validate/{council_client,prompts,panel}.py` (via `llm-council run --json`) | done, council-reviewed (R2) |
+| **Score + disposition policy** | `score.py` (transparent log-odds p_true: prior −1.2, 7 named terms, fail-safe clamps — crypto floor 0.50, deterministic floor 0.60, unreliable cap + human flag; `calibration: prior` until fitted) · `policy.py` (guardrails G1–G8: demote-never-close, double-gated auto-suppress + 5 shadow runs, crypto/critical never suppressed, G2 deterministic refutation needs a fully-verified defender else escalates `needs_human`, root-cause-scoped 90-day suppressions, `assert_invariants` on every mutation) · `policy.json` audit artifact every run | done |
 | **Orchestrator + CLI** | `orchestrator.py`, `cli.py` (`scan`/`doctor`/`report`), `config.py`, `manifest.py` | done |
 | **Seed fixture** | `tests/fixtures/seedrepo` (vulns across families + FP decoy + injection payload), `EXPECTED.yaml` | done |
 | **Envelope schema** | `security_council/schemas/agent_finding_envelope.v1.json` (portable strict-mode subset) | done |
@@ -131,7 +133,7 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 1. **Validator prompt is SAST-shaped; doesn't fit SCA/dependency findings** → `supply_chain` is skipped from LLM validation (osv is authoritative). A dep-reachability validator is a future lane. (See R2.)
 2. **Validator verdict fidelity**: parses an explicit `VERDICT:` line from the transcript (S2 pattern). Works, but a redacted-secret finding validates to `needs_human` (no snippet to cite) — safe but blunt.
 3. **codex-security served model is unattestable** — the CLI reports it nowhere (stdout empty, not in stderr or the sealed bundle), so a D8 model pin can only fail open: the arm sets `model_unattested` in coverage and the summary renders "unattested", but a silent substitution by the vendor would be invisible. Revisit if a future CLI version surfaces the model.
-4. **No `score.py`/`policy.py`** → v1 sets `disposition.state` but **never auto-suppresses** (lifecycle stays `open`; refuted findings render as SARIF `suppressions[underReview]`). The calibrated confidence function, shadow mode, decision store, and OpenVEX suppression are deferred — safe, because nothing is hidden yet.
+4. **Suppression machinery has no persistence yet**: `score.py`/`policy.py` are built (auto-suppress off by default, double-gated, shadow-gated) but there is **no `decisions.py` decision store** — suppressions don't persist across runs (G6 expiry/reopen and G8 context-drift are enforced by construction: every run re-scores from fresh evidence), the `history` score term has no feeder, and shadow-run counting is by run-directory census rather than a stored counter. `calibration` stays `"prior"` until the eval harness fits weights on ground truth.
 5. **Reports:** SARIF + JSON + manifest + `summary.md`. Missing: OpenVEX, OSCAL AR/POA&M, **eMASS static-code-scans** (DoD, CWE-keyed — high value/low effort), CKLB (ASD STIG V6R4), SBOM, CSV, HTML/PDF.
 6. **No MCP server yet** (`mcp_server.py`), no Azure DevOps template (`ci/azure_devops.py`), no GitHub Action.
 7. **No Red-tier / PoC** (deferred by design; needs the authorization block + sandbox).
@@ -141,10 +143,10 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 
 ## 8. Recommended next steps (in rough priority)
 
-1. **`score.py` + `policy.py` + decision store + shadow mode** — the calibrated confidence + suppression machinery (the `true_positive_suppression_rate` CI gate, crypto carve-out already structural in the model).
+1. **`decisions.py` decision store + `outcome mark`** — persist suppressions/human decisions per root cause (append-only `history[]`, atomic writes, `.security-council/decisions/by-root-cause/`), feed the score `history` term, make G6 expiry/reopen and G8 context-drift explicit, store the shadow-run counter. (`score.py`+`policy.py`+shadow landed 2026-08-22.)
 2. **Gov/DoD exporters** — eMASS static-code-scans first (CWE-keyed, no STIG mapping), then OpenVEX, OSCAL, CKLB.
 3. **`mcp_server.py`** (copy llm-council's `_serve` pattern, root env `SECURITY_COUNCIL_MCP_ROOT`) + **Azure DevOps template**.
-4. **Eval harness** (`eval/metrics.py` + seeded corpus): restore llm-council's deleted `eval/metrics.py` (`git -C ../llm-council show ce8acd1^:llm_council/eval/metrics.py`); wire `true_positive_suppression_rate ≤ 5%` / crypto `0%` as CI gates.
+4. **Eval harness** (`eval/metrics.py` + seeded corpus): restore llm-council's deleted `eval/metrics.py` (`git -C ../llm-council show ce8acd1^:llm_council/eval/metrics.py`); wire `true_positive_suppression_rate ≤ 5%` / crypto `0%` as CI gates; fit score weights → `calibration: fitted` (ECE reported).
 
 (§8.1 live verification of the dedicated arms was completed 2026-08-21 — run `20260821_130516`,
 kept under `tests/fixtures/seedrepo/.security-council/runs/` (gitignored) as the live reference.
@@ -153,8 +155,8 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 141 green).
-3. `git log --oneline` (expect to be at `f134516` live-verified dedicated arms or later).
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 178 green).
+3. `git log --oneline` (expect to be at `344fd40` score+policy or later).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
