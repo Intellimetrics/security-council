@@ -17,10 +17,13 @@ DEFAULT_CONFIG: dict = {
     # operator's explicit acknowledgement) and runs shadow for the first
     # policy.shadow_runs runs; crypto and critical findings are never
     # auto-suppressed regardless (guardrails G1/G7, structural via I6/I7).
+    # gate_baseline "new" gates only findings absent from the operator-set
+    # baseline (`security-council baseline set`); "all" (default) gates
+    # everything. With no baseline set, everything gates either way.
     "policy": {"fail_on_severity": "high", "min_arms_ok": 1,
                "auto_suppress": False, "accept_suppression_risk": False,
                "shadow_runs": 5, "suppress_below": 0.10,
-               "suppression_expiry_days": 90},
+               "suppression_expiry_days": 90, "gate_baseline": "all"},
     "reports": {"outdir": ".security-council/runs"},
 }
 

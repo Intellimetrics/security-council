@@ -217,6 +217,22 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
             out.append("- **Validator panel:** not run (`--validate` to cross-examine findings)")
         if demoted:
             out.append(f"- **Demoted, not hidden:** {demoted} finding(s) refuted or closed — see appendix")
+        bd = manifest.get("baseline_delta")
+        if bd:
+            out.append(f"- **Baseline** (vs run {_code(bd.get('baseline_run', '?'))}): "
+                       f"{bd.get('new', 0)} new · {bd.get('unchanged', 0)} unchanged · "
+                       f"{bd.get('updated', 0)} updated · {bd.get('absent', 0)} absent")
+        prior = manifest.get("prior_decisions") or []
+        reapplied = sum(1 for p in prior if str(p.get("action", "")).startswith("reapplied"))
+        reopened = [p for p in prior if str(p.get("action", "")).startswith("reopened")]
+        if prior:
+            bits = []
+            if reapplied:
+                bits.append(f"{reapplied} suppression(s) reapplied")
+            for p in reopened:
+                why = "expired" if p["action"] == "reopened_expired" else "context drift"
+                bits.append(f"finding {_code(p.get('finding_id', '?'))} REOPENED ({why})")
+            out.append(f"- **Decision store:** {' · '.join(bits)}")
         out.append("")
     degr = manifest.get("degradations") or []
     if degr:

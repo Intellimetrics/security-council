@@ -93,6 +93,105 @@ def cmd_report(args) -> int:
     return 0
 
 
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _store(args):
+    from .decisions import DecisionStore
+    return DecisionStore(Path(args.target).resolve() / ".security-council")
+
+
+def _run_dir(args) -> Path | None:
+    if getattr(args, "run", None):
+        d = Path(args.run)
+        return d if (d / "findings.json").is_file() else None
+    runs = Path(args.target).resolve() / ".security-council" / "runs"
+    cands = sorted(d for d in runs.iterdir()
+                   if (d / "findings.json").is_file()) if runs.is_dir() else []
+    return cands[-1] if cands else None
+
+
+def _find_row(run_dir: Path, finding_id: str) -> dict | None:
+    rows = json.loads((run_dir / "findings.json").read_text())
+    exact = [r for r in rows if r.get("id") == finding_id]
+    if exact:
+        return exact[0]
+    pref = [r for r in rows if str(r.get("id", "")).startswith(finding_id)]
+    return pref[0] if len(pref) == 1 else None
+
+
+def _resolve(args) -> tuple[Path, dict] | None:
+    run_dir = _run_dir(args)
+    if run_dir is None:
+        print("error: no run with findings.json found (pass --run)", file=sys.stderr)
+        return None
+    row = _find_row(run_dir, args.finding_id)
+    if row is None:
+        print(f"error: finding {args.finding_id!r} not found (or ambiguous) in {run_dir}",
+              file=sys.stderr)
+        return None
+    return run_dir, row
+
+
+def cmd_outcome_mark(args) -> int:
+    resolved = _resolve(args)
+    if resolved is None:
+        return EXIT_USAGE
+    _, row = resolved
+    verdict = {"tp": "true_positive", "fp": "false_positive"}.get(args.verdict, args.verdict)
+    operator = args.operator or __import__("getpass").getuser()
+    fp = row.get("fingerprints") or {}
+    _store(args).mark_outcome(root_cause=fp.get("root_cause", ""), finding_id=row["id"],
+                              verdict=verdict, operator=operator, note=args.note,
+                              now_iso=_now_iso(), title=row.get("title", ""),
+                              context_hash=fp.get("context_hash", ""))
+    print(f"marked {row['id']} {verdict} (operator {operator}); "
+          f"feeds the score history term for {fp.get('root_cause')}")
+    return 0
+
+
+def cmd_baseline_set(args) -> int:
+    run_dir = _run_dir(args)
+    if run_dir is None:
+        print("error: no run with findings.json found (pass --run)", file=sys.stderr)
+        return EXIT_USAGE
+    rows = json.loads((run_dir / "findings.json").read_text())
+    bl = _store(args).set_baseline(rows, run_id=run_dir.name, now_iso=_now_iso(),
+                                   operator=args.operator)
+    print(f"baseline set from run {run_dir.name}: {len(bl['findings'])} findings")
+    return 0
+
+
+def cmd_baseline_show(args) -> int:
+    bl = _store(args).load_baseline()
+    if bl is None:
+        print("no baseline set (security-council baseline set)", file=sys.stderr)
+        return 1
+    print(json.dumps({"run_id": bl.get("run_id"), "set_at": bl.get("set_at"),
+                      "operator": bl.get("operator"),
+                      "findings": len(bl.get("findings") or [])}, indent=2))
+    return 0
+
+
+def cmd_suppress(args) -> int:
+    resolved = _resolve(args)
+    if resolved is None:
+        return EXIT_USAGE
+    _, row = resolved
+    fp = row.get("fingerprints") or {}
+    lifecycle = "accepted_risk" if args.accept_risk else "suppressed"
+    _store(args).record_human_decision(
+        root_cause=fp.get("root_cause", ""), context_hash=fp.get("context_hash", ""),
+        finding_id=row["id"], title=row.get("title", ""), operator=args.operator,
+        justification=args.justification, now_iso=_now_iso(), lifecycle=lifecycle,
+        expires_days=args.expires_days, vex_justification=args.vex_justification)
+    print(f"recorded human {lifecycle} for {row['id']} (root cause {fp.get('root_cause')}); "
+          f"applies on future scans, expires in {args.expires_days} days")
+    return 0
+
+
 def cmd_eval(args) -> int:
     from .eval import runner
     root = Path(args.fixtures)
@@ -133,6 +232,45 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--fixtures", default="tests/fixtures",
                    help="corpus root containing seedrepo/, raw/, EXPECTED.yaml, eval/")
     e.set_defaults(fn=cmd_eval)
+
+    o = sub.add_parser("outcome", help="record operator ground truth for a finding")
+    osub = o.add_subparsers(dest="action", required=True)
+    om = osub.add_parser("mark", help="mark a finding TP/FP (feeds the score history term)")
+    om.add_argument("finding_id")
+    om.add_argument("--verdict", required=True,
+                    choices=["true_positive", "false_positive", "tp", "fp"])
+    om.add_argument("--note", default="")
+    om.add_argument("--operator", help="defaults to the OS user")
+    om.add_argument("--run", help="run directory (default: latest under the target)")
+    om.add_argument("--target", default=".", help="repo whose decision store to use")
+    om.set_defaults(fn=cmd_outcome_mark)
+
+    b = sub.add_parser("baseline", help="manage the operator-gated baseline")
+    bsub = b.add_subparsers(dest="action", required=True)
+    bs = bsub.add_parser("set", help="snapshot a run's findings as the baseline")
+    bs.add_argument("--run", help="run directory (default: latest under the target)")
+    bs.add_argument("--target", default=".")
+    bs.add_argument("--operator")
+    bs.set_defaults(fn=cmd_baseline_set)
+    bw = bsub.add_parser("show", help="show the current baseline pointer")
+    bw.add_argument("--target", default=".")
+    bw.set_defaults(fn=cmd_baseline_show)
+
+    from .model import OPENVEX_JUSTIFICATIONS
+    sp = sub.add_parser(
+        "suppress", help="record a HUMAN suppression for a finding's root cause "
+                         "(root-cause-scoped, expiring; applies on future scans)")
+    sp.add_argument("finding_id")
+    sp.add_argument("--operator", required=True)
+    sp.add_argument("--justification", required=True)
+    sp.add_argument("--accept-risk", action="store_true",
+                    help="record accepted_risk instead of suppressed")
+    sp.add_argument("--expires-days", type=int, default=90)
+    sp.add_argument("--vex-justification", choices=sorted(OPENVEX_JUSTIFICATIONS),
+                    help="also mark OpenVEX not_affected with this justification")
+    sp.add_argument("--run", help="run directory (default: latest under the target)")
+    sp.add_argument("--target", default=".")
+    sp.set_defaults(fn=cmd_suppress)
     return p
 
 

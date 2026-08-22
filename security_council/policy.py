@@ -45,6 +45,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .model import (
+    CLOSED_LIFECYCLES,
     DecidedBy,
     Finding,
     assert_invariants,
@@ -71,6 +72,12 @@ class PolicyDecision:
     reasons: list[str] = field(default_factory=list)
     guardrails_failed: list[str] = field(default_factory=list)
     score: ScoreResult | None = None
+
+
+def is_armed(config: dict) -> bool:
+    """Auto-suppression takes BOTH flags (explicit operator acknowledgement)."""
+    cfg = {**POLICY_DEFAULTS, **(config.get("policy") or {})}
+    return bool(cfg["auto_suppress"]) and bool(cfg["accept_suppression_risk"])
 
 
 def count_prior_runs(runs_root: Path, current_run_id: str) -> int:
@@ -150,6 +157,11 @@ def apply_policy(findings: list[Finding], config: dict, *, now_iso: str,
     decisions: list[PolicyDecision] = []
 
     for f in findings:
+        if f.disposition.lifecycle in CLOSED_LIFECYCLES:
+            # closed by a stored/operator decision — policy never restamps it
+            decisions.append(PolicyDecision(finding_id=f.id, action="none", p=0.0,
+                                            reasons=[f"lifecycle_{f.disposition.lifecycle}"]))
+            continue
         h = (history or {}).get(f.fingerprints.root_cause)
         s = score_finding(f, history=h)
         if f.validation is None:

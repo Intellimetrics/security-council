@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__, policy as policy_mod
+from . import __version__, decisions as decisions_mod, policy as policy_mod
 from .arms.base import Arm, ArmResult
 from .cluster import cluster_findings, merge_cluster
 from .export import markdown, sarif
@@ -50,11 +50,16 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
     min_arms = int(policy.get("min_arms_ok", 1))
     # gate on real/unresolved findings at/above threshold; a validated false positive
     # (state "refuted") is demoted and does not fail the build.
+    gate_baseline = policy.get("gate_baseline", "all")
     gating = [f for f in merged
               if f.disposition.lifecycle in ("open", "reopened")
               and f.disposition.state != "refuted"
               and not f.disposition.sarif_suppression
-              and _SEV_RANK[f.severity.label] >= threshold]
+              and _SEV_RANK[f.severity.label] >= threshold
+              # baseline mode "new": pre-existing (baselined) findings don't gate;
+              # findings with no baseline_state (no baseline set) always gate
+              and not (gate_baseline == "new"
+                       and f.baseline_state in ("unchanged", "updated"))]
     ok = [r for r in results if r.ok]
     failed = [r for r in results if not r.ok]
     degr = [{"kind": "arm_failed", "arm": r.name, "detail": r.error} for r in failed]
@@ -93,6 +98,12 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         merged = [coverage.apply(merge_cluster(c), run_ctx) for c in clusters]
         merged.sort(key=lambda f: (-_SEV_RANK[f.severity.label], f.taxonomy.cwe_family))
 
+        # decision store: reapply stored suppressions (expiry/drift reopen instead)
+        # BEFORE validation, so suppressed findings don't burn validator budget and
+        # reopened ones get re-validated (G8)
+        store = decisions_mod.DecisionStore(target / ".security-council")
+        prior_decisions = store.apply_prior_decisions(merged, now_iso=collected_at)
+
         if validate and merged:
             from .validate import panel as _vpanel
             _vpanel.validate_findings(merged, repo_root=ws.root, max_findings=validate_max_findings,
@@ -100,9 +111,22 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
 
         # score + disposition policy (mutates dispositions; must precede exports/gate)
         _, decided_at = _utc_stamp()
+        armed = policy_mod.is_armed(config)
         decisions = policy_mod.apply_policy(
             merged, config, now_iso=decided_at,
-            prior_runs=policy_mod.count_prior_runs(out_dir.parent, run_id))
+            prior_runs=store.armed_runs_completed(config) if armed else 0,
+            history=store.history_counts())
+        by_id = {f.id: f for f in merged}
+        for d in decisions:
+            if d.action in ("suppress", "shadow_suppress"):
+                store.record_suppression(by_id[d.finding_id], now_iso=decided_at,
+                                         shadow=d.action == "shadow_suppress")
+        if armed:
+            store.bump_armed_runs(config, run_id=run_id, now_iso=decided_at)
+
+        baseline = store.load_baseline()
+        baseline_delta = decisions_mod.annotate_baseline(merged, baseline) if baseline else None
+
         (out_dir / "policy.json").write_text(dumps(policy_mod.decisions_to_json(decisions)))
 
         (out_dir / "merged.sarif").write_text(dumps(sarif.to_sarif(
@@ -118,6 +142,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             started_at=collected_at, finished_at=finished_at, git=ws.git_info(),
             degradations=degradations, exit_code=exit_code,
             disposition_actions=policy_mod.decisions_summary(decisions),
+            baseline_delta=baseline_delta, prior_decisions=prior_decisions,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
                      (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
                       ("summary.md", "markdown"), ("manifest.json", "json"),

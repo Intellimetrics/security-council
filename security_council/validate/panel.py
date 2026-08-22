@@ -120,7 +120,9 @@ SKIP_VALIDATION_FAMILIES = frozenset({"supply_chain"})
 def validate_findings(findings: list[Finding], *, repo_root, runner=council_client.run_council,
                       max_findings: int | None = None,
                       skip_families: frozenset = SKIP_VALIDATION_FAMILIES, **kw) -> list[Finding]:
-    eligible = [f for f in findings if f.taxonomy.cwe_family not in skip_families]
+    from ..model import CLOSED_LIFECYCLES
+    eligible = [f for f in findings if f.taxonomy.cwe_family not in skip_families
+                and f.disposition.lifecycle not in CLOSED_LIFECYCLES]
     ranked = sorted(eligible, key=lambda f: f.severity.security_severity, reverse=True)
     todo = ranked[:max_findings] if max_findings else ranked
     for f in todo:
