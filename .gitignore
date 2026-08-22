@@ -26,3 +26,4 @@ __pycache__/
 
 # project venv (uv venv .venv; install -e .[mcp,dev])
 .venv/
+*.egg-info/
