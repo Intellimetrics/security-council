@@ -81,6 +81,30 @@ def cmd_report(args) -> int:
         print(f"error: no manifest.json in {args.run_dir}", file=sys.stderr)
         return EXIT_USAGE
     m = json.load(open(mf))
+    if args.format == "emass":
+        from .export import emass
+        from .jsonio import finding_from_dict
+        if not (args.app_name and args.app_version):
+            print("error: --format emass requires --app-name and --app-version", file=sys.stderr)
+            return EXIT_USAGE
+        if args.emass_clear:
+            print(json.dumps(emass.clear_findings_payload(
+                application_name=args.app_name, version=args.app_version), indent=2))
+            return 0
+        fj = Path(args.run_dir) / "findings.json"
+        findings = [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
+        scan_date = args.scan_date if args.scan_date is not None \
+            else emass.scan_date_from_manifest(m)
+        body, meta = emass.to_emass_static_code_scans(
+            findings, application_name=args.app_name, version=args.app_version,
+            scan_date=scan_date)
+        print(json.dumps(body, indent=2))
+        print(f"emass: {meta['rows']} rows from {meta['findings_exported']} findings; "
+              f"{meta['withheld_by_disposition']} withheld by disposition; "
+              f"{len(meta['skipped'])} skipped (no numeric CWE)", file=sys.stderr)
+        for s in meta["skipped"]:
+            print(f"  skipped {s['finding_id']}: {s['reason']} {s['cwe']}", file=sys.stderr)
+        return 0
     if args.format == "md":
         from .export import markdown
         from .jsonio import finding_from_dict
@@ -222,11 +246,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_scan)
     d = sub.add_parser("doctor", help="check arm availability")
     d.set_defaults(fn=cmd_doctor)
-    r = sub.add_parser("report", help="summarize a previous run directory")
+    r = sub.add_parser("report", help="summarize or export a previous run directory")
     r.add_argument("run_dir")
-    r.add_argument("--format", choices=["json", "md"], default="json",
-                   help="json summary (default) or regenerate the markdown report")
+    r.add_argument("--format", choices=["json", "md", "emass"], default="json",
+                   help="json summary (default), markdown report, or eMASS "
+                        "static-code-scans POST body")
     r.add_argument("--detail-limit", type=int, default=50, help="findings rendered in full (md)")
+    r.add_argument("--app-name", help="eMASS applicationName (required for --format emass)")
+    r.add_argument("--app-version", help="eMASS application version (required for --format emass)")
+    r.add_argument("--scan-date", type=int,
+                   help="unix scanDate for eMASS rows (default: the run's finished_at)")
+    r.add_argument("--emass-clear", action="store_true",
+                   help="emit the clear-findings body for the application instead")
     r.set_defaults(fn=cmd_report)
     e = sub.add_parser("eval", help="replay the recorded eval corpus; gate on wrongful suppression")
     e.add_argument("--fixtures", default="tests/fixtures",
