@@ -1,0 +1,15 @@
+# Panel-verdict replay fixture for the eval gate (R3 lane 1).
+#
+# Models a CORRECT validator panel over the seed corpus: every true positive is
+# unanimously confirmed, the decoy is unanimously refuted. F-DEP-URLLIB3 is
+# deliberately absent: supply_chain is skipped from LLM validation (HANDOFF
+# §7.1), so its findings stay unvalidated in the replay, as they would live.
+# Keyed by EXPECTED.yaml case id; values are panel verdicts.
+verdicts:
+  F-CRYPTO-MD5-PW: true_positive
+  F-CRYPTO-AES-ECB: true_positive
+  F-IDOR-ORDER: true_positive
+  F-SQLI-REPORTS: true_positive
+  F-CMDI-REPORTS: true_positive
+  F-SECRET-AWS: true_positive
+  FP-MD5-CACHE: false_positive

@@ -93,6 +93,18 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    from .eval import runner
+    root = Path(args.fixtures)
+    if not (root / "EXPECTED.yaml").is_file():
+        print(f"error: no EXPECTED.yaml under {root}", file=sys.stderr)
+        return EXIT_USAGE
+    run = runner.run_eval(root)
+    print(json.dumps({"metrics": run.report.metrics, "violations": run.report.violations,
+                      "disposition_actions": run.report.disposition_actions}, indent=2))
+    return 1 if run.report.violations else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="security-council")
     p.add_argument("--version", action="version", version=__version__)
@@ -117,6 +129,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="json summary (default) or regenerate the markdown report")
     r.add_argument("--detail-limit", type=int, default=50, help="findings rendered in full (md)")
     r.set_defaults(fn=cmd_report)
+    e = sub.add_parser("eval", help="replay the recorded eval corpus; gate on wrongful suppression")
+    e.add_argument("--fixtures", default="tests/fixtures",
+                   help="corpus root containing seedrepo/, raw/, EXPECTED.yaml, eval/")
+    e.set_defaults(fn=cmd_eval)
     return p
 
 

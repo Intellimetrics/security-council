@@ -1,0 +1,50 @@
+{
+  "schema_version": "sc-agent-finding/1",
+  "scan": {
+    "angle": "crypto",
+    "completion": "complete",
+    "files_examined": ["app/crypto_util.py", "app/cache_key.py"],
+    "coverage_notes": "Eval replay fixture (synthesized to agent_finding_envelope.v1, unlike the claude-security fixture which the plugin renderer produced): carries the two crypto sites the recorded scanner/dedicated fixtures do not — the real AES-ECB weakness and the md5-cache-key decoy bait.",
+    "declined_categories": []
+  },
+  "findings": [
+    {
+      "local_id": "H1",
+      "title": "AES-ECB encryption with a hardcoded key",
+      "description": "encrypt_blob uses AES.MODE_ECB with the hardcoded module-level key _KEY. ECB leaks plaintext structure across blocks and the hardcoded key is recoverable from the source.",
+      "cwe": ["CWE-327"],
+      "category": "crypto",
+      "severity": "high",
+      "confidence": "high",
+      "locations": [
+        {"path": "app/crypto_util.py", "start_line": 12, "end_line": 12, "role": "primary", "symbol": "encrypt_blob", "snippet": "cipher = AES.new(_KEY, AES.MODE_ECB)"}
+      ],
+      "data_flow": [],
+      "entry_point": "encrypt_blob",
+      "exploit_precondition": "attacker can observe ciphertexts of structured or repeating plaintext",
+      "remediation": "Use an AEAD mode (AES-GCM) with a per-message random nonce and load the key from a secret store.",
+      "evidence": [
+        {"path": "app/crypto_util.py", "start_line": 12, "end_line": 12, "claim": "AES.MODE_ECB with hardcoded _KEY"}
+      ]
+    },
+    {
+      "local_id": "H2",
+      "title": "MD5 used to derive a cache key",
+      "description": "cache_key hashes the payload with hashlib.md5. Flagged as weak-hash usage; the usedforsecurity=False annotation indicates a non-security content-hash context.",
+      "cwe": ["CWE-327"],
+      "category": "crypto",
+      "severity": "medium",
+      "confidence": "medium",
+      "locations": [
+        {"path": "app/cache_key.py", "start_line": 8, "end_line": 8, "role": "primary", "symbol": "cache_key", "snippet": "return hashlib.md5(payload.encode(), usedforsecurity=False).hexdigest()"}
+      ],
+      "data_flow": [],
+      "entry_point": "cache_key",
+      "exploit_precondition": "none identified: the digest never gates a security decision",
+      "remediation": "No change required if the value stays a cache key; use a keyed or SHA-2 hash if it ever becomes security-relevant.",
+      "evidence": [
+        {"path": "app/cache_key.py", "start_line": 8, "end_line": 8, "claim": "md5 cache key with usedforsecurity=False"}
+      ]
+    }
+  ]
+}
