@@ -124,7 +124,7 @@ def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: 
 def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path | None = None,
              isolate: bool = True, validate: bool = False, validate_max_findings: int | None = None,
              validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None,
-             fix_spec: dict | None = None) -> ScanRun:
+             fix_spec: dict | None = None, vendor_validate: bool = False) -> ScanRun:
     target = Path(target).resolve()
     if fix_spec and not isolate:
         raise ValueError("the fix lane requires isolation (an in-place fix would edit the "
@@ -206,8 +206,9 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
 
         if validate and merged:
             from .validate import panel as _vpanel
+            vrunner = (_vpanel.make_vendor_runner(ws.root) if vendor_validate else None)
             _vpanel.validate_findings(merged, repo_root=ws.root, max_findings=validate_max_findings,
-                                      max_cost_usd=validate_budget_usd)
+                                      max_cost_usd=validate_budget_usd, vendor_runner=vrunner)
 
         # score + disposition policy (mutates dispositions; must precede exports/gate)
         _, decided_at = _utc_stamp()

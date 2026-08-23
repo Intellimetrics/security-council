@@ -101,7 +101,8 @@ def cmd_scan(args) -> int:
                    isolate=not args.inplace,
                    validate=args.validate, validate_max_findings=args.validate_max,
                    validate_budget_usd=args.validate_budget, diff=diff,
-                   analysis_arms=analysis_arms, fix_spec=fix_spec)
+                   analysis_arms=analysis_arms, fix_spec=fix_spec,
+                   vendor_validate=bool(getattr(args, "vendor_validate", False)))
     if args.json:
         print(json.dumps({"run_id": run.run_id, "out_dir": str(run.out_dir),
                           "exit_code": run.exit_code, "counts": run.manifest["counts"],
@@ -381,6 +382,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
     s.add_argument("--inplace", action="store_true", help="scan the target directly (no isolated copy)")
     s.add_argument("--validate", action="store_true", help="run the cross-vendor validator panel")
+    s.add_argument("--vendor-validate", action="store_true",
+                   help="also collect the vendors' own validate/triage verdicts as "
+                        "NON-INDEPENDENT advisory panel voters (never deciding)")
     s.add_argument("--validate-max", type=int, help="cap findings sent to validation")
     s.add_argument("--validate-budget", type=float, default=0.5, help="max USD per validated finding")
     s.set_defaults(fn=cmd_scan)

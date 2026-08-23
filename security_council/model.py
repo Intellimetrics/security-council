@@ -29,7 +29,7 @@ Severity = Literal["critical", "high", "medium", "low", "info"]
 SarifLevel = Literal["error", "warning", "note", "none"]
 SourceKind = Literal["agent_cli", "scanner", "import", "human"]
 LocationRole = Literal["primary", "source", "sink", "sanitizer", "related"]
-PanelRole = Literal["prosecutor", "defender", "adjudicator"]
+PanelRole = Literal["prosecutor", "defender", "adjudicator", "vendor"]
 Verdict = Literal["true_positive", "false_positive", "uncertain", "needs_human"]
 DispositionState = Literal[
     "new", "validated", "likely", "disputed", "refuted", "needs_human"
@@ -259,6 +259,9 @@ class PanelOpinion:
     citation_pass_rate: Optional[float] = None
     status: Literal["ok", "unevidenced", "unreliable", "absent"] = "ok"
     weight: float = 1.0
+    # M-V5: a vendor validate/triage voter overlaps the same vendor family that
+    # scanned, so it is NOT an independent voice — advisory only, never deciding.
+    independent: bool = True
     elapsed_seconds: Optional[float] = None
     cost_usd: Optional[float] = None
 
