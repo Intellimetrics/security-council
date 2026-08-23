@@ -1,5 +1,9 @@
 # security-council — session handoff
 
+> **Internal engineering status doc** for the maintainer's development
+> environment — machine-local paths and vendor cost observations included.
+> User documentation lives in [README.md](README.md) and [docs/](docs/).
+
 _Last updated: 2026-08-23. Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR

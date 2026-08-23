@@ -4,5 +4,5 @@ See the design plan for architecture. This package intentionally exports only it
 version and schema version; every other module is imported explicitly by consumers.
 """
 
-__version__ = "0.0.0"
+__version__ = "0.1.0"
 SCHEMA_VERSION = 1

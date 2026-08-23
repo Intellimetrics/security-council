@@ -1,43 +1,79 @@
 # security-council
 
-Parallel, multi-agent security scanning for government and commercial codebases.
-Runs deterministic scanners and agentic LLM CLIs as independent "arms" against an
-isolated copy of a repo, normalizes their output into one finding model, clusters
-by root cause, computes category-aware cross-vendor corroboration, optionally
-cross-validates each finding with an adversarial LLM panel, and emits spec-valid
-SARIF 2.1.0, a markdown executive summary, and a run manifest with CI exit codes.
+**Parallel multi-agent security scanning with cross-validated findings.**
+security-council runs deterministic scanners *and* agentic LLM security
+reviewers as independent "arms" against an isolated copy of your repository,
+normalizes everything into one finding model, clusters by root cause,
+corroborates across vendors, and emits spec-valid SARIF 2.1.0, a markdown
+executive summary, and CI exit codes — with a fail-closed disposition policy
+designed so that **a true positive is never silently suppressed**.
 
-Status: **v1 (Blue profile) — working end to end**, live-verified 2026-08-21
-including both dedicated agentic arms. The agentic arms caught a cross-file
-IDOR (CWE-639) that pattern scanners cannot, corroborated across two vendor
-families.
+**The problem it addresses:** every scanner floods you with false positives,
+and each one misses what the others catch. Agentic LLM triage can cut the
+noise dramatically — but published research also found naive agentic triage
+*wrongly suppressed 22% of true vulnerabilities, over 50% for crypto*. This
+project is an answer to both halves: multi-vendor corroboration and an
+adversarial validator panel to kill false positives, and structural guardrails
+(demote-never-close, crypto never auto-suppressed, full attribution on every
+decision) so the cure can't become the disease. See
+[docs/safety-model.md](docs/safety-model.md).
 
-## Quickstart
+## Quickstart — $0, no API keys
+
+The default arm set is deterministic and local (docker or local binaries;
+nothing leaves your machine except scanner rule/DB downloads):
 
 ```bash
-python3 -m security_council.cli doctor                    # which arms are ready
-python3 -m security_council.cli scan <path>               # deterministic arms (free, fast)
-python3 -m security_council.cli scan <path> --validate    # + adversarial validator panel
-python3 -m security_council.cli report <run_dir> --format md
-python3 -m pytest tests/ -q
+pip install git+https://github.com/Intellimetrics/security-council
+security-council doctor                 # which arms are ready
+security-council scan .                 # semgrep + gitleaks + osv-scanner
+security-council report <run_dir> --format md
 ```
 
-Exit codes: `0` clean · `1` gating finding at/above `fail_on_severity` · `2` usage ·
-`3` degraded/partial run.
+Exit codes: `0` clean · `1` gating finding at/above `fail_on_severity` ·
+`2` usage · `3` degraded/partial. Run artifacts land in
+`.security-council/runs/<id>/`: `merged.sarif`, `raw.sarif`, `findings.json`,
+`summary.md`, `policy.json`, `manifest.json`.
+Full tour: [docs/getting-started.md](docs/getting-started.md).
 
-## Arms
-
-| Arm | Kind | Cost | Notes |
-|---|---|---|---|
-| `semgrep`, `gitleaks`, `osv-scanner` | scanner | free | via docker or local binary; the default set |
-| `claude`, `codex`, `agy` | LLM house-prompt | ~$0.5–3 | our prompt over the vendor CLI |
-| `claude-security` | dedicated agentic | ~$7 (effort `low`) | Anthropic claude-security plugin; 3-voter panel + verification stamp ingested |
-| `codex-security` | dedicated agentic | ~$5 fuse | OpenAI codex-security CLI; sealed canonical bundle ingested |
-
-Recommended deep profile (`.security-council.yaml` in the scanned repo — costs
-real tokens, ≈ $12–15 and ~20 min per run):
+## CI
 
 ```yaml
+# GitHub Actions
+permissions:
+  contents: read
+  security-events: write
+steps:
+  - uses: actions/checkout@v4
+  - uses: Intellimetrics/security-council@v0.1.0
+    with: { fail-on-severity: high, gate-baseline: new }
+```
+
+| Platform | How | Guide |
+|---|---|---|
+| GitHub | `action.yml` — native SARIF upload → code-scanning alerts + PR annotations | [docs/ci/github.md](docs/ci/github.md) |
+| Azure DevOps Server | `templates/security-council.yml` — CodeAnalysisLogs SARIF artifact, file/line annotations, PR threads | [docs/ci/azure-devops.md](docs/ci/azure-devops.md) |
+| GitLab | `templates/security-council.gitlab-ci.yml` — native SAST report (Ultimate) + Code Quality MR annotations (all tiers) | [docs/ci/gitlab.md](docs/ci/gitlab.md) |
+
+All three share the same shape: capture the scan exit code, always publish
+reports, re-raise the gate last. Brownfield adoption is one command —
+`security-council baseline set` then `--gate-baseline new` gates only *new*
+findings. *Status honesty: every CI surface is schema-validated and tested
+locally; none has yet run on customer infrastructure — issue reports from real
+pipelines are especially welcome.*
+
+## The LLM arms (opt-in, costs money, sends code to vendors)
+
+> **Data boundary:** the agentic arms and the validator panel send source
+> code and findings to vendor-hosted LLM APIs (Anthropic, OpenAI, Google —
+> whatever your CLIs are configured for). Vendor origin is **not** the same
+> as FedRAMP/IL authorization or an enterprise data-handling approval. Do not
+> point them at CUI, classified, or otherwise restricted code without your
+> own approvals. The deterministic default profile keeps everything local.
+> Full details per arm: [docs/data-boundaries.md](docs/data-boundaries.md).
+
+```yaml
+# .security-council.yaml — the "deep" profile (~$12–15 and ~20 min on a small repo)
 arms:
   enabled: [semgrep, gitleaks, osv-scanner, claude-security, codex-security]
   options:
@@ -45,26 +81,60 @@ arms:
     codex-security: {mode: standard, max_cost_usd: 8}
 ```
 
-Note: `codex-security`'s default `$5` fuse cost-stops its final attack-path phase
-even on a small repo (the core scan still seals complete); give it ~$8 headroom
-when you want that phase.
+Why bother: agentic arms find cross-file logic flaws pattern scanners
+structurally cannot. On this repo's own 12-file test fixture, both agentic
+vendor families independently found the seeded IDOR (CWE-639) that no
+deterministic arm reported — corroboration across two vendors, exactly the
+signal the scoring model rewards. (Fixture-scale demo, not a benchmark.)
+Add `--validate` to cross-examine findings with an adversarial
+prosecutor/defender/adjudicator panel across three vendors.
+Arm catalog, costs, and prerequisites: [docs/arms.md](docs/arms.md).
 
-## CI integrations
+## The safety model, briefly
 
-| Platform | How | What you get |
-|---|---|---|
-| **Azure DevOps Server** | copy `templates/security-council.yml` | CodeAnalysisLogs SARIF artifact (SARIF SAST Scans Tab), `logissue` file/line annotations, build summary, PR comment threads |
-| **GitHub** | `uses: Intellimetrics/security-council@main` (`action.yml`; needs `security-events: write`) | code-scanning alerts + PR annotations via native SARIF upload, step summary |
-| **GitLab** | `include: templates/security-council.gitlab-ci.yml` | `gl-sast-report.json` (Security Dashboard/MR widget, Ultimate) + `gl-code-quality-report.json` (inline MR diff annotations, **all tiers**), MR summary note |
+- **Demote, never auto-close.** A panel-refuted finding is demoted out of the
+  gate but stays open, visible, and listed in the report appendix.
+- **Auto-suppression is off by default** — enabling it takes two explicit
+  config flags *and* five shadow-mode runs; crypto and critical findings are
+  never auto-suppressed regardless.
+- **Every hidden finding carries verifiable attribution** (model id, prompt
+  hash, panel hash, expiry) — enforced structurally: a suppressed finding
+  without attribution cannot even be constructed.
+- **Suppressions expire (90 days) and reopen on code drift.** Human decisions
+  are recorded per root cause, never per rule or CWE.
+- **A replay-based eval gate runs in CI**: zero tolerance for wrongful
+  suppression of ground-truth true positives (currently a 7-case corpus —
+  stated honestly; the scoring stays labeled "prior", not calibrated, until
+  fitted on a larger corpus).
 
-All three capture the scan exit code, always publish artifacts/reports, and
-re-raise the gate last (0 clean · 1 gating finding · 3 degraded). Exports render
-from dispositions: suppressed/demoted findings are withheld everywhere.
-`--gate-baseline new` + `security-council baseline set` makes brownfield
-adoption sane (gate only what's new).
+Details with code pointers: [docs/safety-model.md](docs/safety-model.md) ·
+[docs/architecture.md](docs/architecture.md)
 
-Design: see `security-council-is-to-be-snoopy-prism.md` in the author's plan
-store; `HANDOFF.md` is the live status + resume document.
+## Operating it
 
-Derived from [llm-council](https://github.com/Intellimetrics/llm-council); the
-validator panel is a specialization of llm-council's `consensus` mode.
+Operators triage with an auditable loop —
+[docs/triage.md](docs/triage.md):
+
+```bash
+security-council baseline set                      # accept the brownfield backlog
+security-council suppress <id> --operator you --justification "..."   # expiring, root-cause-scoped
+security-council outcome mark <id> --verdict fp    # ground truth; feeds the scoring prior
+```
+
+Government/DoD: `report --format emass` renders the eMASS
+static-code-scans POST body (CWE-keyed, verified against the official API
+spec) — [docs/compliance/emass.md](docs/compliance/emass.md).
+An MCP server exposes the whole surface to AI assistants
+(`pip install .[mcp]`) — [docs/mcp.md](docs/mcp.md).
+
+## Status & honest limitations
+
+Working v1: 233 tests + a live-verified end-to-end run of all arm families.
+Not yet: calibration fitting (scores are labeled `prior`), OpenVEX/OSCAL/CKLB
+exporters, real-infrastructure CI runs, decision-store sync/signing. The
+`tests/fixtures/seedrepo/` tree is **intentionally vulnerable** with fake
+credentials — see [SECURITY.md](SECURITY.md) before pointing tools at it.
+
+Derived from [llm-council](https://github.com/Intellimetrics/llm-council)
+(the validator panel is a specialization of its `consensus` mode).
+License: source-available, evaluation use permitted — [LICENSE.md](LICENSE.md).
