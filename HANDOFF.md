@@ -23,7 +23,7 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --valida
 python3 -m security_council.cli scan . --arms claude-security --diff origin/main   # change-scoped (M-V1)
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 308 green + 1 skip (~1.2s); .venv/bin/python runs all 309 incl. MCP handshake
+python3 -m pytest tests/ -q        # 314 green + 1 skip (~1.2s); .venv/bin/python runs all 315 incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -64,7 +64,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-47 commits, ~8,100 LOC (package), **308 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
+49 commits, ~8,300 LOC (package), **314 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -264,7 +264,14 @@ before the decision store — never wire the history feedback loop onto an unmea
      bug: `extract_patch` now snapshots content with `.git` stripped so the work copy's git can't
      pollute a patch. **M-V4 (a+b) complete.** Offline/fake-proc; live vendor run needs spend
      (degrades to no_patch/unproven).
-   - **M-V5 (optional)** — vendor validate/triage as non-independent panel voters.
+   - ~~**M-V5 (optional)**~~ — **DONE 2026-08-23** (`validate/panel.py`, `scan --validate
+     --vendor-validate`, `test_vendor_validate.py`): vendor validate/triage join the panel as
+     `role=vendor`, `independent=False`, weight 0 — the verdict tally and the ≥2-voice quorum
+     exclude them; they're surfaced + summarized in `evidence_check.vendor_advisory`
+     (verdicts + disagrees_with_panel) as a human signal, never deciding. `make_vendor_runner`
+     shells out to the vendor `validate` skill (offline/injectable). **The vendor-workflow
+     surface is COMPLETE: M-V1 diff · M-V2 entitlements · M-V3 artifacts · M-V4 fix+verify ·
+     M-V5 voters.**
    Must NOT build: fix application to user code (no `--apply`), PoC generation/execution (Red,
    D5), vendor decision/tracking state or export egress, default-mounted vendor MCP servers.
 6. **Calibration fitting** — deferred until a larger corpus exists (OWASP Benchmark importer lane);
@@ -277,9 +284,9 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 308 green + 1 skipped;
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 314 green + 1 skipped;
    `.venv/bin/python -m pytest tests/ -q` runs all 244 incl. the live MCP handshake).
-3. `git log --oneline` (expect to be at the M-V4b verify-fix commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
+3. `git log --oneline` (expect to be at the M-V5 vendor-validate commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
