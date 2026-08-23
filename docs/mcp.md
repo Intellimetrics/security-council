@@ -1,5 +1,7 @@
 # MCP server
 
+**Who this is for:** users of AI assistants (Claude Code or any MCP client) who want the assistant to run scans and triage on their behalf, safely.
+
 Exposes security-council to AI assistants (Claude Code, or any MCP client)
 as typed tools over stdio.
 

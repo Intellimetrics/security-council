@@ -1,5 +1,7 @@
 # Arms
 
+**Who this is for:** you're choosing which scanners/AI reviewers to enable, or setting one up. New to the terminology? [concepts.md](concepts.md) first. If you're considering the AI arms, read [data-boundaries.md](data-boundaries.md) before enabling them.
+
 An **arm** is one independent producer of findings. Arms run in parallel
 against the isolated workspace; their output is normalized into one finding
 model, clustered by root cause, and corroborated across vendor families.

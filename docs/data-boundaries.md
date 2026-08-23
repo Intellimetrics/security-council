@@ -1,5 +1,7 @@
 # Data boundaries
 
+**Who this is for:** anyone with code that mustn't leak — and required reading for government/regulated environments before enabling any AI arm.
+
 **Read this page before scanning anything sensitive.** security-council's
 arms differ radically in what they send off your machine, and the difference
 is the whole point of the deterministic-by-default design.

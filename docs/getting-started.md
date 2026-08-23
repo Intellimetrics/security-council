@@ -1,5 +1,7 @@
 # Getting started
 
+**Who this is for:** you've seen the [tutorial](tutorial.md) (or don't need one) and want the reference details — install, configuration, run outputs, exit codes.
+
 ## Install
 
 ```bash

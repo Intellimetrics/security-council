@@ -1,5 +1,7 @@
 # GitLab CI
 
+**Who this is for:** teams on GitLab (any tier — the MR annotations work on Free). **You'll need:** a runner with Python 3.11+ and docker access, and maintainer permission for the CI file.
+
 ## Setup
 
 ```yaml

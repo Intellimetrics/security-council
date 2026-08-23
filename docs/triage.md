@@ -1,5 +1,7 @@
 # Operator guide: triage, baselines, suppressions
 
+**Who this is for:** the person who owns the findings day to day — reviewing reports, deciding what's real, and keeping CI green honestly. Assumes you've run a scan ([tutorial.md](tutorial.md)).
+
 The operator loop is designed around one principle: **decisions are scoped,
 attributed, expiring, and auditable** — never a rule-wide mute button.
 

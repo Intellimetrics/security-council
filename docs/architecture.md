@@ -1,5 +1,7 @@
 # Architecture
 
+**Who this is for:** contributors and reviewers who want to know how it works inside. Operators don't need this page — [triage.md](triage.md) covers daily use.
+
 ## Pipeline
 
 ```

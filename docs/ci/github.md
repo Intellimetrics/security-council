@@ -1,5 +1,7 @@
 # GitHub Actions
 
+**Who this is for:** anyone wiring security-council into GitHub Actions. **You'll need:** repo admin (for the workflow + permissions), nothing else — the runner images have python and docker.
+
 ```yaml
 name: security
 on: [push, pull_request]

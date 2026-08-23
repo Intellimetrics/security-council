@@ -1,5 +1,7 @@
 # Azure DevOps (Server and Services)
 
+**Who this is for:** teams on Azure DevOps — including on-prem **Server**, which most security products neglect. **You'll need:** an agent with Python 3.11+ and docker, and repo permission to edit pipelines.
+
 Azure DevOps **Server** is a first-class target: everything below works
 on-prem with no GitHub-connected services (no GHAzDO required).
 
