@@ -235,7 +235,11 @@ class DecisionStore:
                 continue
             counts = {"confirmed_tp": 0, "confirmed_fp": 0}
             for ev in rec.get("history") or []:
-                if ev.get("kind") == "outcome_mark" and ev.get("operator"):
+                # L1 anti-poisoning: ONLY human outcome_mark events count — a
+                # machine event (verify-fix evidence) is ignored even if it
+                # carries kind==outcome_mark and a copied operator field.
+                if (ev.get("kind") == "outcome_mark" and ev.get("operator")
+                        and ev.get("decided_by") != "machine"):
                     if ev.get("verdict") == "true_positive":
                         counts["confirmed_tp"] += 1
                     elif ev.get("verdict") == "false_positive":
@@ -243,6 +247,35 @@ class DecisionStore:
             if counts["confirmed_tp"] or counts["confirmed_fp"]:
                 out[rec.get("root_cause", "")] = counts
         return out
+
+    # ------------------------------------------------------------------ #
+    # verify-fix evidence — machine, NON-CLOSING (M-V4b, R6 L1/L3)
+    # ------------------------------------------------------------------ #
+    def record_verify_evidence(self, *, root_cause: str, finding_id: str, verdict: str,
+                               patch_sha256: str, base_commit: str | None, producer: str,
+                               now_iso: str, model: str | None = None, note: str = "",
+                               title: str = "", context_hash: str = "") -> dict:
+        """Attach a vendor verify-fix verdict as machine EVIDENCE bound to the
+        exact patch. It informs a human but can NEVER close a finding, feed the
+        score history term (L1: kind != outcome_mark, decided_by machine), or
+        become a panel vote (L3: it lives here, not in validation)."""
+        if verdict not in ("fixed", "not_fixed", "unproven"):
+            raise ValueError(f"verify verdict must be fixed|not_fixed|unproven, got {verdict!r}")
+        rec = self.load(root_cause) or {
+            "schema_version": SCHEMA_VERSION, "root_cause": root_cause,
+            "finding_id": finding_id, "title": title, "context_hash": context_hash,
+            "history": [],
+        }
+        ev = {"at": now_iso, "kind": "vendor_verify_fix", "decided_by": "machine",
+              "verdict": verdict, "patch_sha256": patch_sha256, "base_commit": base_commit,
+              "producer": producer, "model": model, "finding_id": finding_id, "note": note}
+        rec["history"].append(ev)
+        rec.setdefault("verify_evidence", []).append(ev)
+        _atomic_write(self._path(root_cause), rec)
+        return ev
+
+    def verify_evidence(self, root_cause: str) -> list[dict]:
+        return (self.load(root_cause) or {}).get("verify_evidence") or []
 
     # ------------------------------------------------------------------ #
     # armed-run shadow counter (G4)

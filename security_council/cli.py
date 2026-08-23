@@ -94,7 +94,8 @@ def cmd_scan(args) -> int:
         if getattr(args, "tier", None):
             from . import entitlements as _ent
             fix_model = _ent.tier_model(args.tier)
-        fix_spec = {"jobs": [args.fix_job], "finding_ids": ids, "model": fix_model}
+        fix_spec = {"jobs": [args.fix_job], "finding_ids": ids, "model": fix_model,
+                    "verify": bool(getattr(args, "verify_fix", False))}
     run = run_scan(target, _build_arms(names, config, diff=diff), config,
                    out_dir=Path(args.out) if args.out else None,
                    isolate=not args.inplace,
@@ -372,6 +373,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "ids, or 'gating'/'all' for all open findings; runs fenced (needs bwrap)")
     s.add_argument("--fix-job", choices=["suggest-patches", "fix-finding"],
                    default="suggest-patches", help="which vendor fix workflow (default: claude)")
+    s.add_argument("--verify-fix", action="store_true",
+                   help="after producing a patch, run verify-fix on it as machine evidence "
+                        "(fenced, read-only; never closes a finding)")
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")

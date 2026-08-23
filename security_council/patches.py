@@ -63,21 +63,33 @@ class PatchReport:
     sha256: str = ""
 
 
+_DIFF_EXCLUDE_DIRS = (".git", ".hg", ".svn", ".security-council", ".llm-council")
+
+
 def extract_patch(pristine: Path, work: Path, *, ceiling: Path) -> str:
-    """`git diff --no-index pristine work` with git config neutralized, run from
-    a non-repo cwd. --no-index makes git ignore both trees' `.git`, so a planted
-    repo config cannot run code (MV4-10). Returns the unified diff (paths made
-    relative to the work tree)."""
-    env = {**os.environ, **_GIT_NEUTRAL_ENV,
-           "GIT_CEILING_DIRECTORIES": str(ceiling)}
-    git = shutil.which("git") or "git"
-    r = subprocess.run([git, "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
-                        "diff", "--no-index", "--no-ext-diff", "--no-color",
-                        str(pristine), str(work)],
-                       capture_output=True, text=True, cwd=str(ceiling), env=env,
-                       timeout=120, check=False)
-    # git diff --no-index exits 1 when there are differences — that's success here
-    return r.stdout
+    """`git diff --no-index` between CONTENT snapshots of the two trees (VCS
+    metadata dirs stripped), run from a non-repo cwd with git config neutralized.
+    Snapshotting excludes `.git` etc. so a repo the fix agent created/planted can
+    never appear in the patch or execute config during extraction (MV4-10)."""
+    import tempfile
+    snap = Path(tempfile.mkdtemp(prefix="sc-diff-", dir=str(ceiling)))
+    try:
+        ign = shutil.ignore_patterns(*_DIFF_EXCLUDE_DIRS)
+        shutil.copytree(pristine, snap / "pristine", ignore=ign, symlinks=True,
+                        ignore_dangling_symlinks=True)
+        shutil.copytree(work, snap / "work", ignore=ign, symlinks=True,
+                        ignore_dangling_symlinks=True)
+        env = {**os.environ, **_GIT_NEUTRAL_ENV, "GIT_CEILING_DIRECTORIES": str(ceiling)}
+        git = shutil.which("git") or "git"
+        r = subprocess.run([git, "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
+                            "diff", "--no-index", "--no-ext-diff", "--no-color",
+                            str(snap / "pristine"), str(snap / "work")],
+                           capture_output=True, text=True, cwd=str(ceiling), env=env,
+                           timeout=120, check=False)
+        # git diff --no-index exits 1 when there are differences — that's success here
+        return r.stdout
+    finally:
+        shutil.rmtree(snap, ignore_errors=True)
 
 
 _DIFF_GIT_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")

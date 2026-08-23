@@ -472,6 +472,13 @@ def _analysis_artifacts(manifest: dict) -> list[str]:
         note = []
         if a.get("dual_use"):
             note.append("⚠ dual-use — raw/-only, export-excluded")
+        if a.get("kind") == "verify-fix":
+            # a verify verdict is machine evidence, never a green check — the
+            # human decides. crypto gets an explicit cryptographic-review call.
+            note.append(f"vendor verdict: {_esc(str(a.get('verdict', '?')))} — "
+                        "requires human review (evidence only, never auto-closes)")
+        if a.get("kind") == "fix" and a.get("patch", {}).get("review_required"):
+            note.append("review_required: " + _esc(", ".join(a["patch"]["review_required"])[:80]))
         if posture == "relaxed":
             note.append("relaxed-safeguard tier")
         out.append(f"| {_enum(a.get('kind'))} | {_cell(a.get('producer'))} | "

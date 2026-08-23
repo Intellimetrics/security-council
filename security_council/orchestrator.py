@@ -74,14 +74,17 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
 
 
 def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: Path,
-                  *, run_id: str, collected_at: str) -> tuple[list[dict], list[dict]]:
+                  store, *, run_id: str, collected_at: str) -> tuple[list[dict], list[dict]]:
     """Run fix jobs SERIALLY (each makes its own fenced fresh copy). Only open,
-    non-refuted findings are fixable; suppressed/refuted are skipped."""
+    non-refuted findings are fixable. If `verify`, run verify-fix on each produced
+    patch and record it as machine evidence — NEVER changing the finding's state."""
     from .arms.fix import FixArm
+    from .arms.verify_fix import VerifyFixArm
     from .jsonio import to_dict as _td
     jobs = list(fix_spec.get("jobs") or [])
     want_ids = set(fix_spec.get("finding_ids") or [])
     model = fix_spec.get("model")
+    verify = bool(fix_spec.get("verify"))
     fixable = [f for f in merged
                if f.disposition.lifecycle in ("open", "reopened")
                and f.disposition.state != "refuted"
@@ -97,6 +100,24 @@ def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: 
             if not res.ok:
                 degr.append({"kind": "fix_failed", "arm": f"{arm.name}:{f.id[:8]}",
                              "detail": res.error})
+                continue
+            if not verify or not res.raw_path:
+                continue
+            meta = (res.artifacts[0].get("patch") or {}) if res.artifacts else {}
+            varm = VerifyFixArm(finding=row, patch_path=res.raw_path,
+                                patch_sha256=meta.get("sha256", ""),
+                                base_commit=meta.get("base_commit"),
+                                family=arm.family, model=model)
+            vres = _safe_run(varm, target, out_dir, run_id, collected_at)
+            artifacts += vres.artifacts
+            if vres.artifacts:
+                ev = vres.artifacts[0]
+                store.record_verify_evidence(
+                    root_cause=f.fingerprints.root_cause, finding_id=f.id,
+                    verdict=ev.get("verdict", "unproven"), patch_sha256=ev.get("patch_sha256", ""),
+                    base_commit=ev.get("base_commit"), producer=varm.name, now_iso=collected_at,
+                    model=model, note=ev.get("note", ""))
+            # a verify verdict is evidence only; f.disposition is deliberately untouched
     return artifacts, degr
 
 
@@ -210,7 +231,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         # fix lane (M-V4a): serial, after the scan/policy phase, each job in its
         # own fenced fresh copy. Only fix open, non-refuted findings.
         if fix_spec:
-            fx_arts, fx_degr = _run_fix_jobs(target, merged, fix_spec, out_dir,
+            fx_arts, fx_degr = _run_fix_jobs(target, merged, fix_spec, out_dir, store,
                                              run_id=run_id, collected_at=collected_at)
             artifacts += fx_arts
             pre_degr += fx_degr
