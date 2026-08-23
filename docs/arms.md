@@ -89,6 +89,29 @@ Availability probing never reads your API keys: it checks local model catalogs
 (zero network) and, where a deeper probe is wired, uses the CLI's own
 credentials — it never copies them.
 
+## Analysis workflows (artifacts, not findings)
+
+The vendors also ship analysis workflows that produce *documents* rather than
+gate-able findings — a repository threat model, attack-path analysis, hardening
+proposals, a security-policy proposal, vulnerability write-ups:
+
+```bash
+security-council scan . --analyze threat-model,hardening
+```
+
+These attach to the run as **artifacts** (listed in the manifest and the
+summary's "Analysis artifacts" appendix, written under `raw/`); they never
+enter `findings.json` and never affect the gate. A failed analysis is an
+informational note, not a build failure.
+
+Two of them — `attack-path` and `writeup` — are **dual-use** (attacker-facing
+narratives): they are marked export-excluded and kept `raw/`-only, never inlined
+into a shareable report unless you opt in. They also respect the tier knob, so a
+write-up produced on a relaxed-safeguard tier is labeled as such.
+
+*Status: the analysis runner is built and tested offline; live invocation drives
+the vendor plugin session (real token cost) and has not yet been run here.*
+
 ## Category-aware corroboration
 
 Not every arm is *eligible* to report every category (Claude's tooling

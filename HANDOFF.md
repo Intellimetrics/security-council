@@ -23,7 +23,7 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --valida
 python3 -m security_council.cli scan . --arms claude-security --diff origin/main   # change-scoped (M-V1)
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 260 green + 1 skip (~1s); .venv/bin/python runs all 261 incl. MCP handshake
+python3 -m pytest tests/ -q        # 272 green + 1 skip (~1s); .venv/bin/python runs all 273 incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -64,7 +64,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-37 commits, ~6,650 LOC (package), **260 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
+39 commits, ~7,000 LOC (package), **272 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -230,9 +230,13 @@ before the decision store — never wire the history feedback loop onto an unmea
      `entitlement`/`safeguard_posture`, summary flags relaxed-safeguard use; `config.entitlements`.
      Blue scope: Red known so it is positively refused. Live-verified probe on this
      (unprovisioned) machine. **Not live-verifiable against a real gated model here.**
-   - **M-V3 Artifact lane** — manifest artifact index (none exists yet) + threat-model,
-     attack-path-analysis, propose-hardening, define-security-policy, vulnerability-writeup
-     (dual-use ones export-excluded, `raw/`-resident).
+   - ~~**M-V3 Artifact lane**~~ — **DONE 2026-08-23** (`artifacts.py`, `arms/artifact_runner.py`,
+     `test_artifacts.py`, `scan --analyze`): Artifact model + manifest `artifacts` index +
+     summary appendix; ANALYSIS_JOBS (threat-model, attack-path[dual], hardening, policy,
+     writeup[dual]) attach as artifacts, never findings; dual-use → export-excluded, `raw/`-only;
+     analysis arms kept out of coverage/gate (failure = informational degradation). Runner drives
+     the verified `$skill` Codex trigger — **built offline (fake-proc), live invocation pending
+     codex+plugin session spend** (same status the dedicated arms had pre-live).
    - **M-V4 Fix lane (gated, council-review before landing)** — suggest-patches + fix-finding as
      `.patch` artifacts (never applied); verify-fix as human-mark decision evidence.
    - **M-V5 (optional)** — vendor validate/triage as non-independent panel voters.
@@ -248,9 +252,9 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 260 green + 1 skipped;
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 272 green + 1 skipped;
    `.venv/bin/python -m pytest tests/ -q` runs all 244 incl. the live MCP handshake).
-3. `git log --oneline` (expect to be at the M-V2 entitlements commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
+3. `git log --oneline` (expect to be at the M-V3 artifact-lane commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
