@@ -65,11 +65,33 @@ were produced by **hosted LLM arms**, source code was sent to vendor APIs
 during the scan — see [../data-boundaries.md](../data-boundaries.md) for the
 per-arm breakdown and the deterministic-only profile.
 
-## Related / roadmap
+## Other standards-based exports
 
-Also relevant to RMF packages today: `merged.sarif` (tool-neutral evidence
-artifact) and `summary.md` (method & model attestation — which models saw the
-code, with hashes). Not built yet, planned: OSCAL Assessment Results / POA&M,
-OpenVEX, and CKLB exports. The Trivy scanner is deliberately not a supported
-arm (supply-chain compromise, GHSA-69fq-xp46-6x23); SBOM/SCA lanes will use
+```bash
+security-council report <run_dir> --format openvex     # OpenVEX 0.2.0 (VEX statements)
+security-council report <run_dir> --format oscal-ar    # OSCAL Assessment Results (1.1.2)
+security-council report <run_dir> --format oscal-poam  # OSCAL Plan of Action & Milestones
+```
+
+All three render from the same finding dispositions as eMASS (D7), verified
+against their official specs (OpenVEX JSON schema; NIST oscal-content examples)
+and schema-validated in the test suite:
+
+- **OpenVEX** — one statement per finding: a suppressed/accepted-risk finding is
+  `not_affected` with its stored justification, a validated open finding is
+  `affected` with a remediation action statement, a demoted or unresolved one is
+  `under_investigation`. Supply-chain findings key on the advisory CVE/GHSA.
+- **OSCAL Assessment Results** — observations + findings (target
+  satisfied/not-satisfied) + risks whose status maps from the disposition
+  (suppressed → `deviation-approved`, open validated → `open`, needs-human →
+  `investigating`). Deterministic UUIDv5 from the finding id, stable across
+  re-exports.
+- **OSCAL POA&M** — the projection: only the open, non-refuted, non-suppressed
+  findings that still need action, severity-ordered, cross-referencing the same
+  observations/risks.
+
+Also relevant to RMF packages: `merged.sarif` (tool-neutral evidence) and
+`summary.md` (method & model attestation). Not built yet: CKLB (ASD STIG V6R4)
+and SBOM (CycloneDX). The Trivy scanner is deliberately not a supported arm
+(supply-chain compromise, GHSA-69fq-xp46-6x23); SBOM/SCA will use
 cdxgen/syft/grype.
