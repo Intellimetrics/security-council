@@ -23,7 +23,7 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --valida
 python3 -m security_council.cli scan . --arms claude-security --diff origin/main   # change-scoped (M-V1)
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 300 green + 1 skip (~1.2s); .venv/bin/python runs all 301 incl. MCP handshake
+python3 -m pytest tests/ -q        # 308 green + 1 skip (~1.2s); .venv/bin/python runs all 309 incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -64,7 +64,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-44 commits, ~7,600 LOC (package), **300 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
+47 commits, ~8,100 LOC (package), **308 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -254,9 +254,16 @@ before the decision store — never wire the history feedback loop onto an unmea
      git-neutered copy + safe `git diff --no-index` extraction (MV4-10); patch validator refuses
      agent/VCS-meta + symlink/binary, redacts secrets both sides; MCP+CLI nesting guards (MV4-4/12);
      killpg-adjacent via the fence. Fix jobs run serial/post-scan/own-copy, only open non-refuted
-     findings, `--inplace` refused. **.patch artifacts are NEVER applied.** Offline/fake-proc built;
-     live vendor run needs spend and degrades to `no_patch`. **M-V4b (verify-fix as non-closing
-     decision evidence, L1/L3 fences) is the remaining half — not yet built.**
+     findings, `--inplace` refused. **.patch artifacts are NEVER applied.** **M-V4b DONE 2026-08-23**
+     (`arms/verify_fix.py`, `scan --fix ... --verify-fix`, `test_verify_fix.py`): orchestrator
+     applies the patch to a fresh copy (never the agent), runs vendor verify-fix READ-ONLY in the
+     same fence, verdict bound to patch_sha256+base_commit, recorded as machine evidence
+     (kind=vendor_verify_fix, decided_by machine) — L1 `history_counts` ignores it (hardened to
+     reject any decided_by=machine even if forged as outcome_mark), L3 never a panel vote / never
+     auto-closes (finding stays open; summary renders "requires human review"). Also fixed a real
+     bug: `extract_patch` now snapshots content with `.git` stripped so the work copy's git can't
+     pollute a patch. **M-V4 (a+b) complete.** Offline/fake-proc; live vendor run needs spend
+     (degrades to no_patch/unproven).
    - **M-V5 (optional)** — vendor validate/triage as non-independent panel voters.
    Must NOT build: fix application to user code (no `--apply`), PoC generation/execution (Red,
    D5), vendor decision/tracking state or export egress, default-mounted vendor MCP servers.
@@ -270,9 +277,9 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 300 green + 1 skipped;
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 308 green + 1 skipped;
    `.venv/bin/python -m pytest tests/ -q` runs all 244 incl. the live MCP handshake).
-3. `git log --oneline` (expect to be at the M-V4a fix-lane commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
+3. `git log --oneline` (expect to be at the M-V4b verify-fix commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
