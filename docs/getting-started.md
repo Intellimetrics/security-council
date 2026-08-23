@@ -60,6 +60,25 @@ security-council report <run_dir> --format emass --app-name X --app-version 1.0
 security-council report <run_dir> --format gitlab-sast
 ```
 
+## Change-scoped (diff) scans
+
+For fast PR/CI checks, scan only what changed instead of the whole repo. Diff
+scanning uses the vendors' native change-scan workflows, so it needs a
+diff-capable agentic arm (`claude-security` or `codex-security`):
+
+```bash
+security-council scan . --arms claude-security --diff origin/main          # committed range
+security-council scan . --arms codex-security --working-tree --diff HEAD    # uncommitted changes (codex)
+```
+
+A diff run is **partial** by design and treated safely as such: it runs only
+diff-capable arms (other arms are reported as `diff_skipped`, never run against
+the whole tree, so corroboration stays honest), the summary is stamped
+`⚠ partial — change-scoped`, and the run **cannot be used to set a baseline**
+(a partial scan would wrongly treat unscanned findings as resolved). Pair it
+with `--gate-baseline new` so a PR only fails on newly-introduced problems.
+Add `--deep` to run the dedicated arms in their deeper (slower, costlier) mode.
+
 ## Configuration
 
 `.security-council.yaml` at the repo root (all keys optional; defaults shown):

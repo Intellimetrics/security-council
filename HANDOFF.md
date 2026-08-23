@@ -20,9 +20,10 @@ adversarial LLM panel, and emits spec-valid SARIF + a **markdown executive summa
 python3 -m security_council.cli doctor
 python3 -m security_council.cli scan tests/fixtures/seedrepo --arms claude,semgrep,gitleaks,osv-scanner
 python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --validate-max 2
+python3 -m security_council.cli scan . --arms claude-security --diff origin/main   # change-scoped (M-V1)
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 233 green + 1 skip (~1s); .venv/bin/python runs all 234 incl. MCP handshake
+python3 -m pytest tests/ -q        # 243 green + 1 skip (~1s); .venv/bin/python runs all 244 incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -63,7 +64,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-32 commits, ~6,150 LOC (package), **233 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
+35 commits, ~6,400 LOC (package), **243 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -208,10 +209,13 @@ before the decision store — never wire the history feedback loop onto an unmea
    all exist (diff + deep + tier knob are params on the existing arm); analysis skills
    (threat-model/attack-path/writeup) have no CLI subcommand → session/MCP, artifact lane.
    Sub-milestones:
-   - **M-V1 Diff lane** — codex `--diff`/`--working-tree`/`--mode deep` first-class + claude
-     `scan-changes`; job-aware `CATEGORY_POLICY` (diff non-report = absence-of-scope, not
-     "suppresses"); scan-scope in manifest so baseline/delta handles partial scans; per-job cost
-     fuses, default-off. **← next.**
+   - ~~**M-V1 Diff lane**~~ — **DONE 2026-08-23** (`arms/base.py:DiffSpec`, `test_diff_lane.py`,
+     `scan --diff/--diff-head/--working-tree/--deep`): codex `--diff`/`--working-tree` + claude
+     `scan-changes`; a diff run executes ONLY diff-capable arms (others → informational
+     `diff_skipped` degradation) so corroboration stays scope-coherent — this made per-job
+     `CATEGORY_POLICY` rows unnecessary; manifest `scan_scope`; `baseline set` refuses partial
+     runs; `annotate_baseline(partial=True)` never marks out-of-scope findings absent; summary
+     shows a partial banner. 243 tests.
    - **M-V2 `entitlements.py` + tier knob** — 4-rung probe ladder (never reads keys), declare
      (CLI, tier, model), populate `entitlement`/`safeguard_posture`, GA default, Red refused until
      the D5 authorization block. (User scoped 2026-08-23: **Blue gated tiers only** — Mythos +
@@ -234,9 +238,9 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 233 green + 1 skipped;
-   `.venv/bin/python -m pytest tests/ -q` runs all 234 incl. the live MCP handshake).
-3. `git log --oneline` (expect to be at `d6ba618` GitLab+GitHub CI or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 243 green + 1 skipped;
+   `.venv/bin/python -m pytest tests/ -q` runs all 244 incl. the live MCP handshake).
+3. `git log --oneline` (expect to be at the M-V1 diff-lane commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
