@@ -73,10 +73,41 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
     return 0, degr
 
 
+def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: Path,
+                  *, run_id: str, collected_at: str) -> tuple[list[dict], list[dict]]:
+    """Run fix jobs SERIALLY (each makes its own fenced fresh copy). Only open,
+    non-refuted findings are fixable; suppressed/refuted are skipped."""
+    from .arms.fix import FixArm
+    from .jsonio import to_dict as _td
+    jobs = list(fix_spec.get("jobs") or [])
+    want_ids = set(fix_spec.get("finding_ids") or [])
+    model = fix_spec.get("model")
+    fixable = [f for f in merged
+               if f.disposition.lifecycle in ("open", "reopened")
+               and f.disposition.state != "refuted"
+               and (not want_ids or f.id in want_ids)]
+    artifacts: list[dict] = []
+    degr: list[dict] = []
+    for f in fixable:
+        row = _td(f)
+        for job in jobs:
+            arm = FixArm(job=job, finding=row, model=model)
+            res = _safe_run(arm, target, out_dir, run_id, collected_at)
+            artifacts += res.artifacts
+            if not res.ok:
+                degr.append({"kind": "fix_failed", "arm": f"{arm.name}:{f.id[:8]}",
+                             "detail": res.error})
+    return artifacts, degr
+
+
 def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path | None = None,
              isolate: bool = True, validate: bool = False, validate_max_findings: int | None = None,
-             validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None) -> ScanRun:
+             validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None,
+             fix_spec: dict | None = None) -> ScanRun:
     target = Path(target).resolve()
+    if fix_spec and not isolate:
+        raise ValueError("the fix lane requires isolation (an in-place fix would edit the "
+                         "real tree); --inplace is refused with fix jobs (R6/MV4-2).")
     run_id, collected_at = _utc_stamp()
     outdir_root = Path(config.get("reports", {}).get("outdir", ".security-council/runs"))
     out_dir = Path(out_dir) if out_dir else (target / outdir_root / run_id)
@@ -86,9 +117,12 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
 
     analysis_arms = list(analysis_arms or [])
     # M-V2 entitlement preflight: refuse a gated tier that is Red or undeclared
-    # BEFORE any arm runs (nothing is scanned, no cost incurred).
-    refusals = ent_mod.preflight(
-        [getattr(a, "model", None) for a in [*arms, *analysis_arms]], config)
+    # BEFORE any arm runs (nothing is scanned, no cost incurred). Includes the
+    # fix job's model so a gated fix tier is gated too.
+    _pre_models = [getattr(a, "model", None) for a in [*arms, *analysis_arms]]
+    if fix_spec and fix_spec.get("model"):
+        _pre_models.append(fix_spec["model"])
+    refusals = ent_mod.preflight(_pre_models, config)
     if refusals:
         code = 5 if any(r.kind == "red_refused" for r in refusals) else 4  # 5 preflight, 4 entitlement
         degr = [{"kind": r.kind, "arm": None, "detail": r.detail} for r in refusals]
@@ -172,6 +206,14 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         baseline = store.load_baseline()
         baseline_delta = (decisions_mod.annotate_baseline(merged, baseline, partial=partial)
                           if baseline else None)
+
+        # fix lane (M-V4a): serial, after the scan/policy phase, each job in its
+        # own fenced fresh copy. Only fix open, non-refuted findings.
+        if fix_spec:
+            fx_arts, fx_degr = _run_fix_jobs(target, merged, fix_spec, out_dir,
+                                             run_id=run_id, collected_at=collected_at)
+            artifacts += fx_arts
+            pre_degr += fx_degr
 
         (out_dir / "policy.json").write_text(dumps(policy_mod.decisions_to_json(decisions)))
 
