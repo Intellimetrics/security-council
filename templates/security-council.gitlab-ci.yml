@@ -1,0 +1,63 @@
+# security-council — GitLab CI job template.
+#
+# Use via include (or copy into your .gitlab-ci.yml):
+#
+#   include:
+#     - local: 'templates/security-council.gitlab-ci.yml'
+#
+# Override defaults per-project with variables:
+#
+#   security_council:
+#     variables:
+#       SECURITY_COUNCIL_ARMS: 'semgrep,gitleaks'
+#       SECURITY_COUNCIL_GATE_BASELINE: 'new'    # brownfield: gate only new findings
+#
+# What it produces:
+# - artifacts:reports:sast        -> gl-sast-report.json (Security Dashboard /
+#                                    MR security widget on Ultimate)
+# - artifacts:reports:codequality -> gl-code-quality-report.json (inline MR
+#                                    diff annotations on EVERY tier, incl. Free)
+# - plain artifacts: merged SARIF + summary.md for humans/other tooling
+# - one MR summary note, when SECURITY_COUNCIL_GITLAB_TOKEN (project access
+#   token, api scope) is set — CI_JOB_TOKEN cannot post notes
+#
+# Runner requirements: python 3.11+; docker for the scanner arms (use a runner
+# with /var/run/docker.sock mounted, or a docker:dind service, or install
+# semgrep/gitleaks/osv-scanner binaries on the image and skip docker).
+#
+# Gate: the scan's exit code is captured, reports/artifacts always publish,
+# and the job exits with the captured code last (0 clean · 1 gate · 3 degraded).
+
+security_council:
+  stage: test
+  image: python:3.12
+  variables:
+    SECURITY_COUNCIL_ARMS: 'semgrep,gitleaks,osv-scanner'
+    SECURITY_COUNCIL_FAIL_ON: 'high'
+    SECURITY_COUNCIL_GATE_BASELINE: 'all'
+  script:
+    - pip install security-council
+    - set +e
+    - >-
+      python -m security_council.cli scan "$CI_PROJECT_DIR"
+      --arms "$SECURITY_COUNCIL_ARMS"
+      --fail-on-severity "$SECURITY_COUNCIL_FAIL_ON"
+      --gate-baseline "$SECURITY_COUNCIL_GATE_BASELINE"
+    - SCAN_EXIT=$?
+    - set -e
+    - RUN_DIR=$(ls -d "$CI_PROJECT_DIR/.security-council/runs"/*/ | sort | tail -1); RUN_DIR=${RUN_DIR%/}
+    - python -m security_council.ci.gitlab "$RUN_DIR" --write-reports "$CI_PROJECT_DIR" --post-mr-note
+    - cp "$RUN_DIR/merged.sarif" "$CI_PROJECT_DIR/security-council.sarif" || true
+    - cp "$RUN_DIR/summary.md" "$CI_PROJECT_DIR/security-council-summary.md" || true
+    - exit $SCAN_EXIT
+  artifacts:
+    when: always
+    reports:
+      sast: gl-sast-report.json
+      codequality: gl-code-quality-report.json
+    paths:
+      - gl-sast-report.json
+      - gl-code-quality-report.json
+      - security-council.sarif
+      - security-council-summary.md
+    expire_in: 30 days

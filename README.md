@@ -49,6 +49,20 @@ Note: `codex-security`'s default `$5` fuse cost-stops its final attack-path phas
 even on a small repo (the core scan still seals complete); give it ~$8 headroom
 when you want that phase.
 
+## CI integrations
+
+| Platform | How | What you get |
+|---|---|---|
+| **Azure DevOps Server** | copy `templates/security-council.yml` | CodeAnalysisLogs SARIF artifact (SARIF SAST Scans Tab), `logissue` file/line annotations, build summary, PR comment threads |
+| **GitHub** | `uses: Intellimetrics/security-council@main` (`action.yml`; needs `security-events: write`) | code-scanning alerts + PR annotations via native SARIF upload, step summary |
+| **GitLab** | `include: templates/security-council.gitlab-ci.yml` | `gl-sast-report.json` (Security Dashboard/MR widget, Ultimate) + `gl-code-quality-report.json` (inline MR diff annotations, **all tiers**), MR summary note |
+
+All three capture the scan exit code, always publish artifacts/reports, and
+re-raise the gate last (0 clean · 1 gating finding · 3 degraded). Exports render
+from dispositions: suppressed/demoted findings are withheld everywhere.
+`--gate-baseline new` + `security-council baseline set` makes brownfield
+adoption sane (gate only what's new).
+
 Design: see `security-council-is-to-be-snoopy-prism.md` in the author's plan
 store; `HANDOFF.md` is the live status + resume document.
 

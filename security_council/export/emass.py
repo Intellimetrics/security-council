@@ -40,6 +40,7 @@ import re
 from datetime import datetime
 
 from ..model import Finding, canonical_cwe
+from . import open_unresolved
 
 _CWE_NUM_RE = re.compile(r"^CWE-(\d+)$")
 _SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
@@ -48,9 +49,7 @@ SEV_TO_RAW = {"critical": "Critical", "high": "High", "medium": "Moderate",
               "low": "Low", "info": None}
 
 
-def _exportable(f: Finding) -> bool:
-    return (f.disposition.lifecycle in ("open", "reopened")
-            and f.disposition.state != "refuted")
+_exportable = open_unresolved
 
 
 def _cwe_number(f: Finding) -> str | None:

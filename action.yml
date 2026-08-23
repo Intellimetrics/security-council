@@ -1,0 +1,106 @@
+# security-council — GitHub Action (composite; secondary CI target per D4).
+#
+# Usage in a workflow (needs `security-events: write` for SARIF upload and
+# python 3.11+ on the runner; docker is present on ubuntu-* runners):
+#
+#   permissions:
+#     contents: read
+#     security-events: write
+#   steps:
+#     - uses: actions/checkout@v4
+#     - uses: Intellimetrics/security-council@main
+#       with:
+#         path: '.'
+#         arms: 'semgrep,gitleaks,osv-scanner'
+#         fail-on-severity: 'high'
+#         gate-baseline: 'new'    # brownfield: gate only unbaselined findings
+#
+# Shape mirrors the ADO/GitLab templates: the scan's exit code is captured,
+# the SARIF uploads and the step summary publish even on gate failure, and the
+# final gate step re-raises the exit code (0 clean · 1 gate · 3 degraded).
+# Code-scanning alerts and PR annotations come from GitHub's native SARIF
+# pipeline — no bespoke comment bot needed.
+
+name: 'security-council'
+description: >-
+  Parallel multi-agent security scan (deterministic + agentic LLM arms,
+  cross-vendor corroboration, fail-closed suppression policy); uploads
+  spec-valid SARIF to GitHub code scanning and gates on policy severity.
+author: 'Intellimetrics'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  path:
+    description: 'Directory to scan'
+    default: '.'
+  arms:
+    description: 'Comma-separated arm names'
+    default: 'semgrep,gitleaks,osv-scanner'
+  fail-on-severity:
+    description: 'Gate threshold (critical|high|medium|low|info)'
+    default: 'high'
+  gate-baseline:
+    description: '"new" gates only findings absent from the committed baseline'
+    default: 'all'
+  upload-sarif:
+    description: 'Upload merged.sarif to GitHub code scanning'
+    default: 'true'
+
+outputs:
+  exit-code:
+    description: 'Scan exit code (0 clean, 1 gate, 2 usage, 3 degraded)'
+    value: ${{ steps.scan.outputs.exit-code }}
+  run-dir:
+    description: 'The run output directory'
+    value: ${{ steps.scan.outputs.run-dir }}
+  sarif-file:
+    description: 'Path to merged.sarif'
+    value: ${{ steps.scan.outputs.sarif-file }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install security-council
+      shell: bash
+      run: python3 -m pip install --quiet "${{ github.action_path }}"
+
+    - name: Scan
+      id: scan
+      shell: bash
+      run: |
+        set +e
+        python3 -m security_council.cli scan "${{ inputs.path }}" \
+          --arms "${{ inputs.arms }}" \
+          --fail-on-severity "${{ inputs.fail-on-severity }}" \
+          --gate-baseline "${{ inputs.gate-baseline }}"
+        SCAN_EXIT=$?
+        set -e
+        RUN_DIR=$(ls -d "${{ inputs.path }}/.security-council/runs"/*/ 2>/dev/null | sort | tail -1)
+        RUN_DIR="${RUN_DIR%/}"
+        echo "exit-code=${SCAN_EXIT}" >> "$GITHUB_OUTPUT"
+        echo "run-dir=${RUN_DIR}" >> "$GITHUB_OUTPUT"
+        if [ -f "${RUN_DIR}/merged.sarif" ]; then
+          echo "sarif-file=${RUN_DIR}/merged.sarif" >> "$GITHUB_OUTPUT"
+        fi
+        exit 0
+
+    - name: Upload SARIF to code scanning
+      if: ${{ inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-file != '' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        category: security-council
+
+    - name: Publish step summary
+      if: ${{ always() && steps.scan.outputs.run-dir != '' }}
+      shell: bash
+      run: |
+        if [ -f "${{ steps.scan.outputs.run-dir }}/summary.md" ]; then
+          cat "${{ steps.scan.outputs.run-dir }}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Gate
+      shell: bash
+      run: exit "${{ steps.scan.outputs.exit-code }}"
