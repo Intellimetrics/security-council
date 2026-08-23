@@ -1,0 +1,107 @@
+# R6 — M-V4 fix-lane safety review (2026-08-23)
+
+Pre-landing safety review of the fix/remediation lane (R5 required it). Consensus
+mode, but **degraded: only the claude peer responded** (codex timed out at 576s;
+antigravity returned empty). So this is a single thorough, code-grounded opinion,
+not a quorum — treated as go-with-conditions with all conditions mandatory, and a
+second opinion is worth getting before the live arm is certified. Transcript:
+`.llm-council/runs/20260823_100146_780541_1d2f231172e249bb803fb4185c2b7117.md`.
+
+## Verdict: GO-WITH-CONDITIONS
+
+The lane's shape (scratch-copy → `.patch` artifact, no apply path, verify-fix as
+non-closing evidence) is right and reuses boundaries that already hold. But the
+scratch copy today is a **pollution fence, not a security boundary**, and the fix
+lane is the first workflow that executes untrusted code *by design* (it runs the
+project's test suite). Six landing gates are mandatory.
+
+## Landing gates (MUST-HAVE before the live fix arm runs)
+
+- **M1 — kernel sandbox + proven canary.** Fix jobs run only under the vendor
+  CLI's native sandbox (codex `--sandbox workspace-write`, network off; Claude
+  Code bubblewrap + domain allowlist to the vendor API only). `--dangerously-
+  skip-permissions` alone is NOT acceptable for this lane. Before each fix job a
+  canary in the same sandbox must FAIL to: write `<original>/.sc-canary`, read
+  `~/.ssh`/`~/.gitconfig`, `curl` the network. Any success → refuse the job
+  (`fence_unverified`). **Needs vendor-sandbox config verified against current
+  docs + a live canary run — requires vendor access, not certifiable on the dev
+  machine.**
+- **M2 — hard-refuse `inplace` for fix jobs in `run_scan`** (not just the CLI;
+  MCP passes `inplace` straight through). A fix arm in-place edits the real tree.
+- **M3 — allowlisted env**, not `dict(os.environ)`: pass only PATH/HOME/LANG/
+  TERM/TMPDIR + the vendor's own auth vars + NESTED markers. Drop `AWS_*`,
+  `GITHUB_TOKEN`/`GH_TOKEN`, `GITLAB_TOKEN`, `SECURITY_COUNCIL_GITLAB_TOKEN`,
+  `SYSTEM_ACCESSTOKEN`, `CI_JOB_TOKEN`, `NPM_TOKEN`, `KUBECONFIG`, `DOCKER_*`,
+  `SSH_AUTH_SOCK`, any non-vendor `*_API_KEY`/`*_TOKEN`. (Closes the "we never
+  built PR-open, but the agent inherited a token that can" laundering path.)
+- **M4 — git-neutered copy.** `git init` + one baseline commit, **no remotes**,
+  credential helpers disabled (`GIT_CONFIG_GLOBAL=/dev/null`,
+  `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=/bin/false`,
+  `GIT_SSH_COMMAND=/bin/false`, empty `credential.helper`). Also functionally
+  required: `.git` is excluded from the copy, so a "scratch checkout" and
+  `git diff` extraction need a repo. The orchestrator extracts the patch itself
+  with `git diff <baseline>` — never trusts the vendor's named output.
+- **M5 — fresh serial workspace per fix job, after the scan phase** (today scan
+  + analysis arms share one `ws.root` in a thread pool; a file-modifying arm
+  there races the scanners).
+- **M6 — test execution as untrusted code:** inside M1's sandbox, network-denied,
+  existing `timeout` + RLIMIT/cgroup mem+CPU cap, `TMPDIR` inside the sandbox.
+
+Also: `copytree(symlinks=False)` dereferences symlinks — a repo symlink to
+`~/.aws/credentials` lands in the copy; use `symlinks=True` for the fix lane.
+
+## Patch handling
+- Exportable by default (a patch a reviewer can't see is useless), EXCEPT:
+  **secrets-family findings** (`SECRET_CWES`) → `export_excluded=True` and `-`
+  hunks replaced by `-<redacted sha256:…>`; **gitleaks post-filter over every
+  produced patch** (context lines can leak an adjacent key) → any hit →
+  export-excluded + redacted + `secret_in_patch`. Inherit the related finding's
+  export treatment + dual-use/posture labels. Seal patch provenance (sha256,
+  base commit/dirty, producer, model, posture).
+- Reject patches touching `../`, absolute, `.git/`, `.security-council/` paths or
+  binary hunks. Flag `review_required` for patches touching CI/workflow/build
+  files, lockfiles, or deleting/modifying tests (a "fix" that deletes the failing
+  test is the classic launder). Crypto patches → `review_required: crypto`;
+  their verify-fix evidence renders "requires human cryptographic review", never
+  a green check.
+
+## verify-fix as evidence — right boundary, three laundering paths to fence
+- **L1** evidence under a separate `evidence[]` key `kind: vendor_verify_fix`,
+  `decided_by.kind: machine`; `history_counts()` must ignore it even with an
+  `operator`; `mark_outcome` stays the only writer of `outcome_mark`.
+- **L2 (a REAL current hole, not just M-V4):** the CLI `outcome mark`/`baseline`/
+  `suppress` have NO nesting guard and `outcome mark` defaults operator to the
+  login user — a nested agent could forge a human mark. Refuse decision-store
+  writes when `SECURITY_COUNCIL_NESTED` is set. **Fixed 2026-08-23 ahead of the
+  rest of M-V4.**
+- **L3** verify-fix evidence is never converted to a panel vote / defender claim
+  / `score_finding` input (would satisfy G2's defender exception). Scope
+  verify-fix to a patch artifact; never feeds baseline `absent`; no
+  `outcome mark --from-evidence`.
+
+## Refuse outright
+`--apply`/`git apply` automation, commit, push, PR/MR open (M3 + M4 kill the
+side channels); fix jobs `inplace` or when the canary fails; Red tier (already);
+unscoped "fix everything" (take explicit finding ids); out-of-repo/binary
+patches. Do NOT refuse crypto or Blue-tier fixes — label them `review_required`.
+
+## Safer shape / sequencing
+- **Two halves:** M-V4a = patch generation + fence canary + patch validator +
+  secrets filter, live-verified before M-V4b = verify-fix evidence.
+- codex family needs its own `_cmd` with `--sandbox` (the M-V3 artifact runner
+  currently sends claude flags for codex — latent bug; for fixes the flag choice
+  *is* the safety knob).
+- Verify `codex-security patch` honours the codex sandbox (vs spawning its own
+  `codex exec`); whether suggest-patches' verifier needs network (if so degrade
+  to `tests_ran: false`, never open egress).
+
+## Findings (peer, severity-ranked)
+MV4-1 crit: scratch copy is cwd-only; agent+tests have full HOME/env/original reach.
+MV4-2 crit: `inplace` (CLI or MCP) would let a fix arm edit the real tree.
+MV4-3 high: inherited CI tokens enable PR/MR-open by side channel.
+MV4-4 high: nested agent can forge a human outcome mark (no CLI nesting guard). **[fixed]**
+MV4-5 high: secrets-family patches embed the secret; `runs/` is CI-published.
+MV4-6 med: shared `ws.root` thread pool races a file-modifying arm.
+MV4-7 med: `copytree(symlinks=False)` pulls out-of-tree symlink targets in.
+MV4-8 med: verify-fix verdict could satisfy G2's defender exception if fed to the panel.
+MV4-9 low: artifact runner uses claude flags for codex family.

@@ -202,6 +202,19 @@ def _find_row(run_dir: Path, finding_id: str) -> dict | None:
     return pref[0] if len(pref) == 1 else None
 
 
+def _nested_write_refused(action: str) -> bool:
+    """Decision-store writes are human actions. If this process is running inside
+    a security-council arm (SECURITY_COUNCIL_NESTED set), refuse — a nested
+    agent (or prompt-injected test code) must not be able to forge a human
+    suppression / outcome mark / baseline against the real target (R6/MV4-4)."""
+    import os
+    if os.environ.get("SECURITY_COUNCIL_NESTED"):
+        print(f"error: {action} is a human decision and is refused inside a "
+              "security-council arm (SECURITY_COUNCIL_NESTED is set).", file=sys.stderr)
+        return True
+    return False
+
+
 def _resolve(args) -> tuple[Path, dict] | None:
     run_dir = _run_dir(args)
     if run_dir is None:
@@ -216,6 +229,8 @@ def _resolve(args) -> tuple[Path, dict] | None:
 
 
 def cmd_outcome_mark(args) -> int:
+    if _nested_write_refused("outcome mark"):
+        return EXIT_USAGE
     resolved = _resolve(args)
     if resolved is None:
         return EXIT_USAGE
@@ -233,6 +248,8 @@ def cmd_outcome_mark(args) -> int:
 
 
 def cmd_baseline_set(args) -> int:
+    if _nested_write_refused("baseline set"):
+        return EXIT_USAGE
     run_dir = _run_dir(args)
     if run_dir is None:
         print("error: no run with findings.json found (pass --run)", file=sys.stderr)
@@ -263,6 +280,8 @@ def cmd_baseline_show(args) -> int:
 
 
 def cmd_suppress(args) -> int:
+    if _nested_write_refused("suppress"):
+        return EXIT_USAGE
     resolved = _resolve(args)
     if resolved is None:
         return EXIT_USAGE
