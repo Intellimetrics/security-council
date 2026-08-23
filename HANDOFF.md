@@ -1,6 +1,6 @@
 # security-council — session handoff
 
-_Last updated: 2026-08-21. Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-23. Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -18,7 +18,7 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --arms claude,semgr
 python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --validate-max 2
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 222 green + 1 skip (~1s); .venv/bin/python runs all 223 incl. MCP handshake
+python3 -m pytest tests/ -q        # 233 green + 1 skip (~1s); .venv/bin/python runs all 234 incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -59,7 +59,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-30 commits, ~5,900 LOC (package), **222 tests green, ruff clean**. The full v1 Blue pipeline runs end to end:
+32 commits, ~6,150 LOC (package), **233 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -87,6 +87,8 @@ isolate(copy) → parallel arms → normalize → cluster(root-cause) → catego
 | **eMASS exporter** | `export/emass.py` (`report --format emass`): CWE-keyed rows, stable `codeCheckName` "CWE-n (family)", numeric-string `cweId` (no prefix), medium→`Moderate`, D7 disposition withholding (suppressed/refuted never exported), noinfo skipped loudly, clear-findings body; contract verified against the official `eMASSRestOpenApi.yaml` + emasser client BEFORE coding (R3), conformance schema vendored in `tests/fixtures/schemas/` | done, live-verified |
 | **MCP server** | `mcp_server.py` (`security-council-mcp`, optional `.[mcp]` extra): `sc_scan/doctor/report/last_run/baseline/suppress/outcome_mark/config`; `SECURITY_COUNCIL_MCP_ROOT` scoping (absolute-only, in-root), presence-based nesting guard (`SECURITY_COUNCIL_NESTED` ⇒ `sc_scan` refuses); transport-independent handlers, llm-council `_serve` pattern for the mcp-2.x adapter; `tests/test_mcp_handshake.py` drives the real stdio transport where `.[mcp]` is installed | done, **transport live-handshaken** (mcp 2.0.0) |
 | **Azure DevOps CI** | `ci/azure_devops.py` (`##vso[task.logissue]` w/ documented escaping + exit-gate-consistent error/warning split incl. `gate_baseline`, `uploadsummary`, PR thread REST api-version=6.0, active/closed by gate) · `templates/security-council.yml` (capture-exit → stage SARIF → publish **CodeAnalysisLogs** → annotate → re-raise gate) · `scan --gate-baseline` flag | done; not yet run on a real ADO Server (§7.6) |
+| **GitLab CI** | `export/gitlab.py` (native SAST report validated against the **official vendored schema 15.2.4** — timezone-less times, ≥1 identifier, CWE ids w/ MITRE urls; + Code Quality report, CodeClimate subset, inline MR annotations on all tiers, fingerprint = derived finding id) · `ci/gitlab.py` (writes both reports, MR note via project access token, shares `split_findings` gate semantics) · `templates/security-council.gitlab-ci.yml` (`artifacts:reports:` sast+codequality) · `report --format gitlab-sast\|gitlab-codequality` | done; not yet run on a real GitLab (§7.6) |
+| **GitHub Action** | `action.yml` composite (`uses: Intellimetrics/security-council@main`): install from action_path → scan (captured exit) → native SARIF upload (`codeql-action/upload-sarif@v3`, category security-council, needs `security-events: write`) → step summary → gate re-raise; outputs exit-code/run-dir/sarif-file | done; not yet run in a real workflow (§7.6) |
 | **Orchestrator + CLI** | `orchestrator.py`, `cli.py` (`scan`/`doctor`/`report`), `config.py`, `manifest.py` | done |
 | **Seed fixture** | `tests/fixtures/seedrepo` (vulns across families + FP decoy + injection payload), `EXPECTED.yaml` | done |
 | **Envelope schema** | `security_council/schemas/agent_finding_envelope.v1.json` (portable strict-mode subset) | done |
@@ -152,7 +154,7 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 3. **codex-security served model is unattestable** — the CLI reports it nowhere (stdout empty, not in stderr or the sealed bundle), so a D8 model pin can only fail open: the arm sets `model_unattested` in coverage and the summary renders "unattested", but a silent substitution by the vendor would be invisible. Revisit if a future CLI version surfaces the model.
 4. **`calibration` stays `"prior"`** — the seven score weights are hand-set; the eval gate is zero-tolerance on the 7-TP corpus, and fitting waits for a larger corpus (§8.5). Never say "calibrated" in any report until `calibration == "fitted"`.
 5. **Reports:** SARIF + JSON + manifest + `summary.md` + **eMASS static-code-scans** (`report --format emass`). Missing: OpenVEX, OSCAL AR/POA&M, CKLB (ASD STIG V6R4), SBOM, CSV, HTML/PDF.
-6. **ADO template has not run on a real ADO Server instance** (annotation output live-verified locally). **No GitHub Action** (secondary target per D4). ~~MCP transport unproven~~ — live-handshaken 2026-08-22 (mcp 2.0.0, protocol 2025-11-25) via the project `.venv`; `tests/test_mcp_handshake.py` keeps it verified wherever `.[mcp]` is installed (skips on the stdlib-only system python).
+6. **CI surfaces built for all three platforms (ADO / GitHub / GitLab) but none has run on real infrastructure yet**: the ADO template needs an ADO Server instance, the GitHub Action (`action.yml`, `uses: Intellimetrics/security-council@main`) needs a workflow run in a real repo, and the GitLab job template + MR notes need a GitLab project (+ a project access token — `CI_JOB_TOKEN` can't post notes). Local halves are live-verified (annotations, schema-valid reports, REST payloads via fake openers). ~~MCP transport unproven~~ — live-handshaken 2026-08-22 (mcp 2.0.0, protocol 2025-11-25); `tests/test_mcp_handshake.py` keeps it verified wherever `.[mcp]` is installed.
 7. **No Red-tier / PoC** (deferred by design; needs the authorization block + sandbox).
 8. **The decision store is target-local and unsigned** (`<target>/.security-council/decisions/`). Our own gitignore excludes all of `.security-council/`, so a team that wants shared suppressions/baselines must un-ignore `decisions/` + `baseline/` in *their* repo (run outputs should stay ignored) — a decision-sync/central-store + record-signing lane is future work. (Baseline/delta, the store, and `outcome mark` themselves landed 2026-08-22.)
 9. **gitleaks/osv can't path-exclude via CLI** — isolation (scratch copy excluding runtime dirs) is what keeps scans clean; don't remove it.
@@ -200,9 +202,9 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 222 green + 1 skipped;
-   `.venv/bin/python -m pytest tests/ -q` runs all 223 incl. the live MCP handshake).
-3. `git log --oneline` (expect to be at `54ab5a4` MCP handshake or later).
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 233 green + 1 skipped;
+   `.venv/bin/python -m pytest tests/ -q` runs all 234 incl. the live MCP handshake).
+3. `git log --oneline` (expect to be at `d6ba618` GitLab+GitHub CI or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 
