@@ -293,9 +293,14 @@ class DecisionStore:
             return None
 
 
-def annotate_baseline(findings: list[Finding], baseline: dict) -> dict:
+def annotate_baseline(findings: list[Finding], baseline: dict, *, partial: bool = False) -> dict:
     """Greedy 1:1 match (root_cause -> context_hash -> path_cwe_sink); stamps
-    `baseline_state` on every finding and returns the delta summary."""
+    `baseline_state` on every finding and returns the delta summary.
+
+    `partial=True` (a diff/change-scoped run): an unmatched baseline entry is NOT
+    reported `absent` — a finding missing from a partial scan may simply be out
+    of the diff's scope, not resolved. Reporting it absent would falsely claim a
+    fix. Absent accounting is only meaningful on a full scan."""
     entries = list(baseline.get("findings") or [])
     unmatched = {i: e for i, e in enumerate(entries)}
     resolved: dict[str, str] = {}
@@ -321,6 +326,9 @@ def annotate_baseline(findings: list[Finding], baseline: dict) -> dict:
     counts = {"new": 0, "unchanged": 0, "updated": 0}
     for f in findings:
         counts[f.baseline_state] += 1
-    absent = [{"id": e.get("id"), "title": e.get("title")} for e in unmatched.values()]
-    return {"baseline_run": baseline.get("run_id"), **counts,
-            "absent": len(absent), "absent_findings": absent}
+    # a partial (diff) scan cannot conclude anything about findings it didn't look for
+    absent = ([] if partial
+              else [{"id": e.get("id"), "title": e.get("title")} for e in unmatched.values()])
+    return {"baseline_run": baseline.get("run_id"), **counts, "partial": partial,
+            "absent": len(absent), "absent_findings": absent,
+            "out_of_scope": len(unmatched) if partial else 0}

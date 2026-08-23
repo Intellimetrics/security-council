@@ -53,7 +53,7 @@ from pathlib import Path
 from .. import proc
 from ..normalize import registry
 from ..normalize.base import ParseContext
-from .base import ArmResult
+from .base import ArmResult, DiffSpec
 from .llm_cli import _model_matches
 
 ARM_NAME = "codex-security"
@@ -101,11 +101,12 @@ class CodexSecurityArm:
     kind = "agent_cli"
     family = "codex"
     name = ARM_NAME
+    supports_diff = True                 # M-V1: native --diff / --working-tree
 
     def __init__(self, *, model: str | None = None, mode: str = "standard",
                  effort: str | None = None, max_cost_usd: float = 5.0,
                  scope: list[str] | None = None, max_time_hours: float | None = None,
-                 timeout: int = 3600) -> None:
+                 timeout: int = 3600, diff: DiffSpec | None = None) -> None:
         if mode not in MODES:
             raise ValueError(f"codex-security mode must be one of {MODES}, got {mode!r}")
         self.model = model
@@ -115,6 +116,7 @@ class CodexSecurityArm:
         self.scope = list(scope) if scope else None
         self.max_time_hours = max_time_hours
         self.timeout = int(timeout)
+        self.diff = diff
 
     # ------------------------------------------------------------------ #
     def available(self) -> tuple[bool, str]:
@@ -140,6 +142,16 @@ class CodexSecurityArm:
             cmd += ["--model", self.model]
         if self.effort:
             cmd += ["--effort", self.effort]
+        # diff lane (M-V1): committed range or working-tree changes
+        if self.diff is not None:
+            if self.diff.kind == "working_tree":
+                cmd += ["--working-tree"]
+                if self.diff.base:
+                    cmd += ["--base", self.diff.base]
+            else:
+                cmd += ["--diff", self.diff.base or "HEAD~1"]
+                if self.diff.head:
+                    cmd += ["--head", self.diff.head]
         for p in self.scope or []:
             cmd += ["--path", p]
         if self.mode == "deep" and self.max_time_hours:
@@ -178,7 +190,8 @@ class CodexSecurityArm:
         if cost is None:
             cost = _stderr_cost(r.stderr)
         base_cov = {"cost_usd": cost, "mode": self.mode, "exit_code": r.exit_code,
-                    "cost_stopped": _cost_stopped(r.stderr)}
+                    "cost_stopped": _cost_stopped(r.stderr),
+                    "scan_scope": self.diff.as_dict() if self.diff else {"kind": "full"}}
         if served is None:
             base_cov["model_unattested"] = True
         if r.timed_out:

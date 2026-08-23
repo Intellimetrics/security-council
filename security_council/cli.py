@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .arms.base import DiffSpec
 from .arms.registry import build_arm, known_arms
 from .config import load_config
 from .orchestrator import run_scan
@@ -16,9 +17,9 @@ from .orchestrator import run_scan
 EXIT_USAGE = 2
 
 
-def _build_arms(names: list[str], config: dict | None = None):
+def _build_arms(names: list[str], config: dict | None = None, diff=None):
     options = ((config or {}).get("arms") or {}).get("options") or {}
-    return [build_arm(n, options=options.get(n)) for n in names]
+    return [build_arm(n, options=options.get(n), diff=diff) for n in names]
 
 
 def cmd_scan(args) -> int:
@@ -38,11 +39,29 @@ def cmd_scan(args) -> int:
     if unknown:
         print(f"error: unknown arms {unknown}; known: {known_arms()}", file=sys.stderr)
         return EXIT_USAGE
-    run = run_scan(target, _build_arms(names, config), config,
+    diff = None
+    if getattr(args, "working_tree", False):
+        diff = DiffSpec(kind="working_tree", base=args.diff)
+    elif getattr(args, "diff", None):
+        diff = DiffSpec(kind="diff", base=args.diff, head=args.diff_head)
+    if getattr(args, "deep", False):
+        opts = config["arms"].setdefault("options", {})
+        for dn in ("codex-security", "claude-security"):
+            opts.setdefault(dn, {})
+            if dn == "codex-security":
+                opts[dn]["mode"] = "deep"
+            else:
+                opts[dn]["effort"] = "high"
+    if diff is not None and not any(
+            getattr(build_arm(n), "supports_diff", False) for n in names):
+        print(f"error: --diff/--working-tree needs a diff-capable arm "
+              f"(claude-security, codex-security); selected: {names}", file=sys.stderr)
+        return EXIT_USAGE
+    run = run_scan(target, _build_arms(names, config, diff=diff), config,
                    out_dir=Path(args.out) if args.out else None,
                    isolate=not args.inplace,
                    validate=args.validate, validate_max_findings=args.validate_max,
-                   validate_budget_usd=args.validate_budget)
+                   validate_budget_usd=args.validate_budget, diff=diff)
     if args.json:
         print(json.dumps({"run_id": run.run_id, "out_dir": str(run.out_dir),
                           "exit_code": run.exit_code, "counts": run.manifest["counts"],
@@ -193,6 +212,13 @@ def cmd_baseline_set(args) -> int:
     if run_dir is None:
         print("error: no run with findings.json found (pass --run)", file=sys.stderr)
         return EXIT_USAGE
+    mf = run_dir / "manifest.json"
+    scope = (json.loads(mf.read_text()).get("scan_scope") or {}) if mf.is_file() else {}
+    if scope.get("kind") not in (None, "full"):
+        print(f"error: run {run_dir.name} is a partial ({scope.get('kind')}) scan; a baseline "
+              "must come from a full scan, or it would treat unscanned findings as resolved. "
+              "Run a full scan and baseline that.", file=sys.stderr)
+        return EXIT_USAGE
     rows = json.loads((run_dir / "findings.json").read_text())
     bl = _store(args).set_baseline(rows, run_id=run_dir.name, now_iso=_now_iso(),
                                    operator=args.operator)
@@ -250,6 +276,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fail-on-severity", choices=["critical", "high", "medium", "low", "info"])
     s.add_argument("--gate-baseline", choices=["all", "new"],
                    help='"new" gates only findings absent from the operator-set baseline')
+    s.add_argument("--diff", metavar="BASE",
+                   help="change-scoped scan: committed range BASE..HEAD (diff-capable "
+                        "arms only: claude-security, codex-security)")
+    s.add_argument("--diff-head", metavar="REF", help="head ref for --diff (default HEAD)")
+    s.add_argument("--working-tree", action="store_true",
+                   help="change-scoped scan of staged+unstaged changes vs --diff BASE "
+                        "(codex-security only)")
+    s.add_argument("--deep", action="store_true",
+                   help="run dedicated agentic arms in their deep mode (slower, costlier)")
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")

@@ -178,6 +178,12 @@ def _header(manifest: dict, findings: list[Finding]) -> list[str]:
         out.append(f"- **Revision:** {' · '.join(git_bits)}")
     out.append(f"- **Run:** {_esc(manifest.get('started_at', '?'))} → "
                f"{_esc(manifest.get('finished_at', '?'))} · security-council {_code(tool)}")
+    scope = manifest.get("scan_scope") or {}
+    if scope.get("kind") and scope["kind"] != "full":
+        rng = (f"working-tree vs {scope.get('base') or 'HEAD'}" if scope["kind"] == "working_tree"
+               else f"{scope.get('base') or 'auto'}..{scope.get('head') or 'HEAD'}")
+        out.append(f"- **Scope:** ⚠ partial — change-scoped scan ({_esc(rng)}); "
+                   "not a full-repository result, not baseline-eligible")
     pol = manifest.get("policy", {}) or {}
     armed = bool(pol.get("auto_suppress")) and bool(pol.get("accept_suppression_risk"))
     acts = manifest.get("disposition_actions") or {}

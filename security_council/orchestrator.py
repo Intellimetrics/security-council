@@ -75,19 +75,36 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
 
 def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path | None = None,
              isolate: bool = True, validate: bool = False, validate_max_findings: int | None = None,
-             validate_budget_usd: float = 0.5) -> ScanRun:
+             validate_budget_usd: float = 0.5, diff=None) -> ScanRun:
     target = Path(target).resolve()
     run_id, collected_at = _utc_stamp()
     outdir_root = Path(config.get("reports", {}).get("outdir", ".security-council/runs"))
     out_dir = Path(out_dir) if out_dir else (target / outdir_root / run_id)
     out_dir.mkdir(parents=True, exist_ok=True)
+    scan_scope = diff.as_dict() if diff is not None else {"kind": "full"}
+    partial = diff is not None
+
+    # M-V1 diff lane: a diff run must stay scope-coherent — run only diff-capable
+    # arms, and record the rest as an informational (not failing) degradation, so
+    # a full-tree scanner's findings never get corroborated against a diff-scoped
+    # arm that never looked at the same code.
+    pre_degr: list[dict] = []
+    if diff is not None:
+        run_arms = [a for a in arms if getattr(a, "supports_diff", False)]
+        for a in arms:
+            if not getattr(a, "supports_diff", False):
+                pre_degr.append({"kind": "diff_skipped", "arm": a.name,
+                                 "detail": f"{a.name} has no diff mode; skipped in diff scan "
+                                           f"({diff.label()})"})
+    else:
+        run_arms = list(arms)
 
     ws = prepare_workspace(target, mode="copy" if isolate else "inplace")
     try:
         maxc = int(config.get("defaults", {}).get("max_concurrency", 4))
         with ThreadPoolExecutor(max_workers=max(1, maxc)) as ex:
             results = list(ex.map(
-                lambda a: _safe_run(a, ws.root, out_dir, run_id, collected_at), arms))
+                lambda a: _safe_run(a, ws.root, out_dir, run_id, collected_at), run_arms))
 
         mdv = int(config.get("defaults", {}).get("min_distinct_vendors", 2))
         all_findings = [f for r in results for f in r.findings]
@@ -125,7 +142,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             store.bump_armed_runs(config, run_id=run_id, now_iso=decided_at)
 
         baseline = store.load_baseline()
-        baseline_delta = decisions_mod.annotate_baseline(merged, baseline) if baseline else None
+        baseline_delta = (decisions_mod.annotate_baseline(merged, baseline, partial=partial)
+                          if baseline else None)
 
         (out_dir / "policy.json").write_text(dumps(policy_mod.decisions_to_json(decisions)))
 
@@ -136,11 +154,12 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         (out_dir / "findings.json").write_text(dumps([to_dict(f) for f in merged]))
 
         exit_code, degradations = _exit_code(merged, results, config)
+        degradations = pre_degr + degradations
         _, finished_at = _utc_stamp()
         manifest = build_manifest(
             run_id=run_id, target=str(target), arm_results=results, merged=merged, config=config,
             started_at=collected_at, finished_at=finished_at, git=ws.git_info(),
-            degradations=degradations, exit_code=exit_code,
+            degradations=degradations, exit_code=exit_code, scan_scope=scan_scope,
             disposition_actions=policy_mod.decisions_summary(decisions),
             baseline_delta=baseline_delta, prior_decisions=prior_decisions,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in

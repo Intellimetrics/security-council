@@ -16,7 +16,8 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
                    exit_code: int | None = None,
                    disposition_actions: dict | None = None,
                    baseline_delta: dict | None = None,
-                   prior_decisions: list[dict] | None = None) -> dict:
+                   prior_decisions: list[dict] | None = None,
+                   scan_scope: dict | None = None) -> dict:
     by_sev = Counter(f.severity.label for f in merged)
     by_state = Counter(f.disposition.state for f in merged)
     return {
@@ -26,6 +27,7 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
         "finished_at": finished_at,
         "tool": {"security_council": __version__},
         "target": {"root": target, **git},
+        "scan_scope": scan_scope or {"kind": "full"},
         "arms": [{
             "name": r.name, "kind": r.kind, "family": r.family, "ok": r.ok,
             "exit_code": r.exit_code, "tool_version": r.tool_version,

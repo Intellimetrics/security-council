@@ -20,7 +20,8 @@ def known_arms() -> list[str]:
     return list(SCANNER_SPECS) + list(LLM_CLI_SPECS) + list(DEDICATED_ARMS)
 
 
-def build_arm(name: str, *, model: str | None = None, options: dict | None = None) -> Arm:
+def build_arm(name: str, *, model: str | None = None, options: dict | None = None,
+              diff=None) -> Arm:
     opts = dict(options or {})
     model = model or opts.pop("model", None)
     if name in SCANNER_SPECS:
@@ -28,5 +29,9 @@ def build_arm(name: str, *, model: str | None = None, options: dict | None = Non
     if name in LLM_CLI_SPECS:
         return LlmCliArm(name, model=model)
     if name in DEDICATED_ARMS:
+        # diff is only meaningful for diff-capable dedicated arms; pass it and
+        # let the arm ignore it if unsupported (all current dedicated arms support it)
+        if diff is not None:
+            opts.setdefault("diff", diff)
         return DEDICATED_ARMS[name](model=model, **opts)
     raise ValueError(f"unknown arm {name!r}; known: {known_arms()}")

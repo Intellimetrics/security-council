@@ -31,7 +31,7 @@ from pathlib import Path
 from .. import proc
 from ..normalize import registry
 from ..normalize.base import ParseContext
-from .base import ArmResult
+from .base import ArmResult, DiffSpec
 from .llm_cli import _model_matches
 
 ARM_NAME = "claude-security"
@@ -45,7 +45,17 @@ REPORT_GLOB = "CLAUDE-SECURITY-2*"
 SARIF_NAME = "CLAUDE-SECURITY-RESULTS.sarif"
 
 
-def build_prompt(*, effort: str, scope: list[str] | None) -> str:
+def build_prompt(*, effort: str, scope: list[str] | None,
+                 diff: DiffSpec | None = None) -> str:
+    if diff is not None:
+        # scan-changes: committed diff/PR against a base (working_tree unsupported here)
+        base = diff.base or "origin/HEAD"
+        shape = (f"scan only the committed changes in {', '.join(scope)}" if scope
+                 else "scan the committed changes")
+        return (f"/claude-security scan-changes --base {base} --effort {effort}"
+                + (f" --scope {','.join(scope)}" if scope else "")
+                + f"\n\nRun the scan-changes job now: {shape} against base {base} at "
+                + f"{effort} effort. {ACKNOWLEDGEMENT}")
     shape = (f"scan only these directories: {', '.join(scope)}" if scope
              else "scan the whole repository")
     return (f"/claude-security scan-codebase --effort {effort}"
@@ -57,10 +67,12 @@ class ClaudeSecurityArm:
     kind = "agent_cli"
     family = "claude"
     name = ARM_NAME
+    supports_diff = True                  # M-V1: scan-changes job (committed diffs)
 
     def __init__(self, *, model: str | None = None, effort: str = "low",
                  max_budget_usd: float = 10.0, scope: list[str] | None = None,
-                 timeout: int = 3600, command: str = "claude") -> None:
+                 timeout: int = 3600, command: str = "claude",
+                 diff: DiffSpec | None = None) -> None:
         if effort not in EFFORTS:
             raise ValueError(f"claude-security effort must be one of {EFFORTS}, got {effort!r}")
         self.model = model
@@ -69,6 +81,7 @@ class ClaudeSecurityArm:
         self.scope = list(scope) if scope else None
         self.timeout = int(timeout)
         self.command = command
+        self.diff = diff
 
     # ------------------------------------------------------------------ #
     def plugin_dirs(self) -> list[str]:
@@ -103,7 +116,7 @@ class ClaudeSecurityArm:
         target = Path(target).resolve()
         raw_dir = Path(out_dir) / "raw" / self.name
         raw_dir.mkdir(parents=True, exist_ok=True)
-        prompt = build_prompt(effort=self.effort, scope=self.scope)
+        prompt = build_prompt(effort=self.effort, scope=self.scope, diff=self.diff)
         cmd = self._cmd(prompt)
         before = set(glob.glob(str(target / REPORT_GLOB)))
         r = proc.run_command(cmd, timeout=self.timeout, cwd=str(target), env=self._env())
@@ -131,7 +144,8 @@ class ClaudeSecurityArm:
         sarif_path = (report / SARIF_NAME) if report else None
 
         base_cov = {"cost_usd": cost, "claude_subtype": subtype, "effort": self.effort,
-                    "report_dir": str(report) if report else None}
+                    "report_dir": str(report) if report else None,
+                    "scan_scope": self.diff.as_dict() if self.diff else {"kind": "full"}}
 
         if r.timed_out:
             return self._fail(cmd, r, error=f"timed out after {self.timeout}s", cov=base_cov)
