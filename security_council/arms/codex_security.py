@@ -50,6 +50,7 @@ import stat
 import tempfile
 from pathlib import Path
 
+from .. import entitlements as _entitlements
 from .. import proc
 from ..normalize import registry
 from ..normalize.base import ParseContext
@@ -207,11 +208,14 @@ class CodexSecurityArm:
         doc = json.load(open(findings_path))
         manifest = _load_json(raw_dir / "scan-manifest.json")
         coverage = _load_json(raw_dir / "coverage.json")
+        _tier = _entitlements.classify_model(served or self.model)
         ctx = ParseContext(repo_root=target, source_id=self.name, source_kind="agent_cli",
                            family=self.family, run_id=run_id, collected_at=collected_at,
                            model_id=served or self.model or "codex-security-default",
                            prompt_sha256=_bundle_prompt_sha(manifest),
-                           tool_version=((manifest or {}).get("scan") or {}).get("producer", {}).get("version"))
+                           tool_version=((manifest or {}).get("scan") or {}).get("producer", {}).get("version"),
+                           entitlement=_tier.name if _tier else None,
+                           safeguard_posture=_tier.safeguard_posture if _tier else "default")
         findings, meta = registry.normalize_codex_security(doc, ctx, manifest=manifest, coverage=coverage)
         status = meta.get("status")
         completeness = meta.get("completeness")

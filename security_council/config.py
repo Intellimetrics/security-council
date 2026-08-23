@@ -13,6 +13,10 @@ DEFAULT_CONFIG: dict = {
     #   arms.options.claude-security: {effort: low, max_budget_usd: 10}
     #   arms.options.codex-security:  {mode: standard, max_cost_usd: 5}
     "arms": {"enabled": ["semgrep", "gitleaks", "osv-scanner"], "options": {}},
+    # Declared gated model-tier entitlements (M-V2). Each entry names a tier the
+    # operator holds, e.g. {tier: mythos} or {tier: daybreak-blue}. A scan will
+    # not route to an undeclared gated tier, and never to Daybreak Red (Blue scope).
+    "entitlements": [],
     # auto_suppress additionally requires accept_suppression_risk: true (the
     # operator's explicit acknowledgement) and runs shadow for the first
     # policy.shadow_runs runs; crypto and critical findings are never

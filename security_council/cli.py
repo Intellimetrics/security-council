@@ -39,6 +39,18 @@ def cmd_scan(args) -> int:
     if unknown:
         print(f"error: unknown arms {unknown}; known: {known_arms()}", file=sys.stderr)
         return EXIT_USAGE
+    if getattr(args, "tier", None):
+        from . import entitlements as _ent
+        model_id = _ent.tier_model(args.tier)
+        if model_id is None:
+            print(f"error: unknown tier {args.tier!r}; known: {sorted(_ent.KNOWN_TIERS)}",
+                  file=sys.stderr)
+            return EXIT_USAGE
+        fam = _ent.KNOWN_TIERS[args.tier].family
+        arm_opts = config["arms"].setdefault("options", {})
+        for an in names:                       # route the tier model to same-family arms
+            if an in (fam, f"{fam}-security"):
+                arm_opts.setdefault(an, {})["model"] = model_id
     diff = None
     if getattr(args, "working_tree", False):
         diff = DiffSpec(kind="working_tree", base=args.diff)
@@ -254,6 +266,24 @@ def cmd_suppress(args) -> int:
     return 0
 
 
+def cmd_entitlements(args) -> int:
+    from . import entitlements as ent
+    target = Path(args.target).resolve()
+    config = load_config(target)
+    declared = ent.declared_tiers(config)
+    cache_dir = target / ".security-council" / "cache"
+    rows = []
+    for name in sorted(ent.KNOWN_TIERS):
+        res = ent.probe_entitlement(name, config, cache_dir=cache_dir)
+        avail = {True: "available", False: "unavailable", None: "unverifiable"}[res.available]
+        rows.append({"tier": name, "family": res.family, "model": res.model_id,
+                     "declared": res.declared, "availability": avail,
+                     "safeguard_posture": res.safeguard_posture, "red": res.is_red,
+                     "rung": res.rung, "source": res.source})
+    print(json.dumps({"declared": sorted(declared), "tiers": rows}, indent=2))
+    return 0
+
+
 def cmd_eval(args) -> int:
     from .eval import runner
     root = Path(args.fixtures)
@@ -285,6 +315,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "(codex-security only)")
     s.add_argument("--deep", action="store_true",
                    help="run dedicated agentic arms in their deep mode (slower, costlier)")
+    s.add_argument("--tier", help="route same-vendor arms to a gated model tier "
+                                  "(mythos, daybreak-blue); must be declared in entitlements")
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")
@@ -310,6 +342,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--emass-clear", action="store_true",
                    help="emit the clear-findings body for the application instead")
     r.set_defaults(fn=cmd_report)
+    en = sub.add_parser("entitlements", help="show declared gated model tiers and probe availability")
+    en.add_argument("--target", default=".", help="repo whose config declares entitlements")
+    en.set_defaults(fn=cmd_entitlements)
     e = sub.add_parser("eval", help="replay the recorded eval corpus; gate on wrongful suppression")
     e.add_argument("--fixtures", default="tests/fixtures",
                    help="corpus root containing seedrepo/, raw/, EXPECTED.yaml, eval/")

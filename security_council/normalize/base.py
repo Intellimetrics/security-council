@@ -47,6 +47,7 @@ class ParseContext:
     rule_pack_version: Optional[str] = None
     angle: Optional[str] = None
     entitlement: Optional[str] = None
+    safeguard_posture: str = "unknown"
     skipped: dict[str, int] = field(default_factory=lambda: defaultdict(int))
 
     def skip(self, reason: str) -> None:
@@ -126,6 +127,7 @@ def build_finding(raw: RawFinding, ctx: ParseContext) -> Optional[Finding]:
         prompt_sha256=ctx.prompt_sha256, collected_at=ctx.collected_at, model_id=ctx.model_id,
         cli_version=ctx.cli_version, tool_version=ctx.tool_version,
         rule_pack_version=ctx.rule_pack_version, angle=ctx.angle, entitlement=ctx.entitlement,
+        safeguard_posture=ctx.safeguard_posture,
     )
     corr = Corroboration(
         agent_sources=[ctx.source_id] if ctx.source_kind == "agent_cli" else [],

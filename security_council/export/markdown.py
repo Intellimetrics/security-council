@@ -282,18 +282,26 @@ def _method(findings: list[Finding], manifest: dict) -> list[str]:
                    "attributing findings to the wrong model (decision D8).")
         out.append("")
     models: dict[str, set[str]] = {}
-    postures: set[str] = set()
+    postures: set[str] = set()          # only the noteworthy ones (default is the norm)
+    relaxed_sources: set[str] = set()
     for f in findings:
         for p in f.provenance:
             if p.source_kind == "agent_cli" and p.model_id:
                 models.setdefault(p.source_id, set()).add(p.model_id)
-                if p.safeguard_posture != "unknown":
-                    postures.add(p.safeguard_posture)
+                if p.safeguard_posture == "relaxed":
+                    postures.add("relaxed")
+                    relaxed_sources.add(p.source_id)
+                elif p.safeguard_posture == "unknown":
+                    postures.add("unknown")
             if p.classifier_fallback:
                 postures.add("classifier-fallback")
     if models:
         bits = [f"{_code(src)} ← {', '.join(_code(m) for m in sorted(ms))}" for src, ms in sorted(models.items())]
         out.append(f"- **Models that produced findings:** {'; '.join(bits)}")
+    if relaxed_sources:
+        out.append(f"- ⚠ **Relaxed-safeguard tier in use:** {', '.join(_code(s) for s in sorted(relaxed_sources))} "
+                   "ran on a gated tier with safeguards relaxed (Mythos / Daybreak) — findings and "
+                   "any dual-use content reflect that posture.")
     if postures:
         out.append(f"- **Safeguard posture seen:** {', '.join(sorted(postures))}")
     panel: dict[str, set[str]] = {}

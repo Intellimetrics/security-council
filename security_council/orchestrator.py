@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__, decisions as decisions_mod, policy as policy_mod
+from . import __version__, decisions as decisions_mod, entitlements as ent_mod, policy as policy_mod
 from .arms.base import Arm, ArmResult
 from .cluster import cluster_findings, merge_cluster
 from .export import markdown, sarif
@@ -83,6 +83,24 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
     out_dir.mkdir(parents=True, exist_ok=True)
     scan_scope = diff.as_dict() if diff is not None else {"kind": "full"}
     partial = diff is not None
+
+    # M-V2 entitlement preflight: refuse a gated tier that is Red or undeclared
+    # BEFORE any arm runs (nothing is scanned, no cost incurred).
+    refusals = ent_mod.preflight([getattr(a, "model", None) for a in arms], config)
+    if refusals:
+        code = 5 if any(r.kind == "red_refused" for r in refusals) else 4  # 5 preflight, 4 entitlement
+        degr = [{"kind": r.kind, "arm": None, "detail": r.detail} for r in refusals]
+        _, finished_at = _utc_stamp()
+        manifest = build_manifest(
+            run_id=run_id, target=str(target), arm_results=[], merged=[], config=config,
+            started_at=collected_at, finished_at=finished_at, git={}, degradations=degr,
+            exit_code=code, scan_scope=scan_scope,
+            reports=[{"path": str(out_dir / n), "format": fmt}
+                     for n, fmt in (("summary.md", "markdown"), ("manifest.json", "json"))])
+        (out_dir / "summary.md").write_text(markdown.to_markdown([], manifest))
+        (out_dir / "manifest.json").write_text(dumps(manifest))
+        return ScanRun(run_id=run_id, out_dir=out_dir, findings=[], arm_results=[],
+                       manifest=manifest, exit_code=code, degradations=degr)
 
     # M-V1 diff lane: a diff run must stay scope-coherent — run only diff-capable
     # arms, and record the rest as an informational (not failing) degradation, so

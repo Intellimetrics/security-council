@@ -28,6 +28,7 @@ import os
 import shutil
 from pathlib import Path
 
+from .. import entitlements as _entitlements
 from .. import proc
 from ..normalize import registry
 from ..normalize.base import ParseContext
@@ -160,10 +161,13 @@ class ClaudeSecurityArm:
                               cov=base_cov)
 
         sarif = json.load(open(sarif_path))
+        _tier = _entitlements.classify_model(served or self.model)
         ctx = ParseContext(repo_root=target, source_id=self.name, source_kind="agent_cli",
                            family=self.family, run_id=run_id, collected_at=collected_at,
                            model_id=served or self.model or "claude-account-default",
-                           prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest())
+                           prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
+                           entitlement=_tier.name if _tier else None,
+                           safeguard_posture=_tier.safeguard_posture if _tier else "default")
         findings, meta = registry.normalize_claude_security(sarif, ctx)
         ctx_tool = meta.get("plugin_version")
         for f in findings:
