@@ -23,7 +23,7 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --valida
 python3 -m security_council.cli scan . --arms claude-security --diff origin/main   # change-scoped (M-V1)
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 272 green + 1 skip (~1s); .venv/bin/python runs all 273 incl. MCP handshake
+python3 -m pytest tests/ -q        # 300 green + 1 skip (~1.2s); .venv/bin/python runs all 301 incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -64,7 +64,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-39 commits, ~7,000 LOC (package), **272 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
+44 commits, ~7,600 LOC (package), **300 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -160,6 +160,14 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 4. **`calibration` stays `"prior"`** — the seven score weights are hand-set; the eval gate is zero-tolerance on the 7-TP corpus, and fitting waits for a larger corpus (§8.5). Never say "calibrated" in any report until `calibration == "fitted"`.
 5. **Reports:** SARIF + JSON + manifest + `summary.md` + **eMASS static-code-scans** (`report --format emass`). Missing: OpenVEX, OSCAL AR/POA&M, CKLB (ASD STIG V6R4), SBOM, CSV, HTML/PDF.
 6. **CI surfaces built for all three platforms (ADO / GitHub / GitLab) but none has run on real infrastructure yet**: the ADO template needs an ADO Server instance, the GitHub Action (`action.yml`, `uses: Intellimetrics/security-council@main`) needs a workflow run in a real repo, and the GitLab job template + MR notes need a GitLab project (+ a project access token — `CI_JOB_TOKEN` can't post notes). Local halves are live-verified (annotations, schema-valid reports, REST payloads via fake openers). ~~MCP transport unproven~~ — live-handshaken 2026-08-22 (mcp 2.0.0, protocol 2025-11-25); `tests/test_mcp_handshake.py` keeps it verified wherever `.[mcp]` is installed.
+7a. **Fix lane (M-V4a) is offline-built; live vendor patch-generation unproven.** The bwrap
+   fence, canary, patch validator, and fail-closed `FenceCertificate` are live-verified here
+   (bwrap 0.11.0); but no real vendor fix run has been made through `arms/fix.py` — the vendor
+   `$fix-finding`/`suggest-patches` invocation is best-effort and needs spend to verify (degrades
+   to `no_patch`). Also verify: whether `codex-security patch` honours the passed `--sandbox` vs
+   spawning its own `codex exec`; whether suggest-patches' verifier needs network (→ `tests_ran:
+   false`, never open egress). **M-V4b (verify-fix evidence) not built.** The CLI/MCP nesting
+   guards are cooperative (the real boundary is the fence's write-denial on the original tree).
 7. **No Red-tier / PoC** (deferred by design; needs the authorization block + sandbox). The
    entitlement layer (M-V2) *knows* Daybreak Red and **positively refuses** it (exit 5) for every
    workflow — routing to `gpt-5.6-cyber`/`daybreak-red-latest` stays blocked until that block lands.
@@ -237,8 +245,18 @@ before the decision store — never wire the history feedback loop onto an unmea
      analysis arms kept out of coverage/gate (failure = informational degradation). Runner drives
      the verified `$skill` Codex trigger — **built offline (fake-proc), live invocation pending
      codex+plugin session spend** (same status the dedicated arms had pre-live).
-   - **M-V4 Fix lane (gated, council-review before landing)** — suggest-patches + fix-finding as
-     `.patch` artifacts (never applied); verify-fix as human-mark decision evidence.
+   - **M-V4 Fix lane (gated)** — council-reviewed twice (R6, both degraded/single-peer, both
+     go-with-conditions). **M-V4a DONE 2026-08-23** (`fence.py`, `patches.py`, `arms/fix.py`,
+     `tests/test_{fence,patches,fix_lane}.py`, `scan --fix <ids> [--fix-job]`): orchestrator-owned
+     **bwrap** kernel fence (ro system, rw only the scratch copy, tmpfs HOME, no net,
+     --die-with-parent) with a **deterministic canary certified live here** (bwrap 0.11.0);
+     `FenceCertificate` fail-closed (no cert, no run); env allowlist drops CI/cloud tokens;
+     git-neutered copy + safe `git diff --no-index` extraction (MV4-10); patch validator refuses
+     agent/VCS-meta + symlink/binary, redacts secrets both sides; MCP+CLI nesting guards (MV4-4/12);
+     killpg-adjacent via the fence. Fix jobs run serial/post-scan/own-copy, only open non-refuted
+     findings, `--inplace` refused. **.patch artifacts are NEVER applied.** Offline/fake-proc built;
+     live vendor run needs spend and degrades to `no_patch`. **M-V4b (verify-fix as non-closing
+     decision evidence, L1/L3 fences) is the remaining half — not yet built.**
    - **M-V5 (optional)** — vendor validate/triage as non-independent panel voters.
    Must NOT build: fix application to user code (no `--apply`), PoC generation/execution (Red,
    D5), vendor decision/tracking state or export egress, default-mounted vendor MCP servers.
@@ -252,9 +270,9 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 272 green + 1 skipped;
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 300 green + 1 skipped;
    `.venv/bin/python -m pytest tests/ -q` runs all 244 incl. the live MCP handshake).
-3. `git log --oneline` (expect to be at the M-V3 artifact-lane commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
+3. `git log --oneline` (expect to be at the M-V4a fix-lane commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 

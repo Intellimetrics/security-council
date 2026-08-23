@@ -112,6 +112,40 @@ write-up produced on a relaxed-safeguard tier is labeled as such.
 *Status: the analysis runner is built and tested offline; live invocation drives
 the vendor plugin session (real token cost) and has not yet been run here.*
 
+## Fix workflows (reviewed patches, never applied)
+
+The vendor fix workflows turn a finding into a **reviewed `.patch` file you
+apply yourself** — security-council never writes to your tree:
+
+```bash
+security-council scan . --fix <finding-id>[,<id>...] --fix-job suggest-patches
+security-council scan . --fix gating          # all open gating findings
+```
+
+Because a fix workflow *edits files and runs your test suite* (untrusted code
+execution), it runs under a hard sandbox and fails closed if that sandbox can't
+be proven:
+
+- **Requires bubblewrap (`bwrap`).** Each fix job runs inside an
+  orchestrator-owned kernel sandbox: read-only system, writable **only** a
+  throwaway copy of your repo, a tmpfs HOME (your `~/.ssh`, `~/.aws`,
+  `~/.claude`, `~/.codex` are unreachable), and no network. Before the job runs,
+  a canary proves the sandbox blocks writing outside the copy, reading your
+  home, and network — **no proof, no run.**
+- **The patch is never applied.** There is no `--apply`; the tool emits a
+  `.patch` artifact under `raw/` with its base commit and sha, and prints how to
+  apply it manually. Commit/push/PR-open are never available.
+- **Patches are validated and redacted.** Anything touching agent/CI/VCS-meta
+  files (`.claude/`, `.github/`, `.gitmodules`, …) or containing symlink/binary
+  entries is refused; secret material is redacted from both sides; a
+  secrets-family patch is export-excluded (`raw/`-only).
+- CI/cloud tokens in your environment are stripped from the fenced process.
+
+*Status: the fence, canary, and patch validator are live-verified; the vendor
+patch-generation step is built and tested offline and needs real vendor spend to
+exercise end to end (it degrades safely to "no patch" if the skill produces
+nothing).*
+
 ## Category-aware corroboration
 
 Not every arm is *eligible* to report every category (Claude's tooling
