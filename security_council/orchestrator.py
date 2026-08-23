@@ -75,7 +75,7 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
 
 def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path | None = None,
              isolate: bool = True, validate: bool = False, validate_max_findings: int | None = None,
-             validate_budget_usd: float = 0.5, diff=None) -> ScanRun:
+             validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None) -> ScanRun:
     target = Path(target).resolve()
     run_id, collected_at = _utc_stamp()
     outdir_root = Path(config.get("reports", {}).get("outdir", ".security-council/runs"))
@@ -84,9 +84,11 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
     scan_scope = diff.as_dict() if diff is not None else {"kind": "full"}
     partial = diff is not None
 
+    analysis_arms = list(analysis_arms or [])
     # M-V2 entitlement preflight: refuse a gated tier that is Red or undeclared
     # BEFORE any arm runs (nothing is scanned, no cost incurred).
-    refusals = ent_mod.preflight([getattr(a, "model", None) for a in arms], config)
+    refusals = ent_mod.preflight(
+        [getattr(a, "model", None) for a in [*arms, *analysis_arms]], config)
     if refusals:
         code = 5 if any(r.kind == "red_refused" for r in refusals) else 4  # 5 preflight, 4 entitlement
         degr = [{"kind": r.kind, "arm": None, "detail": r.detail} for r in refusals]
@@ -123,6 +125,14 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         with ThreadPoolExecutor(max_workers=max(1, maxc)) as ex:
             results = list(ex.map(
                 lambda a: _safe_run(a, ws.root, out_dir, run_id, collected_at), run_arms))
+            # analysis arms (M-V3) produce artifacts, not findings — run alongside,
+            # but keep them out of coverage/clustering/gate accounting
+            analysis_results = list(ex.map(
+                lambda a: _safe_run(a, ws.root, out_dir, run_id, collected_at), analysis_arms))
+        artifacts = [a for r in analysis_results for a in r.artifacts]
+        for r in analysis_results:
+            if not r.ok:
+                pre_degr.append({"kind": "analysis_failed", "arm": r.name, "detail": r.error})
 
         mdv = int(config.get("defaults", {}).get("min_distinct_vendors", 2))
         all_findings = [f for r in results for f in r.findings]
@@ -175,11 +185,12 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         degradations = pre_degr + degradations
         _, finished_at = _utc_stamp()
         manifest = build_manifest(
-            run_id=run_id, target=str(target), arm_results=results, merged=merged, config=config,
+            run_id=run_id, target=str(target), arm_results=results + analysis_results,
+            merged=merged, config=config,
             started_at=collected_at, finished_at=finished_at, git=ws.git_info(),
             degradations=degradations, exit_code=exit_code, scan_scope=scan_scope,
             disposition_actions=policy_mod.decisions_summary(decisions),
-            baseline_delta=baseline_delta, prior_decisions=prior_decisions,
+            baseline_delta=baseline_delta, prior_decisions=prior_decisions, artifacts=artifacts,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
                      (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
                       ("summary.md", "markdown"), ("manifest.json", "json"),

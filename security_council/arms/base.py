@@ -46,6 +46,7 @@ class ArmResult:
     command: list[str] = field(default_factory=list)
     raw_path: str | None = None
     coverage: dict = field(default_factory=dict)
+    artifacts: list[dict] = field(default_factory=list)   # M-V3 analysis-lane products
 
 
 class Arm(Protocol):

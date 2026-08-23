@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..artifacts import ANALYSIS_JOBS
+from .artifact_runner import ArtifactRunnerArm
 from .base import Arm
 from .claude_security import ClaudeSecurityArm
 from .codex_security import CodexSecurityArm
@@ -18,6 +20,14 @@ DEDICATED_ARMS: dict[str, type] = {
 
 def known_arms() -> list[str]:
     return list(SCANNER_SPECS) + list(LLM_CLI_SPECS) + list(DEDICATED_ARMS)
+
+
+def build_analysis_arm(job: str, *, model: str | None = None, options: dict | None = None):
+    """An artifact-lane runner for one vendor analysis job (M-V3)."""
+    opts = dict(options or {})
+    model = model or opts.pop("model", None)
+    fam = ANALYSIS_JOBS[job].family
+    return ArtifactRunnerArm(job=job, family=fam, model=model, **opts)
 
 
 def build_arm(name: str, *, model: str | None = None, options: dict | None = None,

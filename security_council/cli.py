@@ -69,11 +69,24 @@ def cmd_scan(args) -> int:
         print(f"error: --diff/--working-tree needs a diff-capable arm "
               f"(claude-security, codex-security); selected: {names}", file=sys.stderr)
         return EXIT_USAGE
+    analysis_arms = []
+    if getattr(args, "analyze", None):
+        from .artifacts import ANALYSIS_JOBS
+        from .arms.registry import build_analysis_arm
+        jobs = [j.strip() for j in args.analyze.split(",") if j.strip()]
+        unknown_j = [j for j in jobs if j not in ANALYSIS_JOBS]
+        if unknown_j:
+            print(f"error: unknown analysis job(s) {unknown_j}; known: {sorted(ANALYSIS_JOBS)}",
+                  file=sys.stderr)
+            return EXIT_USAGE
+        options = (config.get("arms") or {}).get("options") or {}
+        analysis_arms = [build_analysis_arm(j, options=options.get(f"analysis:{j}")) for j in jobs]
     run = run_scan(target, _build_arms(names, config, diff=diff), config,
                    out_dir=Path(args.out) if args.out else None,
                    isolate=not args.inplace,
                    validate=args.validate, validate_max_findings=args.validate_max,
-                   validate_budget_usd=args.validate_budget, diff=diff)
+                   validate_budget_usd=args.validate_budget, diff=diff,
+                   analysis_arms=analysis_arms)
     if args.json:
         print(json.dumps({"run_id": run.run_id, "out_dir": str(run.out_dir),
                           "exit_code": run.exit_code, "counts": run.manifest["counts"],
@@ -317,6 +330,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="run dedicated agentic arms in their deep mode (slower, costlier)")
     s.add_argument("--tier", help="route same-vendor arms to a gated model tier "
                                   "(mythos, daybreak-blue); must be declared in entitlements")
+    s.add_argument("--analyze", metavar="JOBS",
+                   help="comma-separated vendor analysis workflows to attach as artifacts "
+                        "(threat-model, attack-path, hardening, policy, writeup); "
+                        "dual-use ones (attack-path, writeup) are export-excluded")
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")

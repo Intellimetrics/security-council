@@ -459,6 +459,28 @@ def _appendix(ordered: list[Finding]) -> list[str]:
     return out
 
 
+def _analysis_artifacts(manifest: dict) -> list[str]:
+    arts = manifest.get("artifacts") or []
+    if not arts:
+        return []
+    out = ["## Analysis artifacts", "",
+           "Vendor analysis workflows produce documents, not gate-able findings; "
+           "they are attached here and never enter the finding results.", "",
+           "| Kind | Producer | Model | Path | Note |", "|---|---|---|---|---|"]
+    for a in arts:
+        posture = a.get("safeguard_posture")
+        note = []
+        if a.get("dual_use"):
+            note.append("⚠ dual-use — raw/-only, export-excluded")
+        if posture == "relaxed":
+            note.append("relaxed-safeguard tier")
+        out.append(f"| {_enum(a.get('kind'))} | {_cell(a.get('producer'))} | "
+                   f"{_cell(a.get('model_id') or '—', 60)} | {_code(a.get('path'), 200)} | "
+                   f"{_esc('; '.join(note)) or '—'} |")
+    out.append("")
+    return out
+
+
 def _footer(manifest: dict) -> list[str]:
     out = ["## Artifacts", ""]
     reports = manifest.get("reports", []) or []
@@ -506,5 +528,6 @@ def to_markdown(findings: list[Finding], manifest: dict, *, detail_limit: int | 
                        "and carried in full in `findings.json` / `merged.sarif`._")
             out.append("")
     out += _appendix(ordered)
+    out += _analysis_artifacts(manifest)
     out += _footer(manifest)
     return "\n".join(out)

@@ -17,7 +17,8 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
                    disposition_actions: dict | None = None,
                    baseline_delta: dict | None = None,
                    prior_decisions: list[dict] | None = None,
-                   scan_scope: dict | None = None) -> dict:
+                   scan_scope: dict | None = None,
+                   artifacts: list[dict] | None = None) -> dict:
     by_sev = Counter(f.severity.label for f in merged)
     by_state = Counter(f.disposition.state for f in merged)
     return {
@@ -46,6 +47,7 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
         "disposition_actions": disposition_actions or {},
         "baseline_delta": baseline_delta,
         "prior_decisions": prior_decisions or [],
+        "artifacts": artifacts or [],
         "degradations": degradations,
         "exit_code": exit_code,
         "reports": reports,
