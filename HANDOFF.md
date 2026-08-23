@@ -23,7 +23,7 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --valida
 python3 -m security_council.cli scan . --arms claude-security --diff origin/main   # change-scoped (M-V1)
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 243 green + 1 skip (~1s); .venv/bin/python runs all 244 incl. MCP handshake
+python3 -m pytest tests/ -q        # 260 green + 1 skip (~1s); .venv/bin/python runs all 261 incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -64,7 +64,7 @@ authz) that pattern scanners can't. Output is a standards-based, actionable repo
 
 ## 3. Status — what is DONE (all committed, tested)
 
-35 commits, ~6,400 LOC (package), **243 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
+37 commits, ~6,650 LOC (package), **260 tests green (+1 skip), ruff clean**. Published: github.com/Intellimetrics/security-council (public). The full v1 Blue pipeline runs end to end:
 
 ```
 isolate(copy) → parallel arms → normalize → cluster(root-cause) → category-aware coverage
@@ -134,7 +134,7 @@ Per-arm options come from `.security-council.yaml` → `arms.options.<name>` (co
 Default arms if `--arms` omitted: `semgrep,gitleaks,osv-scanner` (see `config.py:DEFAULT_CONFIG`).
 
 **Exit codes:** 0 clean · 1 gating finding at/above `fail_on_severity` (excludes validated FPs) ·
-2 usage · 3 degraded/partial (arm failed or `min_arms_ok` not met).
+2 usage · 3 degraded/partial (arm failed or `min_arms_ok` not met) · 4 entitlement (undeclared gated tier) · 5 preflight refused (Daybreak Red).
 
 Run outputs land in `<target>/.security-council/runs/<id>/` (or `--out DIR`): `merged.sarif`,
 `raw.sarif`, `findings.json`, `manifest.json`, `raw/<arm>/…`. All `.security-council/` and `.spikes/`
@@ -160,7 +160,12 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 4. **`calibration` stays `"prior"`** — the seven score weights are hand-set; the eval gate is zero-tolerance on the 7-TP corpus, and fitting waits for a larger corpus (§8.5). Never say "calibrated" in any report until `calibration == "fitted"`.
 5. **Reports:** SARIF + JSON + manifest + `summary.md` + **eMASS static-code-scans** (`report --format emass`). Missing: OpenVEX, OSCAL AR/POA&M, CKLB (ASD STIG V6R4), SBOM, CSV, HTML/PDF.
 6. **CI surfaces built for all three platforms (ADO / GitHub / GitLab) but none has run on real infrastructure yet**: the ADO template needs an ADO Server instance, the GitHub Action (`action.yml`, `uses: Intellimetrics/security-council@main`) needs a workflow run in a real repo, and the GitLab job template + MR notes need a GitLab project (+ a project access token — `CI_JOB_TOKEN` can't post notes). Local halves are live-verified (annotations, schema-valid reports, REST payloads via fake openers). ~~MCP transport unproven~~ — live-handshaken 2026-08-22 (mcp 2.0.0, protocol 2025-11-25); `tests/test_mcp_handshake.py` keeps it verified wherever `.[mcp]` is installed.
-7. **No Red-tier / PoC** (deferred by design; needs the authorization block + sandbox).
+7. **No Red-tier / PoC** (deferred by design; needs the authorization block + sandbox). The
+   entitlement layer (M-V2) *knows* Daybreak Red and **positively refuses** it (exit 5) for every
+   workflow — routing to `gpt-5.6-cyber`/`daybreak-red-latest` stays blocked until that block lands.
+   Gated Blue tiers (Mythos, Daybreak Blue) route + probe but are **not provisioned on this
+   machine**, so only rung-1 (catalog, zero-network) is live-verified; deep-rung probes are
+   injectable and default to "unverifiable" — live-verify with real entitled creds.
 8. **The decision store is target-local and unsigned** (`<target>/.security-council/decisions/`). Our own gitignore excludes all of `.security-council/`, so a team that wants shared suppressions/baselines must un-ignore `decisions/` + `baseline/` in *their* repo (run outputs should stay ignored) — a decision-sync/central-store + record-signing lane is future work. (Baseline/delta, the store, and `outcome mark` themselves landed 2026-08-22.)
 9. **gitleaks/osv can't path-exclude via CLI** — isolation (scratch copy excluding runtime dirs) is what keeps scans clean; don't remove it.
 10. **`coverage.CATEGORY_POLICY` is keyed by arm name** (`POLICY_ALIASES` maps `claude`/`codex` → `house`). A new arm without an entry/alias is `unknown` for every family → never eligible → its findings mislabel as singleton/uncovered. Add a policy row when adding an arm.
@@ -216,10 +221,15 @@ before the decision store — never wire the history feedback loop onto an unmea
      `CATEGORY_POLICY` rows unnecessary; manifest `scan_scope`; `baseline set` refuses partial
      runs; `annotate_baseline(partial=True)` never marks out-of-scope findings absent; summary
      shows a partial banner. 243 tests.
-   - **M-V2 `entitlements.py` + tier knob** — 4-rung probe ladder (never reads keys), declare
-     (CLI, tier, model), populate `entitlement`/`safeguard_posture`, GA default, Red refused until
-     the D5 authorization block. (User scoped 2026-08-23: **Blue gated tiers only** — Mythos +
-     Daybreak Blue; no Red PoC execution.)
+   - ~~**M-V2 `entitlements.py` + tier knob**~~ — **DONE 2026-08-23** (`entitlements.py`,
+     `test_entitlements.py`, `scan --tier`, `entitlements` command): KNOWN_TIERS (mythos /
+     daybreak-blue / daybreak-red); classify_model (alias, + snapshot only when snapshot is
+     itself gated — GA gpt-5.6-sol stays GA); rung-1 catalog probe real (codex cache), rungs 2–4
+     injectable/unverifiable-by-default (never reads keys); preflight refuses **Red (exit 5)** and
+     **undeclared gated tiers (exit 4)** before any arm runs; provenance stamps
+     `entitlement`/`safeguard_posture`, summary flags relaxed-safeguard use; `config.entitlements`.
+     Blue scope: Red known so it is positively refused. Live-verified probe on this
+     (unprovisioned) machine. **Not live-verifiable against a real gated model here.**
    - **M-V3 Artifact lane** — manifest artifact index (none exists yet) + threat-model,
      attack-path-analysis, propose-hardening, define-security-policy, vulnerability-writeup
      (dual-use ones export-excluded, `raw/`-resident).
@@ -238,9 +248,9 @@ The recommended deep profile now lives in `README.md`.)
 ## 9. How to resume (checklist for a new session)
 
 1. Read this file, then skim the plan file §"Decisions locked" and §"Design".
-2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 243 green + 1 skipped;
+2. `cd /development/projects/active/security-council && python3 -m pytest tests/ -q` (expect 260 green + 1 skipped;
    `.venv/bin/python -m pytest tests/ -q` runs all 244 incl. the live MCP handshake).
-3. `git log --oneline` (expect to be at the M-V1 diff-lane commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
+3. `git log --oneline` (expect to be at the M-V2 entitlements commit or later; remote `origin` = github.com/Intellimetrics/security-council, push after committing).
 4. `python3 -m security_council.cli doctor` to confirm arms.
 5. Pick a next step from §8. Keep the working style: build a module + tests, run the suite + ruff, commit with the `Co-Authored-By` trailer, update the memory status line. Use the llm-council `council_run` MCP tool for design/code review at milestones (it found real guardrail bugs twice).
 

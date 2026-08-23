@@ -56,6 +56,39 @@ findings to the wrong model, and the summary shows a MODEL SUBSTITUTION
 banner. Known gap: the codex-security CLI reports its served model nowhere,
 so its findings are honestly marked `model_unattested`.
 
+## Gated model tiers (Mythos / Daybreak)
+
+The vendor workflows run on whatever model the CLI has — GA by default (codex
+`gpt-5.6-sol`, claude Fable). If your account holds a gated tier, route the
+same workflows to it:
+
+```yaml
+# .security-council.yaml — declare what you hold (nothing routes to an unclaimed tier)
+entitlements:
+  - tier: mythos          # Anthropic, claude-mythos-5 (relaxed safeguards)
+  - tier: daybreak-blue   # OpenAI, daybreak-blue-latest
+```
+
+```bash
+security-council entitlements                        # what you've declared + availability
+security-council scan . --arms claude-security --tier mythos
+```
+
+Rules the tool enforces before any scan runs (no cost is incurred on refusal):
+
+- **A gated tier must be declared** in `entitlements:`, or the scan is refused
+  (exit 4) — it will never silently route to a tier you didn't claim.
+- **Daybreak Red (`gpt-5.6-cyber`) is refused for every workflow** (exit 5)
+  until the authorization block + sandbox exist — offensive/PoC use is out of
+  scope here by design.
+- A relaxed-safeguard tier stamps `safeguard_posture: relaxed` on its findings
+  and is flagged in the report; the served model is attested per finding (codex
+  can't report its served model, so gated codex tiers render "unattested").
+
+Availability probing never reads your API keys: it checks local model catalogs
+(zero network) and, where a deeper probe is wired, uses the CLI's own
+credentials — it never copies them.
+
 ## Category-aware corroboration
 
 Not every arm is *eligible* to report every category (Claude's tooling
