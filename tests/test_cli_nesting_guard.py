@@ -43,3 +43,19 @@ def test_writes_allowed_when_not_nested(tmp_path, monkeypatch):
     assert cli_main(["outcome", "mark", fid, "--verdict", "fp", "--operator", "clindell",
                      "--run", str(run.out_dir), "--target", str(tmp_path)]) == 0
     assert (tmp_path / ".security-council" / "decisions").exists()
+
+
+def test_mcp_decision_handlers_refuse_when_nested(tmp_path, monkeypatch):
+    """R6/MV4-12: the MCP decision-write handlers guard too, symmetric w/ CLI."""
+    import pytest
+
+    from security_council import mcp_server as srv
+    monkeypatch.setenv(srv.ROOT_ENV, str(tmp_path))
+    monkeypatch.setenv(srv.NESTED_ENV, "1")
+    for fn, args in ((srv.sc_suppress, {"finding_id": "x", "operator": "o", "justification": "j"}),
+                     (srv.sc_outcome_mark, {"finding_id": "x", "verdict": "fp", "operator": "o"}),
+                     (srv.sc_baseline, {"action": "set", "operator": "o"})):
+        with pytest.raises(ValueError, match="refused inside a security-council arm"):
+            fn(args)
+    # read-only baseline show still works when nested
+    assert srv.sc_baseline({"action": "show"})["set"] is False

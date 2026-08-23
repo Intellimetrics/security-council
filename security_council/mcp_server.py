@@ -38,6 +38,15 @@ def _root() -> Path:
     return Path(os.environ.get(ROOT_ENV) or ".").resolve()
 
 
+def _refuse_if_nested(action: str) -> None:
+    """Decision-store writes are human actions — refuse when nested inside an arm
+    (R6/MV4-12; symmetric with the CLI guard). Belt-and-braces: the real fence
+    is M1 making the target's decision store unreachable to a fenced agent."""
+    if os.environ.get(NESTED_ENV):
+        raise ValueError(f"{action} is a human decision and is refused inside a "
+                         f"security-council arm ({NESTED_ENV} is set).")
+
+
 def _resolve_dir(arguments: dict, key: str, *, default_to_root: bool = True) -> Path:
     root = _root()
     requested = arguments.get(key)
@@ -182,6 +191,7 @@ def sc_baseline(arguments: dict) -> dict:
                     "findings": len(bl.get("findings") or [])} if bl else {})}
     if action != "set":
         raise ValueError(f"unknown action {action!r} (set|show)")
+    _refuse_if_nested("baseline set")
     ns = _cli_ns(arguments, target)
     run_dir = cli._run_dir(ns)
     if run_dir is None:
@@ -209,6 +219,7 @@ def _resolve_finding(arguments: dict, target: Path) -> tuple[Any, dict]:
 def sc_suppress(arguments: dict) -> dict:
     from . import cli
     from .decisions import DecisionStore
+    _refuse_if_nested("suppress")
     target = _resolve_dir(arguments, "target")
     if not arguments.get("operator") or not arguments.get("justification"):
         raise ValueError("operator and justification are required")
@@ -228,6 +239,7 @@ def sc_suppress(arguments: dict) -> dict:
 def sc_outcome_mark(arguments: dict) -> dict:
     from . import cli
     from .decisions import DecisionStore
+    _refuse_if_nested("outcome mark")
     target = _resolve_dir(arguments, "target")
     verdict = {"tp": "true_positive", "fp": "false_positive"}.get(
         arguments.get("verdict"), arguments.get("verdict"))

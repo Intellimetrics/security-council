@@ -7,6 +7,7 @@ the M0 S6 spike and is the whole reason the runner exists.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -25,10 +26,16 @@ class ProcResult:
 def run_command(cmd: list[str], *, timeout: int = 1800,
                 success_exit_codes: tuple[int, ...] = (0,),
                 cwd: str | None = None, env: dict | None = None) -> ProcResult:
+    # start_new_session isolates the child in its own session/process group.
+    # NOTE: subprocess.run kills only the direct child on timeout; killing a
+    # timed-out agent's untrusted grandchildren (R6/MV4-13) is handled by the
+    # fix-lane fence (`bwrap --die-with-parent`), which is the only place
+    # untrusted test code runs. Kept on subprocess.run so existing fakes work.
     start = time.monotonic()
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                           cwd=cwd, env=env, check=False)
+                           cwd=cwd, env=env, check=False,
+                           start_new_session=hasattr(os, "setsid"))
     except subprocess.TimeoutExpired as e:
         return ProcResult(False, None, e.stdout or "", (e.stderr or "") + "\n[timed out]",
                           time.monotonic() - start, True)
