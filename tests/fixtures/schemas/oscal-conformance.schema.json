@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OSCAL AR + POA&M conformance subset (hand-authored 2026-08-23)",
+  "description": "A focused conformance check for the required structure of OSCAL Assessment Results and POA&M, derived from NIST's official oscal-content examples (oscal-version 1.1.2). This is a SUBSET check (required containers, uuids, enums), not the full multi-megabyte NIST OSCAL JSON schema; it catches structural regressions cheaply.",
+  "$defs": {
+    "uuid": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},
+    "metadata": {
+      "type": "object",
+      "required": ["title", "last-modified", "version", "oscal-version"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "oscal-version": {"type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$"}
+      }
+    },
+    "observation": {
+      "type": "object",
+      "required": ["uuid", "description", "methods", "collected"],
+      "properties": {
+        "uuid": {"$ref": "#/$defs/uuid"},
+        "methods": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["uuid", "title", "description", "statement", "status"],
+      "properties": {
+        "uuid": {"$ref": "#/$defs/uuid"},
+        "status": {"enum": ["open", "investigating", "remediating", "deviation-requested",
+                            "deviation-approved", "closed", "completed"]}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["uuid", "title", "description", "target"],
+      "properties": {
+        "uuid": {"$ref": "#/$defs/uuid"},
+        "target": {
+          "type": "object",
+          "required": ["type", "target-id", "status"],
+          "properties": {
+            "type": {"enum": ["objective-id", "statement-id"]},
+            "status": {"type": "object", "required": ["state"],
+                       "properties": {"state": {"enum": ["satisfied", "not-satisfied"]}}}
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["assessment-results"],
+      "additionalProperties": false,
+      "properties": {
+        "assessment-results": {
+          "type": "object",
+          "required": ["uuid", "metadata", "import-ap", "results"],
+          "properties": {
+            "uuid": {"$ref": "#/$defs/uuid"},
+            "metadata": {"$ref": "#/$defs/metadata"},
+            "import-ap": {"type": "object", "required": ["href"]},
+            "results": {
+              "type": "array", "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["uuid", "title", "description", "start"],
+                "properties": {
+                  "uuid": {"$ref": "#/$defs/uuid"},
+                  "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+                  "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
+                  "risks": {"type": "array", "items": {"$ref": "#/$defs/risk"}}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["plan-of-action-and-milestones"],
+      "additionalProperties": false,
+      "properties": {
+        "plan-of-action-and-milestones": {
+          "type": "object",
+          "required": ["uuid", "metadata", "import-ssp", "poam-items"],
+          "properties": {
+            "uuid": {"$ref": "#/$defs/uuid"},
+            "metadata": {"$ref": "#/$defs/metadata"},
+            "import-ssp": {"type": "object", "required": ["href"]},
+            "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}},
+            "risks": {"type": "array", "items": {"$ref": "#/$defs/risk"}},
+            "poam-items": {
+              "type": "array",
+              "items": {"type": "object", "required": ["uuid", "title", "description"],
+                        "properties": {"uuid": {"$ref": "#/$defs/uuid"}}}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

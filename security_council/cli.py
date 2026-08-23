@@ -167,6 +167,18 @@ def cmd_report(args) -> int:
         for s in meta["skipped"]:
             print(f"  skipped {s['finding_id']}: {s['reason']} {s['cwe']}", file=sys.stderr)
         return 0
+    if args.format in ("openvex", "oscal-ar", "oscal-poam"):
+        from .jsonio import finding_from_dict
+        fj = Path(args.run_dir) / "findings.json"
+        findings = [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
+        if args.format == "openvex":
+            from .export import vex
+            doc = vex.to_openvex(findings, m)
+        else:
+            from .export import oscal
+            doc = (oscal.to_oscal_ar if args.format == "oscal-ar" else oscal.to_oscal_poam)(findings, m)
+        print(json.dumps(doc, indent=2))
+        return 0
     if args.format in ("gitlab-sast", "gitlab-codequality"):
         from .export import gitlab as gl
         from .jsonio import finding_from_dict
@@ -393,10 +405,12 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("report", help="summarize or export a previous run directory")
     r.add_argument("run_dir")
     r.add_argument("--format",
-                   choices=["json", "md", "emass", "gitlab-sast", "gitlab-codequality"],
+                   choices=["json", "md", "emass", "gitlab-sast", "gitlab-codequality",
+                            "openvex", "oscal-ar", "oscal-poam"],
                    default="json",
-                   help="json summary (default), markdown report, eMASS static-code-scans "
-                        "POST body, or GitLab SAST / Code Quality report")
+                   help="json summary (default), markdown, eMASS static-code-scans POST body, "
+                        "GitLab SAST / Code Quality report, OpenVEX, or OSCAL "
+                        "assessment-results / POA&M")
     r.add_argument("--detail-limit", type=int, default=50, help="findings rendered in full (md)")
     r.add_argument("--app-name", help="eMASS applicationName (required for --format emass)")
     r.add_argument("--app-version", help="eMASS application version (required for --format emass)")
