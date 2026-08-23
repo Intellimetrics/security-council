@@ -196,8 +196,36 @@ before the decision store — never wire the history feedback loop onto an unmea
    with CodeAnalysisLogs artifact, logissue annotations, PR threads). Remaining to close the lane:
    live-handshake the MCP transport with the real `mcp` SDK, run the template once on a real
    ADO Server, GitHub Action (secondary per D4).
-5. **Calibration fitting** — deferred past all of the above until a larger corpus exists
-   (OWASP Benchmark importer lane); `calibration: "prior"` stays honestly labeled until then.
+5. **VENDOR-WORKFLOW SURFACE (the current focus)** — expose the vendors' *full* built-in
+   security-workflow surface, not just the single `scan`/`scan-codebase` we wrap today. Scope +
+   ordering council-reviewed 2026-08-23 (**R5**, `docs/reviews/R5-vendor-workflow-scope.md`;
+   claude+antigravity converged). Shape = per-vendor **job-parameterized dedicated arms** (scan
+   jobs) + an **artifact runner** (analysis/fix jobs); NOT a generic passthrough, NOT
+   MCP-mount-as-primary (both fracture the finding-model trust surface). Three lanes: SCAN→finding
+   model, ANALYSIS→attached artifact, FIX→`.patch` never applied. Skip the state-management
+   overlaps (vendor triage/validate/track/findings/export — they fork our panel/baseline/decision
+   store/exporters). Verified: codex `scan --diff/--head/--working-tree/--mode deep/--model/--effort`
+   all exist (diff + deep + tier knob are params on the existing arm); analysis skills
+   (threat-model/attack-path/writeup) have no CLI subcommand → session/MCP, artifact lane.
+   Sub-milestones:
+   - **M-V1 Diff lane** — codex `--diff`/`--working-tree`/`--mode deep` first-class + claude
+     `scan-changes`; job-aware `CATEGORY_POLICY` (diff non-report = absence-of-scope, not
+     "suppresses"); scan-scope in manifest so baseline/delta handles partial scans; per-job cost
+     fuses, default-off. **← next.**
+   - **M-V2 `entitlements.py` + tier knob** — 4-rung probe ladder (never reads keys), declare
+     (CLI, tier, model), populate `entitlement`/`safeguard_posture`, GA default, Red refused until
+     the D5 authorization block. (User scoped 2026-08-23: **Blue gated tiers only** — Mythos +
+     Daybreak Blue; no Red PoC execution.)
+   - **M-V3 Artifact lane** — manifest artifact index (none exists yet) + threat-model,
+     attack-path-analysis, propose-hardening, define-security-policy, vulnerability-writeup
+     (dual-use ones export-excluded, `raw/`-resident).
+   - **M-V4 Fix lane (gated, council-review before landing)** — suggest-patches + fix-finding as
+     `.patch` artifacts (never applied); verify-fix as human-mark decision evidence.
+   - **M-V5 (optional)** — vendor validate/triage as non-independent panel voters.
+   Must NOT build: fix application to user code (no `--apply`), PoC generation/execution (Red,
+   D5), vendor decision/tracking state or export egress, default-mounted vendor MCP servers.
+6. **Calibration fitting** — deferred until a larger corpus exists (OWASP Benchmark importer lane);
+   `calibration: "prior"` stays honestly labeled until then.
 
 (§8.1 live verification of the dedicated arms was completed 2026-08-21 — run `20260821_130516`,
 kept under `tests/fixtures/seedrepo/.security-council/runs/` (gitignored) as the live reference.
