@@ -106,6 +106,69 @@ patches. Do NOT refuse crypto or Blue-tier fixes — label them `review_required
   still needs live vendor access to prove. (Claude Code bubblewrap sandbox
   config to be verified the same way before the claude-family fix path.)
 
+## Second independent review (2026-08-23, also degraded — 1 peer)
+
+The maintainer asked for a clean quorum. It is **not attainable in this
+environment**: on the re-run, antigravity again returned empty and codex again
+timed out (both fail reliably). What came back was a second, fresh, full-effort
+claude pass — independent of the first — which **confirmed go-with-conditions**,
+corrected one gate's ownership, and found escape paths the first missed. Two
+independent passes now converge on go-with-conditions. Reconciled changes:
+
+- **M1 re-owned: orchestrator-applied kernel fence, vendor sandbox as
+  defense-in-depth.** Wrap the whole vendor process in a bwrap sandbox
+  (ro-bind system dirs, rw-bind ONLY the scratch copy, tmpfs HOME,
+  `--die-with-parent`, `--new-session`) — or `@anthropic-ai/sandbox-runtime`.
+  **This makes the canary deterministic, $0, and certifiable on the dev machine
+  now** (no model cooperation, no vendor spend) — it dissolves the earlier
+  "fence needs vendor access" blocker. Vendor `--sandbox` flags still passed as
+  a second layer. Egress is a *functional* knob (tests may `pip install`), not
+  the primary control once HOME is tmpfs and the original tree is unbound — do
+  not block landing on a perfect egress filter.
+- **M4 corrected (MV4-10, high): never run `git diff` inside the agent's tree
+  outside the fence.** The agent owns `.git/config` and can set
+  `core.fsmonitor=<cmd>` / `diff.*.textconv=<cmd>`, which git executes as the
+  orchestrator user. Extract the patch with `git diff --no-index` between a
+  pristine copy and the work copy, from a non-repo cwd, with
+  `GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CEILING_DIRECTORIES=…`
+  (or pure-Python difflib).
+- **MV4-11 (high): vendor-config persistence.** A prompt-injected agent plants a
+  hook in `~/.claude/settings.json` / `~/.codex/` (or `CLAUDE.md`/`AGENTS.md`)
+  that fires in the operator's NEXT interactive session, outside every sandbox.
+  Per-job **ephemeral `CLAUDE_CONFIG_DIR` / `CODEX_HOME`** seeded with auth +
+  plugin cache only, discarded after. Also shields against operator config that
+  says `sandbox_mode = danger-full-access`.
+- **MV4-12 (medium): L2 guard is cooperative** (`env -u SECURITY_COUNCIL_NESTED`
+  bypasses it) and the **MCP `sc_baseline`/`sc_suppress`/`sc_outcome_mark`
+  handlers have NO nesting guard**. Relabel MV4-4 "cooperative guard, closed by
+  M1's write-denial on `<original>/.security-council/`"; add the guard to the MCP
+  handlers for symmetry (belt-and-braces, not the boundary).
+- **MV4-13 (medium): `proc.run_command` orphans grandchildren** on timeout (no
+  process group). Need `start_new_session=True` + `os.killpg` (or bwrap
+  `--die-with-parent`); RLIMITs via `preexec_fn`/`prlimit`.
+- **MV4-14 (medium): patch validator additions.** REFUSE (not just flag) patches
+  touching agent/VCS-meta config: `.claude/`, `CLAUDE.md`, `AGENTS.md`,
+  `.mcp.json`, `.codex/`, `.cursor/`, `.vscode/`, `.envrc`,
+  `.pre-commit-config.yaml`, `conftest.py`, `.gitmodules`, `.gitattributes`.
+  Reject symlink (`120000`) entries, mode changes, rename/copy headers unless
+  both paths pass; cap bytes/files; flag out-of-target-file hunks
+  `review_required: out_of_scope`. Redact secrets on BOTH `+`/`-` sides and
+  classify by path heuristic (`.env*`, `*.pem/.key/.p12/.jks`, `*secret*`,
+  `*credential*`).
+- **MV4-15 (low): verify-fix runs tests** → same fence + fresh copy, the
+  ORCHESTRATOR applies the patch (never the agent); bind evidence to
+  `patch_sha256 + base_commit`; label `producer == verifier` (not independent).
+- **Fail-closed made structural:** the fix arm's `run()` requires a
+  `FenceCertificate` only `fence.certify()` can mint in-process (binds sandbox
+  binary+version, vendor CLI version, flag hash, host, ≤1h TTL); no config key
+  can set it; CLI/MCP cannot reach the live arm without it.
+
+Net: M-V4a (orchestrator fence + canary + env allowlist + git-neuter +
+per-job workspace + patch validator + secrets/gitleaks redaction + ephemeral
+vendor HOME + killpg) is **buildable and certifiable here**; only the
+*functional* "does the vendor skill produce a good patch under the fence"
+needs vendor spend and degrades safely to `no_patch`/`tests_ran: false`.
+
 ## Findings (peer, severity-ranked)
 MV4-1 crit: scratch copy is cwd-only; agent+tests have full HOME/env/original reach.
 MV4-2 crit: `inplace` (CLI or MCP) would let a fix arm edit the real tree.
