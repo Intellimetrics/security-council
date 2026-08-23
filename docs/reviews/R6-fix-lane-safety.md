@@ -95,6 +95,17 @@ patches. Do NOT refuse crypto or Blue-tier fixes — label them `review_required
   `codex exec`); whether suggest-patches' verifier needs network (if so degrade
   to `tests_ran: false`, never open egress).
 
+## Verified sandbox facts (ctx7 /openai/codex, 2026-08-23 — no vendor spend)
+- `codex exec --sandbox workspace-write`: writes confined to the workspace;
+  **network is OFF by default** (`SandboxWorkspaceWrite.network_access` defaults
+  false — must be explicitly set true to enable). Headless `codex exec` defaults
+  `approval_policy = Never`. So the fix-lane codex invocation = `--sandbox
+  workspace-write` (default no-network), `--add-dir` NEVER pointing at the
+  original repo, and NEVER `--dangerously-bypass-approvals-and-sandbox`/`--yolo`.
+  This satisfies M1/M6 for the codex family at the flag level; the canary run
+  still needs live vendor access to prove. (Claude Code bubblewrap sandbox
+  config to be verified the same way before the claude-family fix path.)
+
 ## Findings (peer, severity-ranked)
 MV4-1 crit: scratch copy is cwd-only; agent+tests have full HOME/env/original reach.
 MV4-2 crit: `inplace` (CLI or MCP) would let a fix arm edit the real tree.
