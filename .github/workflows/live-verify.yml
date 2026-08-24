@@ -1,0 +1,45 @@
+# Live verification of the composite action (HANDOFF §7.6): a real workflow
+# run on real GitHub infrastructure, triggered manually so it never burns
+# minutes on routine pushes.
+#
+#  - clean-pass: scans the package source with the local action; asserts
+#    exit 0 and exercises the real SARIF upload to code scanning.
+#  - detects-and-gates: scans the intentionally-vulnerable bundled fixture;
+#    asserts the gate FAILED with exit 1 (that is the point), with the SARIF
+#    upload disabled so fixture vulns never pollute this repo's alerts tab.
+name: live-verify
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  clean-pass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan the package (expect a clean pass)
+        id: scan
+        uses: ./
+        with:
+          path: 'security_council'
+          arms: 'semgrep,gitleaks'
+      - name: Assert clean exit
+        run: test "${{ steps.scan.outputs.exit-code }}" = "0"
+
+  detects-and-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan the vulnerable fixture (the gate MUST fail)
+        id: scan
+        continue-on-error: true
+        uses: ./
+        with:
+          path: 'tests/fixtures/seedrepo'
+          arms: 'semgrep,gitleaks,osv-scanner'
+          upload-sarif: 'false'
+      - name: Assert the gate fired (exit 1)
+        run: test "${{ steps.scan.outputs.exit-code }}" = "1"
