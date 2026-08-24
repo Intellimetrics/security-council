@@ -100,3 +100,10 @@ def test_cwe_by_source_rule_values_are_valid_and_mapped():
     for (src, rule), cwe in CWE_BY_SOURCE_RULE.items():
         assert m._CWE_RE.match(m.canonical_cwe(cwe)), f"{cwe} malformed"
         assert m.family_for_cwe(cwe) is not None, f"{cwe} not in CWE_TO_FAMILY"
+
+
+def test_xpath_injection_maps_to_injection_family():
+    # R7: CWE-643 joined CWE_TO_FAMILY (its own trust-surface change). It must
+    # pool with the other injection CWEs and stay out of the crypto carve-out.
+    assert m.family_for_cwe("CWE-643") == "injection"
+    assert m.canonical_cwe("CWE-643") not in m.CRYPTO_CWES

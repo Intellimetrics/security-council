@@ -82,7 +82,7 @@ CWE_TO_FAMILY: dict[str, str] = {
     "CWE-89": "injection", "CWE-564": "injection", "CWE-78": "injection",
     "CWE-77": "injection", "CWE-943": "injection", "CWE-91": "injection",
     "CWE-90": "injection", "CWE-94": "injection", "CWE-95": "injection",
-    "CWE-1336": "injection",
+    "CWE-643": "injection", "CWE-1336": "injection",
     # xss
     "CWE-79": "xss", "CWE-80": "xss",
     # authz
