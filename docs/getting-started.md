@@ -138,7 +138,7 @@ security-council report <run_dir> --format md          # readable summary (stdou
 security-council report <run_dir> --format html        # self-contained page; print for PDF
 security-council report <run_dir> --format csv         # full triage spreadsheet
 security-council report <run_dir> --format cklb        # STIG Viewer 3 checklist (ASD V6R4)
-security-council report <run_dir> --format cyclonedx   # CycloneDX 1.6 VDR
+security-council report <run_dir> --format cyclonedx   # CycloneDX 1.6
 # also: emass, openvex, oscal-ar, oscal-poam, gitlab-sast, gitlab-codequality
 ```
 
@@ -151,6 +151,11 @@ security-council report <run_dir> --bundle gov \
     --app-name myapp --app-version 1.0                 # openvex + oscal-ar + oscal-poam
                                                        # + checklist.cklb + cyclonedx + emass
 ```
+
+**SBOM:** `security-council scan . --sbom` runs syft ($0, no network) and
+attaches a CycloneDX inventory to the run. When one exists, `--format
+cyclonedx` merges the findings into that real inventory; without it you get a
+vulnerabilities-only VDR that makes no inventory claim.
 
 Compliance formats withhold suppressed/demoted findings (they live in the
 summary's appendix); the triage CSV deliberately includes everything with its

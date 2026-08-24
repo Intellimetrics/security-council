@@ -193,9 +193,11 @@ Benchmark ships with the package (`security-council calibrate`,
 record, all fail-safe floors still apply). Report formats: SARIF, Markdown,
 HTML (print for PDF), CSV, eMASS, OpenVEX, OSCAL AR/POA&M, STIG Viewer CKLB
 (ASD V6R4), CycloneDX 1.6 VDR, GitLab SAST/Code Quality — or one audience at a
-time via `report <run> --bundle triage|gov`. Not yet done: CI runs on outside
-infrastructure; CKLB not yet imported into a live STIG Viewer; no SBOM
-generation (the CycloneDX export is a VDR, not a component inventory). `tests/fixtures/seedrepo/` is **intentionally
+time via `report <run> --bundle triage|gov`. `scan --sbom` adds a real syft
+CycloneDX inventory, and the CycloneDX export merges findings into it. The
+GitHub Action is verified by a live workflow run; **not yet done**: Azure
+DevOps and GitLab runs on real infrastructure, and the CKLB checklist has not
+been imported into a live STIG Viewer. `tests/fixtures/seedrepo/` is **intentionally
 vulnerable** (including fake AWS keys) — it's the practice target and test
 corpus; see [SECURITY.md](SECURITY.md).
 
