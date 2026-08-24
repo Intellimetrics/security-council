@@ -94,6 +94,9 @@ def cmd_scan(args) -> int:
             return EXIT_USAGE
         options = (config.get("arms") or {}).get("options") or {}
         analysis_arms = [build_analysis_arm(j, options=options.get(f"analysis:{j}")) for j in jobs]
+    if getattr(args, "sbom", False):
+        from .arms.sbom import SbomArm
+        analysis_arms.append(SbomArm())
     fix_spec = None
     if getattr(args, "fix", None):
         from .arms.fix import FIX_JOBS
@@ -148,6 +151,9 @@ def cmd_doctor(args) -> int:
     for name in known_arms():
         ok, detail = build_arm(name).available()
         print(f"  {name:<13} {'ready' if ok else 'unavailable':<11} {detail}")
+    from .arms.sbom import SbomArm
+    ok, detail = SbomArm().available()
+    print(f"  {'sbom':<13} {'ready' if ok else 'unavailable':<11} {detail}")
     return 0
 
 
@@ -161,6 +167,18 @@ def _load_scores(run_dir) -> dict:
     from . import calibration as cal_mod
     pj = Path(run_dir) / "policy.json"
     return cal_mod.fitted_scores(json.load(open(pj))) if pj.is_file() else {}
+
+
+def _load_sbom(run_dir, manifest: dict) -> dict | None:
+    """The run's syft SBOM artifact (scan --sbom), if one was produced."""
+    art = next((a for a in (manifest.get("artifacts") or [])
+                if a.get("kind") == "sbom"), None)
+    if not art:
+        return None
+    try:
+        return json.loads((Path(run_dir) / art["path"]).read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def _report_bundle(args, m: dict) -> int:
@@ -204,7 +222,7 @@ def _report_bundle(args, m: dict) -> int:
             path.write_text(json.dumps(doc, indent=2) + "\n")
         elif fmt == "cyclonedx":
             from .export import cyclonedx
-            doc, _meta = cyclonedx.to_cyclonedx(findings, m)
+            doc, _meta = cyclonedx.to_cyclonedx(findings, m, sbom=_load_sbom(run_dir, m))
             path.write_text(json.dumps(doc, indent=2) + "\n")
         elif fmt == "cklb":
             from .export import cklb
@@ -254,10 +272,11 @@ def cmd_report(args) -> int:
         return 0
     if args.format == "cyclonedx":
         from .export import cyclonedx
-        doc, meta = cyclonedx.to_cyclonedx(_load_findings(args.run_dir), m)
+        doc, meta = cyclonedx.to_cyclonedx(_load_findings(args.run_dir), m,
+                                           sbom=_load_sbom(args.run_dir, m))
         print(json.dumps(doc, indent=2))
-        print(f"cyclonedx: {meta['vulnerabilities']} vulnerabilities · "
-              f"{meta['package_components']} package components · "
+        comp = meta.get("sbom_components", meta.get("package_components", 0))
+        print(f"cyclonedx: {meta['vulnerabilities']} vulnerabilities · {comp} components · "
               f"{meta['withheld_by_disposition']} withheld · {meta['note']}", file=sys.stderr)
         return 0
     if args.format == "emass":
@@ -567,6 +586,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="comma-separated vendor analysis workflows to attach as artifacts "
                         "(threat-model, attack-path, hardening, policy, writeup); "
                         "dual-use ones (attack-path, writeup) are export-excluded")
+    s.add_argument("--sbom", action="store_true",
+                   help="also generate a CycloneDX SBOM artifact (syft, $0, no network; "
+                        "`report --format cyclonedx` then merges findings into it)")
     s.add_argument("--fix", metavar="IDS",
                    help="generate reviewed .patch artifacts (NEVER applied) for these finding "
                         "ids, or 'gating'/'all' for all open findings; runs fenced (needs bwrap)")

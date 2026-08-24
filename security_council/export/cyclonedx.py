@@ -85,8 +85,17 @@ def _vuln(f: Finding, affect_ref: str) -> dict:
     return v
 
 
-def to_cyclonedx(findings: list[Finding], manifest: dict) -> tuple[dict, dict]:
-    """-> (bom document, meta). Deterministic for a given run manifest."""
+def to_cyclonedx(findings: list[Finding], manifest: dict,
+                 sbom: dict | None = None) -> tuple[dict, dict]:
+    """-> (bom document, meta). Deterministic for a given run manifest.
+
+    With `sbom` (the run's syft artifact, `scan --sbom`), findings are merged
+    INTO that real inventory instead: syft's components and serial number are
+    preserved, our tool is appended to metadata.tools, and each vulnerability's
+    `affects` ref resolves to the matching inventory component by
+    purl-without-version (falling back to the root component)."""
+    if sbom is not None:
+        return _merged_into_sbom(findings, manifest, sbom)
     run_id = str(manifest.get("run_id", "run"))
     root = _root_component(manifest)
     components: dict[str, dict] = {}
@@ -125,5 +134,58 @@ def to_cyclonedx(findings: list[Finding], manifest: dict) -> tuple[dict, dict]:
     }
     meta = {"vulnerabilities": len(vulns), "package_components": len(components),
             "withheld_by_disposition": withheld,
-            "note": "VDR only — not an SBOM; no component inventory is claimed"}
+            "note": "VDR only — not an SBOM; no component inventory is claimed "
+                    "(run `scan --sbom` to merge findings into a real inventory)"}
+    return doc, meta
+
+
+def _merged_into_sbom(findings: list[Finding], manifest: dict,
+                      sbom: dict) -> tuple[dict, dict]:
+    import json as _json
+    doc = _json.loads(_json.dumps(sbom))          # never mutate the caller's copy
+    md = doc.setdefault("metadata", {})
+    root = md.get("component")
+    if not isinstance(root, dict):
+        root = _root_component(manifest)
+        md["component"] = root
+    root.setdefault("bom-ref", root.get("purl") or f"app:{root.get('name', 'app')}")
+    tool = {"type": "application", "name": "security-council",
+            "version": str((manifest.get("tool") or {}).get("security_council", "0"))}
+    tools = md.get("tools")
+    if isinstance(tools, dict):
+        tools.setdefault("components", []).append(tool)
+    elif isinstance(tools, list):                  # legacy tools array
+        tools.append({"name": tool["name"], "version": tool["version"]})
+    else:
+        md["tools"] = {"components": [tool]}
+    comps = doc.setdefault("components", [])
+    by_base: dict[str, str] = {}
+    for c in comps:
+        if isinstance(c, dict) and c.get("purl"):
+            by_base.setdefault(c["purl"].split("@", 1)[0],
+                               c.setdefault("bom-ref", c["purl"]))
+    vulns = []
+    withheld = matched = 0
+    for f in findings:
+        if not open_unresolved(f):
+            withheld += 1
+            continue
+        ref = root["bom-ref"]
+        if f.package and f.package.purl:
+            base = f.package.purl.split("@", 1)[0]
+            if base in by_base:
+                ref = by_base[base]
+                matched += 1
+            else:                                  # not in inventory: add minimally
+                comp = {"type": "library", "bom-ref": f.package.purl,
+                        "purl": f.package.purl,
+                        "name": f.package.purl.rsplit("/", 1)[-1].split("@")[0]}
+                comps.append(comp)
+                by_base[base] = comp["bom-ref"]
+                ref = comp["bom-ref"]
+        vulns.append(_vuln(f, ref))
+    doc.setdefault("vulnerabilities", []).extend(vulns)
+    meta = {"vulnerabilities": len(vulns), "withheld_by_disposition": withheld,
+            "sbom_components": len(comps), "matched_inventory_refs": matched,
+            "note": "findings merged into the run's syft SBOM artifact"}
     return doc, meta
