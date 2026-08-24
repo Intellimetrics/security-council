@@ -13,6 +13,7 @@ from tests.test_cluster import mk
 
 HERE = Path(__file__).parent
 BOM_SCHEMA = json.load(open(HERE / "fixtures" / "schemas" / "bom-1.6.schema.json"))
+CKLB_SCHEMA = json.load(open(HERE / "fixtures" / "schemas" / "cklb-conformance.schema.json"))
 
 MANIFEST = {
     "run_id": "20260824_000000",
@@ -67,6 +68,9 @@ def test_cklb_shape_mapping_and_statuses():
     sup = _suppressed(mk(path="src/C.java", cwe="CWE-79", family="xss",
                          source_id="semgrep", source_kind="scanner", vendor="semgrep"))
     doc, meta = cklb.to_cklb([sqli, weird, sup], MANIFEST)
+    # conformance subset derived from the DoD reference producer (STIG Manager)
+    # + the official DISA STIG Viewer 3.x User Guide status vocabulary
+    jsonschema.validate(instance=doc, schema=CKLB_SCHEMA)
     stig = doc["stigs"][0]
     assert stig["stig_id"] == "Application_Security_Development_STIG"
     assert stig["version"] == "6" and "Release: 4" in stig["release_info"]
