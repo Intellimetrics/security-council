@@ -1,0 +1,301 @@
+{
+ "rules": {
+  "APSC-DV-000460": {
+   "ccis": [
+    "CCI-000213"
+   ],
+   "check_content": "Review the application documentation and interview the application administrator.\n\nReview application data protection requirements.\n\nIdentify application resources that require protection and authentication over and above the authentication required to access the application itself.\n\nThis can be access to a URL, a folder, a file, a process or a database record that should only be available to certain individuals.\n\nIdentify the access control methods utilized by the application in order to control access to the resource.\n\nExamples include Role-Based Access Control policies (RBAC).\n\nUsing RBAC as an example, utilize a test account placed into a test role.\n\nSet a protection control on a resource and explicitly deny access to the role assigned to the test user account.\n\nTry to access an application resource that is not configured to allow access. Access should be denied.\n\nIf the enforcement of configured access restrictions is not performed, this is a finding.",
+   "discussion": "To mitigate the risk of unauthorized access to sensitive information by entities that have been issued certificates by DoD-approved PKIs, all DoD systems (e.g., networks, web servers, and web portals) must be properly configured to incorporate access control methods that do not rely solely on the possession of a certificate for access. \n\nSuccessful authentication must not automatically give an entity access to a restricted asset or security boundary.\n\nAuthorization procedures and controls must be implemented to ensure each authenticated entity also has a validated and current authorization.\n\nAuthorization is the process of determining whether an entity, once authenticated, is permitted to access a specific asset.\n\nInformation systems use access control policies and enforcement mechanisms to implement this requirement.\n\nAccess control policies include identity-based policies, role-based policies, and attribute-based policies.\n\nAccess enforcement mechanisms include access control lists, access control matrices, and cryptography.\n\nThese policies and mechanisms must be employed by the application to control access between users (or processes acting on behalf of users) and objects (e.g., devices, files, records, processes, programs, and domains) in the information system.\n\nThis requirement is applicable to access control enforcement applications (e.g., authentication servers) and other applications that perform information and system access control functions.",
+   "fix_text": "Design or configure the application to enforce access to application resources.",
+   "group_id": "V-222425",
+   "group_title": "SRG-APP-000033",
+   "rule_id": "SV-222425r1117167",
+   "rule_id_src": "SV-222425r1117167_rule",
+   "rule_title": "The application must enforce approved authorizations for logical access to information and system resources in accordance with applicable access control policies.",
+   "rule_version": "APSC-DV-000460",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-000650": {
+   "ccis": [
+    "CCI-000169"
+   ],
+   "check_content": "Review the application logs and identify application logging format. Using the format of the log and the requisite search data as a guide to create your search, create search strings that could successfully identify the existence of passwords, session IDs, or other sensitive information such as SSN.\n\nUtilizing the UNIX grep-based search utility include the following examples which are meant to illustrate the purpose of the requirement.\n\nPassword values are usually associated with usernames so searching for \"username\" in the provided log file will often assist in determining if password values are included.\n\ngrep -i \"username\" <  logfile.txt\n\nSearch for social security numbers in the provided log file.\n\ngrep -i \"[0-9]{3}[-]?[0-9]{2}[-]?[0-9]{4}\" <  logfile.txt\n\nUse regular expressions to aid in searching log files. All search syntax cannot be provided within the STIG, the reviewer must utilize their knowledge to create new search criteria based upon the log format used and the potentially sensitive data processed by the application.\n\nIf the application logs sensitive data such as session IDs, application source code, encryption keys, or passwords, this is a finding.",
+   "discussion": "It is important to identify and exclude certain types of data that is written into the logs. If the logs are compromised and sensitive data is included in the logs, this could assist an attacker in furthering their attack or it could completely compromise the system.\n\nExamples of such data include but are not limited to; Passwords, Session IDs, Application source code, encryption keys, and sensitive data such as personal health information (PHI), Personally Identifiable Information (PII), or government identifiers (e.g., SSN).",
+   "fix_text": "Design or reconfigure the application to not write sensitive data to the logs.",
+   "group_id": "V-222444",
+   "group_title": "SRG-APP-000089",
+   "rule_id": "SV-222444r960879",
+   "rule_id_src": "SV-222444r960879_rule",
+   "rule_title": "The application must not write sensitive data into the application logs.",
+   "rule_version": "APSC-DV-000650",
+   "severity": "medium",
+   "weight": "10.0"
+  },
+  "APSC-DV-001290": {
+   "ccis": [
+    "CCI-000163"
+   ],
+   "check_content": "Review the system documentation and interview the application administrator for details regarding application architecture and logging configuration.\n\nIdentify the application components and the logs associated with the components.\n\nIdentify the roles and users allowed to modify audit information and the circumstances in which they are allowed to modify the data.\n\nIdentify the methods used to manage audit records and audit components. Typical methods are file system-based, via an application user interface via database access or a combination thereof.\n\nFor file system access: Review file system permissions to ensure the audit logs and the application audit components such as executable files and libraries are protected by adequate file permission restrictions.\n\nPermissions must be configured to limit write/modify access to only those who have been identified and whose access has been approved.\n\nIf file permissions are configured to allow unapproved write/modify access, this is a finding.\n\nFor application oriented and database access: Identify the application module that provides access to audit settings and audit data. Attempt to access audit configuration features and logs by using a regular non-privileged application or database user account. Once access has been established, attempt to modify an audit record and attempt to modify the audit settings.\n\nIf a non-privileged user account is allowed to modify the audit data or the audit configuration settings, this is a finding.",
+   "discussion": "If audit data were to become compromised, then forensic analysis and discovery of the true source of potentially malicious system activity is impossible to achieve.\n\nTo ensure the veracity of audit data, the information system and/or the application must protect audit information from unauthorized modification.\n\nThis requirement can be achieved through multiple methods, which will depend upon system architecture and design. Some commonly employed methods include ensuring log files receive the proper file system permissions, and limiting log data locations.\n\nApplications providing a user interface to audit data will leverage user permissions and roles identifying the user accessing the data and the corresponding rights that the user enjoys in order to make access decisions regarding the modification of audit data.\n\nAudit information includes all information (e.g., audit records, audit settings, and audit reports) needed to successfully audit information system activity.",
+   "fix_text": "Configure the application to protect audit data from unauthorized modification and changes. Limit users to roles that are assigned the rights to edit audit data and establish permissions that control access to the audit logs and audit configuration settings.",
+   "group_id": "V-222501",
+   "group_title": "SRG-APP-000119",
+   "rule_id": "SV-222501r960933",
+   "rule_id_src": "SV-222501r960933_rule",
+   "rule_title": "The application must protect audit information from unauthorized modification.",
+   "rule_version": "APSC-DV-001290",
+   "severity": "medium",
+   "weight": "10.0"
+  },
+  "APSC-DV-001540": {
+   "ccis": [
+    "CCI-000764"
+   ],
+   "check_content": "Review the application documentation and interview the application administrator to determine how organizational users access the application.\n\nIf the application is publicly available, providing access to publicly releasable data and the users are non-organizational users such as individuals who no longer have a CAC (e.g., retirees) or  members of the public with no requirement for DoD credentials, this requirement is not applicable.\n\nThe requirement still applies to DoD organizational users and admins when accessing the non-public data areas or system resources of the system.\n\nAttempt to access the application and confirm that a unique user account and password or CAC token and pin are required in order to access the application.\n\nIf the application does not uniquely identify and authenticate users, this is a finding.",
+   "discussion": "To assure accountability and prevent unauthenticated access, organizational users must be identified and authenticated to prevent potential misuse and compromise of the system.\n\nOrganizational users include organizational employees or individuals the organization deems to have equivalent status of employees (e.g., contractors). \n\nOrganizational users (and any processes acting on behalf of users) must be uniquely identified and authenticated for all accesses, except the following:\n\n(i) Accesses explicitly identified and documented by the organization. Organizations document specific user actions that can be performed on the information system without identification or authentication; and \n(ii) Accesses that occur through authorized use of group authenticators without individual authentication. Organizations may require unique identification of individuals in group accounts (e.g., shared privilege accounts) or for detailed accountability of individual activity.",
+   "fix_text": "Configure the application to uniquely identify and authenticate users and user processes.",
+   "group_id": "V-222522",
+   "group_title": "SRG-APP-000148",
+   "rule_id": "SV-222522r1051115",
+   "rule_id_src": "SV-222522r1051115_rule",
+   "rule_title": "The application must uniquely identify and authenticate organizational users (or processes acting on behalf of organizational users).",
+   "rule_version": "APSC-DV-001540",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-002030": {
+   "ccis": [
+    "CCI-002450"
+   ],
+   "check_content": "Review the application components and the application requirements to determine if the application is capable of generating cryptographic hashes.\n\nReview the application documentation and interview the application developer or administrator to identify the cryptographic modules used by the application.\n\nIf hashing of application components has been identified in the application security plan as not being required and if a documented acceptance of risk is provided, this is not a finding.\n\nHave the application admin or the developer demonstrate how the application generates hashes and what hashing algorithms are used when generating a hash value.\n\nWhile SHA1 is currently FIPS-140-2 approved, due to known vulnerabilities with this algorithm, DoD PKI policy prohibits the use of SHA1 as of December 2016.  See DoD CIO Memo Subject: Revised Schedule to Update DoD Public Key Infrastructure Certificates to Secure Hash Algorithm-256. \n\nIf the application resides on a National Security System (NSS) and uses an algorithm weaker than SHA-384, this is a finding.\n\nIf FIPS-validated cryptographic modules are not used when generating hashes or if the application is configured to use the MD5 or SHA1 hashing algorithm, this is a finding.",
+   "discussion": "Use of weak or untested encryption algorithms undermines the purposes of utilizing encryption to protect data. The application must implement cryptographic modules adhering to the higher standards approved by the federal government since this provides assurance they have been tested and validated.\n\nIf the application resides on a National Security System (NSS) it must not use a hashing algorithm weaker than SHA-384.",
+   "fix_text": "Configure the application to use a FIPS-validated hashing algorithm when creating a cryptographic hash.",
+   "group_id": "V-222571",
+   "group_title": "SRG-APP-000514",
+   "rule_id": "SV-222571r1117181",
+   "rule_id_src": "SV-222571r1117181_rule",
+   "rule_title": "The application must utilize FIPS-validated cryptographic modules when generating cryptographic hashes.",
+   "rule_version": "APSC-DV-002030",
+   "severity": "medium",
+   "weight": "10.0"
+  },
+  "APSC-DV-002040": {
+   "ccis": [
+    "CCI-002450"
+   ],
+   "check_content": "Interview the system administrator, review the application components, and the application requirements to determine if the application processes data requiring cryptographic protection.\n\nReview the application documentation and interview the application administrator to identify the cryptographic modules used by the application.\n\nAccess the NIST site to determine if the cryptographic modules used by the application have been FIPS-validated.\n\nhttp://csrc.nist.gov/groups/STM/cmvp/documents/140-1/140val-all.htm\n\nIf the application is using cryptographic modules that are not FIPS-validated to protect unclassified data, this is a finding.",
+   "discussion": "Use of weak or untested encryption algorithms undermines the purposes of utilizing encryption to protect data. The application must implement cryptographic modules adhering to the higher standards approved by the federal government since this provides assurance they have been tested and validated.",
+   "fix_text": "Configure the application to use a FIPS-validated cryptographic module.",
+   "group_id": "V-222572",
+   "group_title": "SRG-APP-000514",
+   "rule_id": "SV-222572r1117181",
+   "rule_id_src": "SV-222572r1117181_rule",
+   "rule_title": "The application must utilize FIPS-validated cryptographic modules when protecting unclassified information that requires cryptographic protection.",
+   "rule_version": "APSC-DV-002040",
+   "severity": "medium",
+   "weight": "10.0"
+  },
+  "APSC-DV-002290": {
+   "ccis": [
+    "CCI-001188"
+   ],
+   "check_content": "Review the application server configuration and documentation to determine if the application server uses a FIPS 140-2/140-3 approved random number generator to create unique session identifiers.\n\nHave a user log on to the application server to determine if the session IDs generated are random and unique.\n\nIf the application server does not generate unique session identifiers and does not use a FIPS 140-2/140-3 random number generator to create the randomness of the session ID, this is a finding.",
+   "discussion": "The application server will use session IDs to communicate between modules or applications within the application server and between the application server and users. The session ID allows the application to track the communications along with credentials that may have been used to authenticate users or modules.\n\nUnique session IDs are the opposite of sequentially generated session IDs, which can be easily guessed by an attacker. Unique session identifiers help to reduce predictability of those identifiers.\n\nUnique session IDs address man-in-the-middle attacks, including session hijacking or insertion of false information into a session. If the attacker is unable to identify or guess the session information related to pending application traffic, they will have more difficulty in hijacking the session or otherwise manipulating valid sessions.",
+   "fix_text": "Configure the application server to generate unique session identifiers and to use a FIPS 140-2/140-3 random number generator to generate the randomness of the session identifiers.",
+   "group_id": "V-222583",
+   "group_title": "SRG-APP-000224",
+   "rule_id": "SV-222583r1051270",
+   "rule_id_src": "SV-222583r1051270_rule",
+   "rule_title": "The application must generate a unique session identifier using a FIPS 140-2/140-3 approved random number generator.",
+   "rule_version": "APSC-DV-002290",
+   "severity": "medium",
+   "weight": "10.0"
+  },
+  "APSC-DV-002400": {
+   "ccis": [
+    "CCI-001094"
+   ],
+   "check_content": "Review the application documentation and interview the application administrator.\n\nAsk the application administrator if any anti-DoS technology or anti-DoS emergency response services are deployed to protect the application.\n\nCheck for code review, penetration or vulnerability test results that attempt to DoS the application or use the application as a DoS tool.\n\nExamine test results and testing configuration to ensure that the application was tested and the application was not reported as being susceptible to DoS attacks either from external sources or from the application itself. Also verify the testing results show that the application cannot be weaponized to attack other systems.\n\nIf the test results indicate the application is susceptible to DoS attacks or can be weaponized to attack other applications or systems, this is a finding.",
+   "discussion": "Denial of Service (DoS) is a condition where a resource is not available for legitimate users. When this occurs, the organization either cannot accomplish its mission or must operate at degraded capacity.\n\nIndividuals of concern can include hostile insiders or external adversaries that have access or have successfully breached the information system and are using the system as a platform to launch cyber attacks on the application, the application host or other third-parties.\n\nApplication developers and application administrators must take the steps needed to ensure an application cannot be used to launch DoS attacks against the application itself, the application host or other systems and networks. \n\nApplication developers should be cognizant that many attackers using DoS techniques will attempt to identify resource intensive processes and functions within the application.  For web applications, this can be application objects that perform database queries or other resource intensive tasks.  Improper application memory management can also lead to memory leaks which can exhaust system resources forcing a system or application restart.  \n\nLimiting attempts to repeatedly execute application processes by validating the requests also reduces the ability to launch some DoS attacks.\n\nFor application administrators, ensuring network access controls are in place to protect the application host.\n\nThe methods employed to counter DoS risks are dependent upon the application layer methods that can be used to exploit it.",
+   "fix_text": "Design and deploy the application to utilize controls that will prevent the application from being affected by DoS attacks or being used to attack other systems. This includes but is not limited to utilizing throttling techniques for application traffic such as QoS or implementing logic controls within the application code itself that prevents application use that results in network or system capabilities being exceeded.",
+   "group_id": "V-222594",
+   "group_title": "SRG-APP-000246",
+   "rule_id": "SV-222594r961152",
+   "rule_id_src": "SV-222594r961152_rule",
+   "rule_title": "The application must restrict the ability to launch Denial of Service (DoS) attacks against itself or other information systems.",
+   "rule_version": "APSC-DV-002400",
+   "severity": "medium",
+   "weight": "10.0"
+  },
+  "APSC-DV-002490": {
+   "ccis": [
+    "CCI-001310"
+   ],
+   "check_content": "Review the application documentation and the vulnerability assessment scan results from automated vulnerability assessment tools.\n\nVerify scan configuration settings include web-based applications settings which include XSS tests.\n\nReview scan results for XSS vulnerabilities.\n\nIf the scan results indicate aspects of the application are vulnerable to XSS, request subsequent scan data that shows the XSS vulnerabilities previously detected have been fixed.\n\nIf results that show compliance are not available, request proof of any steps that have been taken to mitigate the risk. This can include using network-based IPS to detect and prevent XSS attacks from occurring.\n\nIf scan results are not available, perform manual testing in various data entry fields to determine if XSS exist.\n\nNavigate through the web application as a regular user and identify any data entry fields where data can be input.\n\nInput the following strings:\n\n<script>alert('hello')</script>\n<img src=x onerror=\"alert(document.cookie);\"\n\nIf the script pop up box is displayed, or if scan reports show unremediated XSS results and no mitigating steps have been taken, this is a finding.",
+   "discussion": "XSS attacks are essentially code injection attacks against the various language interpreters contained within the browser. XSS can be executed via HTML, JavaScript, VBScript, ActiveX; essentially any scripting language a browser is capable of processing.\n\nXSS vulnerabilities are created when a website does not properly sanitize, escape, or encode user input. For example, \"&lt;\" is the HTML encoding for the \"<\" character. If the encoding is performed, the script code will not execute.\n\nThere are 3 parties involved in an XSS attack, the attacker, the trusted and vulnerable website, and the victim. An attacker will take advantage of a vulnerable website that does not properly validate user input by inserting malicious code into any data entry field.\n\nWhen the victim visits the trusted website and clicks on the malicious link left by the attacker, the attacker\u2019s script is executed in the victims browser with the trust permissions assigned to the site.\n\nThere are several different types of XSS attack and the complete details regarding XSS cannot be described completely here.\n\nTo address the issue of XSS, web application developers must escape, encode or otherwise validate all user input that is processed and output by the web server. They should also use web templates or a web development framework that provides the capability to encode or otherwise validate user input.\n\nExamples of XSS vulnerabilities can be obtained from the Open Web Application Security Project (OWASP) website.\n  \nThe site is available by pointing your browser to https://www.owasp.org.",
+   "fix_text": "Verify user input is validated and encode or escape user input to prevent embedded script code from executing.\n\nDevelop your application using a web template system or a web application development framework that provides auto escaping features rather than building your own escape logic.",
+   "group_id": "V-222602",
+   "group_title": "SRG-APP-000251",
+   "rule_id": "SV-222602r961158",
+   "rule_id_src": "SV-222602r961158_rule",
+   "rule_title": "The application must protect from Cross-Site Scripting (XSS) vulnerabilities.",
+   "rule_version": "APSC-DV-002490",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-002510": {
+   "ccis": [
+    "CCI-001310"
+   ],
+   "check_content": "Review the application documentation and the system configuration settings.\n\nInterview the application administrator for details regarding security assessment including automated code review and vulnerability scans conducted to test for command injection.\n\nReview the scan results from the entire application.\n\nVerify scan configuration is set to check for command injection vulnerabilities.\n\nIf results indicate vulnerability, verify a subsequent scan has been run to ensure the issue has been remediated.\n\nManual test procedures are available on the OWASP website. Procedures may need to be modified to suit application architecture.\n\nhttps://www.owasp.org/index.php/Testing_for_Command_Injection_%28OTG-INPVAL-013%29\n\nIf testing results are not provided demonstrating the vulnerability does not exist, or if the application representative cannot demonstrate how actions are taken to identify and protect from command injection vulnerabilities, this is a finding.",
+   "discussion": "A command injection attack is an attack on a vulnerable application where improperly validated input is passed to a command shell setup in the application. The result is the ability of an attacker to execute OS commands via the application.\n\nA command injection allows an attacker to execute their own commands with the same privileges as the application executing.\n\nThe following is an example of a URL based command injection attack.\n\nBefore alteration:\nhttp://sitename/cgi-bin/userData.pl?doc=user1.txt\n\nExample URL modified: \nhttp://sitename/cgi-bin/userData.pl?doc=/bin/ls|\n\nThe result is the execution of the command \u201c/bin/ls\u201d which could allow the attacker to list contents of the directory via the browser.\n\nThe following is a list of functions vulnerable to command injection sorted according to language.  \n\nLanguage Functions/Characters\n- C/C++  - system(), popen(), execlp(), execvp(), ShellExecute(), ShellExecuteEx(), _wsystem()\n- Perl - system, exec, `,open, |, eval, /e\n- Python - exec, eval, os.system, os.popen, execfile, input, compile\n- Java - Class.forName(), Class.newInstance(), Runtime.exec()",
+   "fix_text": "Modify the application so as to escape/sanitize special character input or configure the system to protect against command injection attacks based on application architecture.",
+   "group_id": "V-222604",
+   "group_title": "SRG-APP-000251",
+   "rule_id": "SV-222604r961158",
+   "rule_id_src": "SV-222604r961158_rule",
+   "rule_title": "The application must protect from command injection.",
+   "rule_version": "APSC-DV-002510",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-002520": {
+   "ccis": [
+    "CCI-001310"
+   ],
+   "check_content": "Review the application documentation and interview the application administrator for details regarding security assessment code reviews or vulnerability scans.\n\nReview the scan results from the entire application. This can be provided as results from an automated code review or a vulnerability scanning tool.\n\nReview the scan results to determine if there are any existing canonical representation vulnerabilities.\n\nReview web server and application configuration.\n\nThe OWASP website provides the following test procedures:\n\n\"Investigate the web application to determine if it asserts an internal code page, locale, or culture.\n\nIf the default character set, locale is not asserted it will be one of the following:\n\nHTTP Posts. Interesting tidbit: All HTTP posts are required to be ISO 8859-1, which will lose data for most double byte character sets. You must test your application with your supported browsers to determine if they pass in fully encoded double byte characters safely\n\nHTTP Gets. Depends on the previously rendered page and per-browser implementations, but URL encoding is not properly defined for double byte character sets. IE can be optionally forced to do all submits as UTF-8 which is then properly canonicalized on the server\n\n.NET: Unicode (little endian)\n\nJSP implementations, such as Tomcat: UTF8 - see \u201cjavaEncoding\u201d in web.xml by many servlet containers\n\nJava: Unicode (UTF-16, big endian, or depends on the OS during JVM startup)\n\nPHP: Set in php.ini, ISO 8859-1\u201d\n\nIf the results are not provided or the application representative cannot demonstrate that the application does not use Unicode encoding, this is a finding.",
+   "discussion": "Canonical representation vulnerabilities can occur when a data conversion process does not convert the data to its simplest form resulting in the possible misrepresentation of the data.\n\nThe application may behave in an unexpected manner when acting on input that has not been sanitized or normalized.\n\nVulnerable application code is written to expect one form of data and executes its program logic on another form of data thereby creating instability or unexpected behavior.\n\nThe Open Web Application Security Project (OWASP) website provides test and remediation procedures that can be used for testing if vulnerability scan tools or results are not available.\n\nThe site is available by pointing your browser to https://www.owasp.org.",
+   "fix_text": "A suitable canonical form should be chosen and all user input canonicalized into that form before any authorization decisions are performed.\n\nSecurity checks should be carried out after decoding is completed. Moreover, it is recommended to check that the encoding method chosen is a valid canonical encoding for the symbol it represents.",
+   "group_id": "V-222605",
+   "group_title": "SRG-APP-000251",
+   "rule_id": "SV-222605r961158",
+   "rule_id_src": "SV-222605r961158_rule",
+   "rule_title": "The application must protect from canonical representation vulnerabilities.",
+   "rule_version": "APSC-DV-002520",
+   "severity": "medium",
+   "weight": "10.0"
+  },
+  "APSC-DV-002540": {
+   "ccis": [
+    "CCI-001310"
+   ],
+   "check_content": "Review the application documentation and interview the application administrator.\n\nRequest the latest vulnerability scan test results.\n\nVerify the scan configuration is configured to test for SQL injection flaws.\n\nReview the scan results to determine if any SQL injection flaws were detected during application testing.\n\nIf SQL injection flaws were discovered, request a subsequent scan that will show that the issues have been remediated.\n\nIf the scan results are not available, identify the database product in use and refer to the OWASP web application testing guide for detailed instructions on performing a manual SQL injection test. The instructions are located here and many tests are organized by database product:\n\nhttps://www.owasp.org/index.php/Testing_for_SQL_Injection_%28OTG-INPVAL-005%29\n\nIf the application is vulnerable to SQL injection attack, contains SQL injection flaws, or if scan results do not exist, this is a finding.",
+   "discussion": "SQL Injection is a code injection attack against database applications. Malicious SQL statements are inserted into an application data entry field where they are submitted to the database and executed. This is a direct result of not validating input that is used by the application to perform a command or execute an action.\n\nSuccessful attacks can read data, write data, execute administrative functions within the database, shutdown the DBMS, and in some cases execute OS commands.\n\nBest practices to reduce the potential for SQL Injection vulnerabilities include:\n\nNot using concatenation or replacement to build SQL queries.\n\nUsing prepared statements with parameterized queries that have been tested and validated not to be vulnerable to SQL Injection.\n\nUsing stored procedures that have been tested and validated not to be vulnerable to SQL Injection.\n\nEscaping all user supplied input.\n\nAdditional steps to prevent SQL Injection can be found at the OWASP website:\n\nhttps://www.owasp.org/index.php/SQL_Injection_Prevention_Cheat_Sheet",
+   "fix_text": "Modify the application and remove SQL injection vulnerabilities.",
+   "group_id": "V-222607",
+   "group_title": "SRG-APP-000251",
+   "rule_id": "SV-222607r961158",
+   "rule_id_src": "SV-222607r961158_rule",
+   "rule_title": "The application must not be vulnerable to SQL Injection.",
+   "rule_version": "APSC-DV-002540",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-002550": {
+   "ccis": [
+    "CCI-001310"
+   ],
+   "check_content": "Review the application documentation, the application architecture and interview the application administrator.\n\nIdentify any XML-based web services or XML functionality performed by the application.\n\nDetermine if an XML firewall is deployed to protect application from XML-related attacks.\n\nIf the application does not process XML, the requirement is not applicable.\n\nReview the latest application vulnerability assessment and verify the scan was configured to test for XML-related vulnerabilities and security issues.\n\nExamples include but are not limited to:\n\nXML Injection\nXML related Denial of Service\nXPATH injection\nXML Signature attacks\nXML Spoofing\n\nIf an XML firewall is deployed, request configuration information regarding the application and validate the firewall is configured to protect the application.\n\nIf the vulnerability scan is not configured to scan for XML-oriented vulnerabilities, if no scan results exist, or if the XML firewall is not configured to protect the application, this is a finding.",
+   "discussion": "Extensible Markup Language (XML) is widely employed in web technology and applications like web services (SOAP, REST, and WSDL) and is also used for configuration files. XML vulnerability examples include XML injection, XML Spoofing, XML-based Denial of Service attacks and information disclosure attacks.\n\nWhen utilizing XML, web applications must take steps to ensure they are addressing XML-related security issues. This is accomplished by choosing well-designed application components, building application code that follows security best practices and by patching application components when vulnerabilities are identified.\n\nXML firewalls or gateways may be employed to assist in protecting applications by controlling access to XML-based applications, filtering XML content, rate-limiting requests, and validating XML traffic.",
+   "fix_text": "Design the application to utilize components that are not vulnerable to XML attacks.\n\nPatch the application components when vulnerabilities are discovered.",
+   "group_id": "V-222608",
+   "group_title": "SRG-APP-000251",
+   "rule_id": "SV-222608r961158",
+   "rule_id_src": "SV-222608r961158_rule",
+   "rule_title": "The application must not be vulnerable to XML-oriented attacks.",
+   "rule_version": "APSC-DV-002550",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-002560": {
+   "ccis": [
+    "CCI-002754"
+   ],
+   "check_content": "Review the application documentation and interview the application administrator.\n\nIf working with the developer, request documentation on their development processes and what their standard operating procedure is for sanitizing all application input.\n\nIdentify the latest vulnerability scan results.\n\nReview the scan results and scan configuration settings.\n\nVerify the scan was configured to identify input validation vulnerabilities.\n\nIf the scan results detected high risk vulnerabilities, verify a more recent scan shows remediation of the vulnerabilities is available for examination.\n\nReview any risk acceptance documentation that indicates the ISSO has reviewed and accepted the risk.\n\nIf the vulnerability scan is not configured to test for input validation vulnerabilities if the most recent scan results show that high risk input validation vulnerabilities exist and a documented risk acceptance from the ISSO is not available, or if the scan results do not exist, this is a finding.",
+   "discussion": "A common application vulnerability is unpredictable behavior due to improper input validation. This requirement guards against adverse or unintended system behavior caused by invalid inputs, where information system responses to the invalid input may be disruptive or cause the system to fail into an unsafe state.\n\nData received from the user should always be suspected as being malicious and always validated prior to using it as input to the application.\n\nSome examples of input methods:\n\n- Forms Data\n- URL parameters\n- Hidden Fields\n- Cookies\n- HTTP Headers or anything in the HTTP request\n- Client data entry fields\n\nItems to validate:\n\n- Out of range values/Boundary \n- Data length \n- Validate types of characters allowed\n- Whitelist validation for known good data input while denying all other input.\n\nOther recommendations include: \n\n- Using drop down menus for lists\n- Validating input on the server, not on the client.\n\nIf validating on the client, also validate on the server:\n\n- Using regular expressions to validate input\n- Using HTML filter libraries that implement input validation tasks.",
+   "fix_text": "Follow best practice when accepting user input and verify that all input is validated before the application processes the input.\n\nRemediate identified vulnerabilities and obtain documented risk acceptance for those issues that cannot be remediated immediately.",
+   "group_id": "V-222609",
+   "group_title": "SRG-APP-000447",
+   "rule_id": "SV-222609r961656",
+   "rule_id_src": "SV-222609r961656_rule",
+   "rule_title": "The application must not be subject to input handling vulnerabilities.",
+   "rule_version": "APSC-DV-002560",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-002590": {
+   "ccis": [
+    "CCI-002824"
+   ],
+   "check_content": "Review the application documentation and architecture.\n\nInterview the application admin and identify the most recent code testing and analysis that has been conducted.\n\nReview the test results; verify configuration of analysis tools are set to check for the existence of overflows. This includes but is not limited to buffer overflows, stack overflows, heap overflows, integer overflows and format string overflows.\n\nIf overflows are identified in the test results, verify the latest test results are being used, if not, ensure remediation has been completed.\n\nIf the test results show overflows exist and no remediation evidence is presented, or if test results are not available, this is a finding.",
+   "discussion": "A buffer overflow occurs when a program exceeds the amount of data allocated to a buffer. The buffer is a sequential section of memory and when the data is written outside the memory bounds, the program can crash or malicious code can be executed.\n\nSecurity safeguards employed to protect memory include, for example, data execution prevention and address space layout randomization. Data execution prevention safeguards can either be hardware-enforced or software-enforced with hardware providing the greater strength of mechanism.\n\nBuffer overflows can manifest as stack overflows, heap overflows integer overflows and format string overflows. Each type of overflow is dependent upon the underlying application language and the context in which the overflow is executed.\n\nInteger overflows can lead to infinite looping when loop index variables are compromised and cause a denial of service.  If the integer is used in data references, the data can become corrupt. Also, using the integer in memory allocation can cause buffer overflows, and a denial of service.  Integers used in access control mechanisms can potentially trigger buffer overflows, which can be used to execute arbitrary code. \n\nAlmost all known web servers, application servers, and web application environments are susceptible to buffer overflows. Proper validation of user input is required to mitigate the risk. Notably, limiting the size of the strings a user is allowed to input to a program to a predetermined, acceptable length.\n\nA code review, static code analysis or active vulnerability or fuzz testing are methods used to identify overflows within application code.",
+   "fix_text": "Design the application to use a language or compiler that performs automatic bounds checking.\n\nUse an abstraction library to abstract away risky APIs.\n\nUse compiler-based canary mechanisms such as StackGuard, ProPolice, and the Microsoft Visual Studio/GS flag.\n\nUse OS-level preventative functionality and control user input validation.\n\nPatch applications when overflows are identified in vendor products.",
+   "group_id": "V-222612",
+   "group_title": "SRG-APP-000450",
+   "rule_id": "SV-222612r961665",
+   "rule_id_src": "SV-222612r961665_rule",
+   "rule_title": "The application must not be vulnerable to overflow attacks.",
+   "rule_version": "APSC-DV-002590",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-002630": {
+   "ccis": [
+    "CCI-002605"
+   ],
+   "check_content": "Review the application documentation to identify application versions and patching.\n\nInterview the application administrator and inquire about patching process.\n\nReview IAVMs and CTOs to determine if the application is being updated in accordance with authoritative sources.\n\nIf application updates are not checked on at least on a weekly basis and applied immediately or in accordance with POA&Ms, IAVMs, CTOs, DTMs or other authoritative patching guidelines or sources, this is a finding.",
+   "discussion": "Security flaws with software applications are discovered daily. Vendors are constantly updating and patching their products to address newly discovered security vulnerabilities. Organizations (including any contractor to the organization) are required to promptly install security-relevant software updates (e.g., patches, service packs, and hot fixes). Flaws discovered during security assessments, continuous monitoring, incident response activities, or information system error handling must also be addressed expeditiously.\n\nOrganization-defined time periods for updating security-relevant software may vary based on a variety of factors including, for example, the security category of the information system or the criticality of the update (i.e., severity of the vulnerability related to the discovered flaw).\n\nThis requirement will apply to software patch management solutions that are used to install patches across the enclave and also to applications themselves that are not part of that patch management solution. For example, many browsers today provide the capability to install their own patch software. Patch criticality, as well as system criticality will vary. Therefore, the tactical situations regarding the patch management process will also vary. This means that the time period utilized must be a configurable parameter. Time frames for application of security-relevant software updates may be dependent upon the Information Assurance Vulnerability Management (IAVM) process.\n\nThe application, or the patch management solution that is configured to patch the application, must be configured to check for and install security-relevant software updates and patches at least weekly. Patches must be applied immediately or in accordance with POA&Ms, IAVMs, CTOs, DTMs or other authoritative patching guidelines or sources.",
+   "fix_text": "Check for application updates at least weekly and apply patches immediately or in accordance with POA&Ms, IAVMs, CTOs, DTMs or other authoritative patching guidelines or sources.",
+   "group_id": "V-222614",
+   "group_title": "SRG-APP-000456",
+   "rule_id": "SV-222614r1117151",
+   "rule_id_src": "SV-222614r1117151_rule",
+   "rule_title": "Security-relevant software updates and patches must be kept up to date.",
+   "rule_version": "APSC-DV-002630",
+   "severity": "medium",
+   "weight": "10.0"
+  },
+  "APSC-DV-003110": {
+   "ccis": [
+    "CCI-002367"
+   ],
+   "check_content": "Review the application documentation and any available source code; this includes configuration files such as global.asa, if present, scripts, HTML files, and any ASCII files.\n\nIdentify any instances of passwords, certificates, or sensitive data included in code.\n\nIf credentials were found, check the file permissions and ownership of the offending file.\n\nIf access to the folder hosting the file is not restricted to the related application process and administrative users, this is a finding.\n\nThe finding details should note specifically where the offending credentials or data were located and what resources they enabled.",
+   "discussion": "Authentication data stored in code could potentially be read and used by anonymous users to gain access to a backend database or application servers. This could lead to compromise of application data.",
+   "fix_text": "Remove embedded authentication data stored in code, configuration files, scripts, HTML file, or any ASCII files.",
+   "group_id": "V-222642",
+   "group_title": "SRG-APP-000516",
+   "rule_id": "SV-222642r961863",
+   "rule_id_src": "SV-222642r961863_rule",
+   "rule_title": "The application must not contain embedded authentication data.",
+   "rule_version": "APSC-DV-003110",
+   "severity": "high",
+   "weight": "10.0"
+  },
+  "APSC-DV-003170": {
+   "ccis": [
+    "CCI-003187"
+   ],
+   "check_content": "This requirement is meant to apply to developers or organizations that are doing the application development work and have the responsibility for maintaining the application source code.  Otherwise, the requirement is not applicable.\n\nReview the system documentation and ask the application representative to describe the code review process or provide documentation outlining the organizations code review process.\n\nIf code reviews are conducted with software tools, have the application representative provide the latest code review report for the application.\n\nEnsure the code review looks for all known security flaws including but not limited to:\n\n- format string exploits\n- memory leaks\n- buffer overflows\n- race conditions\n- sql injection\n- dead/unused/commented code\n- input validation exploits\n\nIf the organization does not conduct code reviews on the application that attempt to identify all known and potential security issues, or if code review results are not available for review, this is a finding.",
+   "discussion": "A code review is a systematic evaluation of computer source code conducted for the purposes of identifying and remediating the security flaws in the software.\n\nThis requirement is meant to apply to developers or organizations that are doing application development work and have the responsibility for maintaining the application source code.\n\nExamples of security flaws include but are not limited to:\n\n- format string exploits\n- memory leaks \n- buffer overflows \n- race conditions\n- sql injection\n- dead/unused/commented code\n- input validation exploits\n\nThe code review is conducted during the application development phase, this allows discovered security issues to be corrected prior to release.\n\nCode reviews performed after the development phase must eventually go back to development for correction so conducting the code review during development is the logical and preferred action.\n\nAutomated code review tools are to be used whenever reviewing application source code. These tools are often incorporated into Integrated Development Environments (IDE) so code reviews can be conducted during all stages of the development life cycle. Periodically reviewing code during the development phase makes transition to a production environment easier as flaws are continually identified and addressed during the development phase rather than en masse at the end of the development effort.\n\nCode review processes and the tools used to conduct the code review analysis will vary depending upon application architecture and the development languages utilized.\n\nIn addition to automated testing, manual code reviews may also be used to validate or augment automated code review results. Larger projects will have a large code base and will require the use of automated code review tools in order to achieve complete code review coverage.\n\nA manual code review may consist of a peer review wherein other programmers on the team manually examine source code and automated code review results for known flaws that introduce security bugs into the application.\n\nAs with any testing, there is no single best approach and the tests must be tailored to the application architecture. Use of automated tools along with manual review of code and testing results is considered a best practice when conducting code reviews. This method is the most likely way to ensure the maximum number of errors are caught and addressed prior to implementing the application in a production environment.",
+   "fix_text": "Conduct and document code reviews on the application during development and identify and remediate all known and potential security vulnerabilities prior to releasing the application.",
+   "group_id": "V-222648",
+   "group_title": "SRG-APP-000516",
+   "rule_id": "SV-222648r961863",
+   "rule_id_src": "SV-222648r961863_rule",
+   "rule_title": "An application code review must be performed on the application.",
+   "rule_version": "APSC-DV-003170",
+   "severity": "medium",
+   "weight": "10.0"
+  }
+ },
+ "source": {
+  "benchmark_id": "Application_Security_Development_STIG",
+  "download": "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_ASD_V6R4_STIG.zip",
+  "note": "DISA STIGs are publicly released US Government works; the rules below are reproduced verbatim from the official XCCDF.",
+  "release_info": "Release: 4 Benchmark Date: 01 Oct 2025",
+  "stig_name": "Application Security and Development Security Technical Implementation Guide",
+  "version": "6",
+  "zip_sha256": "3361a742c58ba7cc3f86bc1fa6aa6b0d9a588824c017a90c9b6786df8ffdd681"
+ }
+}
