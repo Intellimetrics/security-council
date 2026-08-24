@@ -13,6 +13,10 @@ DEFAULT_CONFIG: dict = {
     #   arms.options.claude-security: {effort: low, max_budget_usd: 10}
     #   arms.options.codex-security:  {mode: standard, max_cost_usd: 5}
     "arms": {"enabled": ["semgrep", "gitleaks", "osv-scanner"], "options": {}},
+    # score.calibration (R7): "off" (default) | "auto" (packaged fitted record,
+    # applied ONLY when the run's scanner version+ruleset match the record's
+    # pins) | a path to an explicit record (operator opt-in; mismatches warn).
+    "score": {"calibration": "off"},
     # Declared gated model-tier entitlements (M-V2). Each entry names a tier the
     # operator holds, e.g. {tier: mythos} or {tier: daybreak-blue}. A scan will
     # not route to an undeclared gated tier, and never to Daybreak Red (Blue scope).

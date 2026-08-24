@@ -60,6 +60,7 @@ class ScoreResult:
     clamps: list[str] = field(default_factory=list)
     needs_human_reasons: list[str] = field(default_factory=list)
     calibration: str = "prior"    # "fitted" only when weights come from ground truth
+    calibration_record: str | None = None   # record id whenever a fitted base was used
 
 
 def _sigmoid(x: float) -> float:
@@ -90,17 +91,29 @@ def _term_evidence(panel: list[PanelOpinion]) -> float:
     return min(up * W_CITATION, CITATION_CAP) - min(down * W_CITATION, CITATION_CAP)
 
 
-def score_finding(f: Finding, *, history: dict | None = None) -> ScoreResult:
-    """Score one finding. `history` is the (future) decision-store prior for this
-    root cause: {"confirmed_tp": n, "confirmed_fp": n}; absent -> term is 0."""
+def score_finding(f: Finding, *, history: dict | None = None,
+                  calibration=None) -> ScoreResult:
+    """Score one finding. `history` is the decision-store prior for this root
+    cause: {"confirmed_tp": n, "confirmed_fp": n}; absent -> term is 0.
+
+    `calibration` is an optional loaded `calibration.Calibration` record (R7):
+    for an in-scope finding its fitted family logit REPLACES the hand-set base
+    (PRIOR + W_DETERMINISTIC) as the ``fitted_base`` term; every other term and
+    every clamp is untouched. The result is labeled ``fitted`` only when no
+    other term contributes — a composed score honestly stays ``prior`` even
+    though its base was measured (the breakdown records the record id)."""
     corr = f.corroboration
     terms: dict[str, float] = {}
+    fitted = calibration.base_for(f) if calibration is not None else None
 
     fams = max(0, corr.independent_family_count - 1)
     if fams:
         terms["corroboration"] = min(fams * W_FAMILY, FAMILY_CAP)
     if corr.deterministic_sources:
-        terms["deterministic"] = W_DETERMINISTIC
+        if fitted is not None:
+            terms["fitted_base"] = round(fitted, 4)
+        else:
+            terms["deterministic"] = W_DETERMINISTIC
 
     panel = f.validation.panel if f.validation else []
     if (adj := _term_adjudicator(panel)):
@@ -122,7 +135,8 @@ def score_finding(f: Finding, *, history: dict | None = None) -> ScoreResult:
         if h:
             terms["history"] = max(-HISTORY_CAP, min(h, HISTORY_CAP))
 
-    log_odds = PRIOR + sum(terms.values())
+    # fitted_base is an absolute measured intercept, not an offset from PRIOR
+    log_odds = (0.0 if fitted is not None else PRIOR) + sum(terms.values())
     p = _sigmoid(log_odds)
     clamps: list[str] = []
     reasons: list[str] = []
@@ -145,8 +159,12 @@ def score_finding(f: Finding, *, history: dict | None = None) -> ScoreResult:
     if corr.uncovered:
         reasons.append("category_uncovered")
 
+    strict_scope = fitted is not None and set(terms) == {"fitted_base"}
     return ScoreResult(p=round(p, 4), log_odds=round(log_odds, 4), terms=terms,
-                       clamps=clamps, needs_human_reasons=reasons)
+                       clamps=clamps, needs_human_reasons=reasons,
+                       calibration="fitted" if strict_scope else "prior",
+                       calibration_record=(calibration.record_id
+                                           if fitted is not None else None))
 
 
 def attach(f: Finding, s: ScoreResult) -> None:
@@ -162,3 +180,5 @@ def attach(f: Finding, s: ScoreResult) -> None:
         "log_odds": s.log_odds, "terms": dict(s.terms), "clamps": list(s.clamps),
         "needs_human_reasons": list(s.needs_human_reasons),
     }
+    if s.calibration_record:
+        f.validation.evidence_check["score"]["calibration_record"] = s.calibration_record

@@ -136,10 +136,13 @@ def _is_demoted(f: Finding) -> bool:
         d.vex_status in ("not_affected", "fixed")
 
 
-def _validation_summary(f: Finding) -> str:
+def _validation_summary(f: Finding, scores: dict | None = None) -> str:
     v = f.validation
     if v is None:
-        return "—"
+        s = (scores or {}).get(f.id)
+        # (d)-lite (R7): a strict-scope fitted score for an unvalidated
+        # deterministic singleton — post-clamp value, never the word "calibrated"
+        return f"p {s['p']:.2f} fitted" if s else "—"
     return f"{v.verdict} ({v.confidence:.2f})"
 
 
@@ -316,11 +319,28 @@ def _method(findings: list[Finding], manifest: dict) -> list[str]:
                    "against the repository")
     out.append("- **Clustering:** findings are grouped by root cause across arms; fingerprints are "
                "line-drift-stable and never contain line numbers.")
+    cal = manifest.get("calibration") or {}
+    status = cal.get("status")
+    if status == "active":
+        n = cal.get("applied_findings", 0)
+        out.append(f"- **Score fitting (opt-in):** record {_code(cal.get('record', '?'))} active — "
+                   f"fitted base applied to {n} deterministic-singleton finding(s); every other "
+                   "finding is scored on the hand-set prior. Fitted values are corpus-scoped "
+                   "(see the record's caveats) and all fail-safe floors still apply.")
+        for w in cal.get("warnings") or []:
+            out.append(f"  - ⚠ {_esc(str(w))}")
+    elif status == "refused_pin_mismatch":
+        out.append(f"- ⚠ **Score fitting refused:** record {_code(cal.get('record', '?'))} does not "
+                   f"match this run's scanner pins ({_esc('; '.join(cal.get('mismatches') or []))}) — "
+                   "scores fall back to the hand-set prior.")
+    elif status == "invalid":
+        out.append(f"- ⚠ **Score fitting record invalid:** {_esc('; '.join(cal.get('problems') or []))} "
+                   "— scores fall back to the hand-set prior.")
     out.append("")
     return out
 
 
-def _register(ordered: list[Finding]) -> list[str]:
+def _register(ordered: list[Finding], scores: dict | None = None) -> list[str]:
     if not ordered:
         return []
     out = ["## Findings register", "",
@@ -331,12 +351,12 @@ def _register(ordered: list[Finding]) -> list[str]:
         loc = _loc(f.locations[0], cell=True) if f.locations else "—"
         out.append(f"| {i} | {_sev_badge(f.severity.label)} | {_enum(f.disposition.state)} | "
                    f"{_enum(f.taxonomy.cwe_family)} / {cwe} | {_cell(f.title, 70)} | {loc} | "
-                   f"{_cell(_sources_summary(f))} | {_enum(_validation_summary(f))} |")
+                   f"{_cell(_sources_summary(f))} | {_enum(_validation_summary(f, scores))} |")
     out.append("")
     return out
 
 
-def _detail(i: int, f: Finding) -> list[str]:
+def _detail(i: int, f: Finding, scores: dict | None = None) -> list[str]:
     out = [f"### {i}. {_sev_badge(f.severity.label)} {_esc(f.title, limit=160) or _code(f.rule.id)}", ""]
     out.append(f"- **id** {_code(f.id)}" + (f" · cluster {_code(f.cluster_id)}" if f.cluster_id else "")
                + f" · {_cell(', '.join(f.taxonomy.cwe))} ({_enum(f.taxonomy.cwe_family)}, "
@@ -372,6 +392,13 @@ def _detail(i: int, f: Finding) -> list[str]:
     out.append(line)
     for fl in flags:
         out.append(f"  - ⚠ {fl}")
+    if f.validation is None and scores and f.id in scores:
+        s = scores[f.id]
+        srow = f"- **score** p {s['p']:.2f} — fitted base from record {_code(s.get('record', '?'))}"
+        if s.get("clamps"):
+            srow += (f" (measured {s.get('measured_p', s['p']):.2f}; deployed value raised by "
+                     f"{_esc(', '.join(s['clamps']))})")
+        out.append(srow)
     v = f.validation
     if v is not None:
         out.append(f"- **validation** {_enum(v.verdict)} (confidence {v.confidence:.2f}) → state "
@@ -513,23 +540,26 @@ def _footer(manifest: dict) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def to_markdown(findings: list[Finding], manifest: dict, *, detail_limit: int | None = 50) -> str:
+def to_markdown(findings: list[Finding], manifest: dict, *, detail_limit: int | None = 50,
+                scores: dict | None = None) -> str:
     """Render the executive summary + findings register + top-N details.
 
     `manifest` is the run manifest (see manifest.build_manifest); `findings` are
     the merged (post-cluster, post-coverage, optionally validated) findings.
+    `scores` maps finding id -> strict-scope fitted score info (R7 (d)-lite:
+    post-clamp p, clamps, record id) for unvalidated deterministic singletons.
     """
     ordered = sorted(findings, key=_sort_key)
     out: list[str] = []
     out += _header(manifest, ordered)
     out += _summary(ordered, manifest)
     out += _method(ordered, manifest)
-    out += _register(ordered)
+    out += _register(ordered, scores)
     if ordered:
         shown = ordered if detail_limit is None else ordered[:detail_limit]
         out += ["## Findings", ""]
         for i, f in enumerate(shown, 1):
-            out += _detail(i, f)
+            out += _detail(i, f, scores)
         if len(shown) < len(ordered):
             out.append(f"_{len(ordered) - len(shown)} further finding(s) are listed in the register above "
                        "and carried in full in `findings.json` / `merged.sarif`._")

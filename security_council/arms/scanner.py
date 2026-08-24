@@ -14,6 +14,10 @@ from .base import ArmResult
 
 _MOUNT = "/src"
 
+# The one ruleset the semgrep arm runs. Calibration records pin it (R7): a
+# fitted record only auto-applies when the run's ruleset matches the pin.
+SEMGREP_RULESET = "p/default"
+
 
 @dataclass(frozen=True)
 class ScannerSpec:
@@ -33,10 +37,11 @@ class ScannerSpec:
 SCANNER_SPECS: dict[str, ScannerSpec] = {
     "semgrep": ScannerSpec(
         name="semgrep", family="semgrep", bin="semgrep", image="semgrep/semgrep",
-        local_args=("scan", "--config=p/default", "--sarif", "--output={out}/semgrep.sarif",
+        local_args=("scan", f"--config={SEMGREP_RULESET}", "--sarif",
+                    "--output={out}/semgrep.sarif",
                     "--metrics=off", "--exclude=.llm-council", "--exclude=.security-council",
                     "{target}"),
-        docker_args=("semgrep", "scan", "--config=p/default", "--sarif",
+        docker_args=("semgrep", "scan", f"--config={SEMGREP_RULESET}", "--sarif",
                      "--output=/out/semgrep.sarif", "--metrics=off",
                      "--exclude=.llm-council", "--exclude=.security-council", _MOUNT),
         sarif_name="semgrep.sarif", success_exit_codes=(0, 1),

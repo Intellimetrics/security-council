@@ -146,12 +146,14 @@ def _suppress(f: Finding, s: ScoreResult, cfg: dict, now_iso: str) -> None:
 
 
 def apply_policy(findings: list[Finding], config: dict, *, now_iso: str,
-                 prior_runs: int = 0,
-                 history: dict[str, dict] | None = None) -> list[PolicyDecision]:
+                 prior_runs: int = 0, history: dict[str, dict] | None = None,
+                 calibration=None) -> list[PolicyDecision]:
     """Score every finding and apply the disposition policy in place.
 
     `history` (future decisions.py lane) maps root_cause fingerprint -> outcome
-    counts. Every mutated finding passes assert_invariants — fail-closed."""
+    counts. `calibration` is an optional loaded fitted record (R7) forwarded to
+    the scorer; it never touches the guardrails below. Every mutated finding
+    passes assert_invariants — fail-closed."""
     cfg = {**POLICY_DEFAULTS, **(config.get("policy") or {})}
     shadow = prior_runs < int(cfg["shadow_runs"])                            # G4
     decisions: list[PolicyDecision] = []
@@ -163,7 +165,7 @@ def apply_policy(findings: list[Finding], config: dict, *, now_iso: str,
                                             reasons=[f"lifecycle_{f.disposition.lifecycle}"]))
             continue
         h = (history or {}).get(f.fingerprints.root_cause)
-        s = score_finding(f, history=h)
+        s = score_finding(f, history=h, calibration=calibration)
         if f.validation is None:
             decisions.append(PolicyDecision(finding_id=f.id, action="none", p=s.p,
                                             reasons=["not_validated"], score=s))
@@ -223,5 +225,7 @@ def decisions_to_json(decisions: list[PolicyDecision]) -> list[dict]:
         if d.score is not None:
             row["score"] = {"log_odds": d.score.log_odds, "terms": d.score.terms,
                             "clamps": d.score.clamps, "calibration": d.score.calibration}
+            if d.score.calibration_record:
+                row["score"]["calibration_record"] = d.score.calibration_record
         out.append(row)
     return out

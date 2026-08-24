@@ -126,7 +126,8 @@ def apply_verdicts(findings: list[Finding], expected: dict, verdicts: dict[str, 
 
 
 def run_eval(fixtures_root: str | Path, *, config: dict | None = None, prior_runs: int = 99,
-             history: dict | None = None, verdicts: dict[str, str] | None = None) -> EvalRun:
+             history: dict | None = None, verdicts: dict[str, str] | None = None,
+             calibration=None) -> EvalRun:
     root = Path(fixtures_root)
     expected = yaml.safe_load(open(root / "EXPECTED.yaml"))
     if verdicts is None:
@@ -134,7 +135,8 @@ def run_eval(fixtures_root: str | Path, *, config: dict | None = None, prior_run
     findings = merge_and_cover(load_corpus(root))
     apply_verdicts(findings, expected, verdicts)
     decisions = policy_mod.apply_policy(findings, config or {}, now_iso=NOW_ISO,
-                                        prior_runs=prior_runs, history=history)
+                                        prior_runs=prior_runs, history=history,
+                                        calibration=calibration)
     report = metrics.compute(expected, findings)
     report.disposition_actions = policy_mod.decisions_summary(decisions)
     return EvalRun(report=report, findings=findings, decisions=decisions)

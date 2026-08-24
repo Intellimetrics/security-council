@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__, decisions as decisions_mod, entitlements as ent_mod, policy as policy_mod
+from . import __version__, calibration as calibration_mod, decisions as decisions_mod, \
+    entitlements as ent_mod, policy as policy_mod
 from .arms.base import Arm, ArmResult
 from .cluster import cluster_findings, merge_cluster
 from .export import markdown, sarif
@@ -213,10 +214,15 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         # score + disposition policy (mutates dispositions; must precede exports/gate)
         _, decided_at = _utc_stamp()
         armed = policy_mod.is_armed(config)
+        cal, cal_meta = calibration_mod.resolve(
+            (config.get("score") or {}).get("calibration"), arm_results=results)
         decisions = policy_mod.apply_policy(
             merged, config, now_iso=decided_at,
             prior_runs=store.armed_runs_completed(config) if armed else 0,
-            history=store.history_counts())
+            history=store.history_counts(), calibration=cal)
+        if cal is not None:
+            cal_meta["applied_findings"] = sum(
+                1 for d in decisions if d.score and "fitted_base" in d.score.terms)
         by_id = {f.id: f for f in merged}
         for d in decisions:
             if d.action in ("suppress", "shadow_suppress"):
@@ -237,7 +243,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             artifacts += fx_arts
             pre_degr += fx_degr
 
-        (out_dir / "policy.json").write_text(dumps(policy_mod.decisions_to_json(decisions)))
+        policy_rows = policy_mod.decisions_to_json(decisions)
+        (out_dir / "policy.json").write_text(dumps(policy_rows))
 
         (out_dir / "merged.sarif").write_text(dumps(sarif.to_sarif(
             merged, tool_version=__version__, run_id=run_id)))
@@ -255,11 +262,13 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             degradations=degradations, exit_code=exit_code, scan_scope=scan_scope,
             disposition_actions=policy_mod.decisions_summary(decisions),
             baseline_delta=baseline_delta, prior_decisions=prior_decisions, artifacts=artifacts,
+            calibration=cal_meta,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
                      (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
                       ("summary.md", "markdown"), ("manifest.json", "json"),
                       ("policy.json", "json"))])
-        (out_dir / "summary.md").write_text(markdown.to_markdown(merged, manifest))
+        (out_dir / "summary.md").write_text(markdown.to_markdown(
+            merged, manifest, scores=calibration_mod.fitted_scores(policy_rows) or None))
         (out_dir / "manifest.json").write_text(dumps(manifest))
     finally:
         ws.cleanup()
