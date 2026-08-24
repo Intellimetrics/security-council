@@ -35,6 +35,39 @@ DEFAULT_CONFIG: dict = {
     "reports": {"outdir": ".security-council/runs"},
 }
 
+# Profiles (R8 guided surface): one word picks a sensible preset. Resolution
+# order is DEFAULT_CONFIG < profile < config file < CLI flags — a profile never
+# overrides anything the operator wrote explicitly. `security-council setup`
+# writes these same keys out materialized (with comments), so a config file is
+# always self-explanatory; `scan --profile X` applies one ad hoc (and, being an
+# explicit flag, wins over the file's own arms/policy).
+PROFILES: dict[str, dict] = {
+    # $0, fastest: deterministic scanners only, defaults everywhere.
+    "quick": {},
+    # CI gate posture: same $0 arms; only findings NEW since the operator-set
+    # baseline fail the build (no baseline set -> everything gates, fail-safe).
+    "ci": {"policy": {"gate_baseline": "new"}},
+    # Deep audit: adds both dedicated AI reviewer arms (real vendor cost,
+    # budget-fused) and turns on the cross-vendor validation panel.
+    "deep": {"arms": {"enabled": ["semgrep", "gitleaks", "osv-scanner",
+                                  "claude-security", "codex-security"],
+                      "options": {"claude-security": {"effort": "low", "max_budget_usd": 10},
+                                  "codex-security": {"max_cost_usd": 8}}},
+             "defaults": {"validate": True}},
+    # Government / compliance posture: $0 arms + CI-style baseline gating; the
+    # paperwork itself comes from `report <run> --bundle gov` afterwards.
+    "gov": {"policy": {"gate_baseline": "new"}},
+}
+
+
+def resolve_profile(config: dict, name: str | None) -> dict:
+    """Apply a profile UNDER an already-loaded config (config keys win)."""
+    if not name:
+        return config
+    if name not in PROFILES:
+        raise KeyError(name)
+    return deep_merge(deep_merge(DEFAULT_CONFIG, PROFILES[name]), config)
+
 
 def deep_merge(base: dict, over: dict) -> dict:
     out = copy.deepcopy(base)
@@ -61,4 +94,13 @@ def load_config(start: Path) -> dict:
         return copy.deepcopy(DEFAULT_CONFIG)
     with open(p) as fh:
         data = yaml.safe_load(fh) or {}
-    return deep_merge(DEFAULT_CONFIG, data)
+    profile = data.pop("profile", None)
+    if profile and profile not in PROFILES:
+        # fail-closed: a typo'd profile silently scanning with defaults is a
+        # misconfiguration hazard, not a fallback
+        raise ValueError(f"unknown profile {profile!r} in {p}; known: {sorted(PROFILES)}")
+    base = deep_merge(DEFAULT_CONFIG, PROFILES[profile]) if profile else DEFAULT_CONFIG
+    merged = deep_merge(base, data)
+    if profile:
+        merged["profile"] = profile
+    return merged

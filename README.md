@@ -43,8 +43,14 @@ You need Python 3.11+ and Docker. This uses only the free local scanners —
 
 ```bash
 pip install git+https://github.com/Intellimetrics/security-council
-security-council doctor
+security-council setup       # asks one question, writes the config, prints your next steps
 ```
+
+Not sure which of the many options you need? `setup` is the front door: it
+detects your repo's languages and CI system, asks what you're trying to do
+(quick scan / CI gate / deep AI audit / government compliance package), writes
+a commented `.security-council.yaml`, and prints the three commands that
+matter for that goal. Everything below is what it walks you through.
 
 `doctor` tells you what's ready to run:
 
@@ -184,8 +190,12 @@ Confidence numbers default to hand-set weights (labeled `prior`, deliberately
 never called "calibrated"); an **opt-in** fitted record measured on the OWASP
 Benchmark ships with the package (`security-council calibrate`,
 `score.calibration: auto` — Java/semgrep scope only, caveats stated inside the
-record, all fail-safe floors still apply). Not yet done: CI runs on
-outside infrastructure. `tests/fixtures/seedrepo/` is **intentionally
+record, all fail-safe floors still apply). Report formats: SARIF, Markdown,
+HTML (print for PDF), CSV, eMASS, OpenVEX, OSCAL AR/POA&M, STIG Viewer CKLB
+(ASD V6R4), CycloneDX 1.6 VDR, GitLab SAST/Code Quality — or one audience at a
+time via `report <run> --bundle triage|gov`. Not yet done: CI runs on outside
+infrastructure; CKLB not yet imported into a live STIG Viewer; no SBOM
+generation (the CycloneDX export is a VDR, not a component inventory). `tests/fixtures/seedrepo/` is **intentionally
 vulnerable** (including fake AWS keys) — it's the practice target and test
 corpus; see [SECURITY.md](SECURITY.md).
 

@@ -27,7 +27,20 @@ def cmd_scan(args) -> int:
     if not target.is_dir():
         print(f"error: {target} is not a directory", file=sys.stderr)
         return EXIT_USAGE
-    config = load_config(target)
+    try:
+        config = load_config(target)
+    except ValueError as e:                    # unknown profile in the config file
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    if getattr(args, "profile", None):
+        from .config import PROFILES, deep_merge
+        if args.profile not in PROFILES:
+            print(f"error: unknown profile {args.profile!r}; known: {sorted(PROFILES)}",
+                  file=sys.stderr)
+            return EXIT_USAGE
+        # an explicit CLI flag overrides the file's presets (unlike a file's
+        # own `profile:` key, which sits UNDER the file's other keys)
+        config = deep_merge(config, PROFILES[args.profile])
     if args.fail_on_severity:
         config["policy"]["fail_on_severity"] = args.fail_on_severity
     if args.min_arms is not None:
@@ -99,7 +112,8 @@ def cmd_scan(args) -> int:
     run = run_scan(target, _build_arms(names, config, diff=diff), config,
                    out_dir=Path(args.out) if args.out else None,
                    isolate=not args.inplace,
-                   validate=args.validate, validate_max_findings=args.validate_max,
+                   validate=args.validate or bool((config.get("defaults") or {}).get("validate")),
+                   validate_max_findings=args.validate_max,
                    validate_budget_usd=args.validate_budget, diff=diff,
                    analysis_arms=analysis_arms, fix_spec=fix_spec,
                    vendor_validate=bool(getattr(args, "vendor_validate", False)))
@@ -137,15 +151,117 @@ def cmd_doctor(args) -> int:
     return 0
 
 
+def _load_findings(run_dir) -> list:
+    from .jsonio import finding_from_dict
+    fj = Path(run_dir) / "findings.json"
+    return [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
+
+
+def _load_scores(run_dir) -> dict:
+    from . import calibration as cal_mod
+    pj = Path(run_dir) / "policy.json"
+    return cal_mod.fitted_scores(json.load(open(pj))) if pj.is_file() else {}
+
+
+def _report_bundle(args, m: dict) -> int:
+    """Write one audience's report set into a directory (R8 guided surface)."""
+    run_dir = Path(args.run_dir)
+    findings = _load_findings(run_dir)
+    scores = _load_scores(run_dir) or None
+    out_dir = Path(args.out_dir) if args.out_dir else run_dir / "exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fmts: list[str] = []
+    if args.bundle in ("triage", "all"):
+        fmts += ["csv", "html", "md"]
+    if args.bundle in ("gov", "all"):
+        fmts += ["openvex", "oscal-ar", "oscal-poam", "cklb", "cyclonedx"]
+        if args.app_name and args.app_version:
+            fmts.append("emass")
+        else:
+            print("note: emass.json skipped — pass --app-name and --app-version to "
+                  "include the eMASS payload", file=sys.stderr)
+    names = {"csv": "findings.csv", "html": "summary.html", "md": "summary.md",
+             "openvex": "openvex.json", "oscal-ar": "oscal-ar.json",
+             "oscal-poam": "oscal-poam.json", "cklb": "checklist.cklb",
+             "cyclonedx": "cyclonedx.json", "emass": "emass.json"}
+    for fmt in fmts:
+        path = out_dir / names[fmt]
+        if fmt == "csv":
+            from .export import csv_export
+            path.write_text(csv_export.to_csv(findings))
+        elif fmt == "html":
+            from .export import html_export
+            path.write_text(html_export.to_html(findings, m, scores=scores))
+        elif fmt == "md":
+            from .export import markdown
+            path.write_text(markdown.to_markdown(findings, m, scores=scores))
+        elif fmt == "openvex":
+            from .export import vex
+            path.write_text(json.dumps(vex.to_openvex(findings, m), indent=2) + "\n")
+        elif fmt in ("oscal-ar", "oscal-poam"):
+            from .export import oscal
+            doc = (oscal.to_oscal_ar if fmt == "oscal-ar" else oscal.to_oscal_poam)(findings, m)
+            path.write_text(json.dumps(doc, indent=2) + "\n")
+        elif fmt == "cyclonedx":
+            from .export import cyclonedx
+            doc, _meta = cyclonedx.to_cyclonedx(findings, m)
+            path.write_text(json.dumps(doc, indent=2) + "\n")
+        elif fmt == "cklb":
+            from .export import cklb
+            doc, meta = cklb.to_cklb(findings, m, classification=args.classification)
+            path.write_text(json.dumps(doc, indent=2) + "\n")
+            print(f"  cklb: {meta['rules_open']}/{meta['rules_total']} mapped rules open · "
+                  f"{meta['findings_exported']} findings · "
+                  f"{meta['withheld_by_disposition']} withheld · {meta['stig']}",
+                  file=sys.stderr)
+        elif fmt == "emass":
+            from .export import emass
+            scan_date = args.scan_date if args.scan_date is not None \
+                else emass.scan_date_from_manifest(m)
+            body, _meta = emass.to_emass_static_code_scans(
+                findings, application_name=args.app_name, version=args.app_version,
+                scan_date=scan_date)
+            path.write_text(json.dumps(body, indent=2) + "\n")
+        print(f"wrote {path}")
+    return 0
+
+
 def cmd_report(args) -> int:
     mf = Path(args.run_dir) / "manifest.json"
     if not mf.is_file():
         print(f"error: no manifest.json in {args.run_dir}", file=sys.stderr)
         return EXIT_USAGE
     m = json.load(open(mf))
+    if args.bundle:
+        return _report_bundle(args, m)
+    if args.format == "csv":
+        from .export import csv_export
+        print(csv_export.to_csv(_load_findings(args.run_dir)), end="")
+        return 0
+    if args.format == "html":
+        from .export import html_export
+        print(html_export.to_html(_load_findings(args.run_dir), m,
+                                  scores=_load_scores(args.run_dir) or None))
+        return 0
+    if args.format == "cklb":
+        from .export import cklb
+        doc, meta = cklb.to_cklb(_load_findings(args.run_dir), m,
+                                 classification=args.classification)
+        print(json.dumps(doc, indent=2))
+        print(f"cklb: {meta['rules_open']}/{meta['rules_total']} mapped rules open · "
+              f"{meta['findings_exported']} findings exported · "
+              f"{meta['withheld_by_disposition']} withheld · {meta['stig']}", file=sys.stderr)
+        return 0
+    if args.format == "cyclonedx":
+        from .export import cyclonedx
+        doc, meta = cyclonedx.to_cyclonedx(_load_findings(args.run_dir), m)
+        print(json.dumps(doc, indent=2))
+        print(f"cyclonedx: {meta['vulnerabilities']} vulnerabilities · "
+              f"{meta['package_components']} package components · "
+              f"{meta['withheld_by_disposition']} withheld · {meta['note']}", file=sys.stderr)
+        return 0
     if args.format == "emass":
         from .export import emass
-        from .jsonio import finding_from_dict
         if not (args.app_name and args.app_version):
             print("error: --format emass requires --app-name and --app-version", file=sys.stderr)
             return EXIT_USAGE
@@ -153,8 +269,7 @@ def cmd_report(args) -> int:
             print(json.dumps(emass.clear_findings_payload(
                 application_name=args.app_name, version=args.app_version), indent=2))
             return 0
-        fj = Path(args.run_dir) / "findings.json"
-        findings = [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
+        findings = _load_findings(args.run_dir)
         scan_date = args.scan_date if args.scan_date is not None \
             else emass.scan_date_from_manifest(m)
         body, meta = emass.to_emass_static_code_scans(
@@ -168,9 +283,7 @@ def cmd_report(args) -> int:
             print(f"  skipped {s['finding_id']}: {s['reason']} {s['cwe']}", file=sys.stderr)
         return 0
     if args.format in ("openvex", "oscal-ar", "oscal-poam"):
-        from .jsonio import finding_from_dict
-        fj = Path(args.run_dir) / "findings.json"
-        findings = [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
+        findings = _load_findings(args.run_dir)
         if args.format == "openvex":
             from .export import vex
             doc = vex.to_openvex(findings, m)
@@ -181,22 +294,16 @@ def cmd_report(args) -> int:
         return 0
     if args.format in ("gitlab-sast", "gitlab-codequality"):
         from .export import gitlab as gl
-        from .jsonio import finding_from_dict
-        fj = Path(args.run_dir) / "findings.json"
-        findings = [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
+        findings = _load_findings(args.run_dir)
         doc, meta = (gl.to_gitlab_sast(findings, m) if args.format == "gitlab-sast"
                      else gl.to_gitlab_code_quality(findings))
         print(json.dumps(doc, indent=2))
         print(f"gitlab: {meta}", file=sys.stderr)
         return 0
     if args.format == "md":
-        from . import calibration as cal_mod
         from .export import markdown
-        from .jsonio import finding_from_dict
-        fj = Path(args.run_dir) / "findings.json"
-        findings = [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
-        pj = Path(args.run_dir) / "policy.json"
-        scores = cal_mod.fitted_scores(json.load(open(pj))) if pj.is_file() else {}
+        findings = _load_findings(args.run_dir)
+        scores = _load_scores(args.run_dir)
         print(markdown.to_markdown(findings, m, detail_limit=args.detail_limit,
                                    scores=scores or None))
         return 0
@@ -360,6 +467,15 @@ def cmd_eval(args) -> int:
     return 1 if run.report.violations else 0
 
 
+def cmd_setup(args) -> int:
+    from .setup_wizard import run_setup
+    target = Path(args.path).resolve()
+    if not target.is_dir():
+        print(f"error: {target} is not a directory", file=sys.stderr)
+        return EXIT_USAGE
+    return run_setup(target, profile=args.profile, yes=args.yes, force=args.force)
+
+
 def cmd_calibrate(args) -> int:
     """Fit a calibration record from an OWASP Benchmark checkout + a prior scan
     of it (R7). Converter-only: the checkout is the user's own clone."""
@@ -428,6 +544,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("scan", help="scan a repository")
     s.add_argument("path")
+    s.add_argument("--profile", choices=["quick", "ci", "deep", "gov"],
+                   help="apply a preset for this run (quick=$0 scanners, ci=baseline "
+                        "gating, deep=+AI reviewers+panel [costs money], gov=compliance "
+                        "posture); overrides the config file's presets")
     s.add_argument("--arms", help="comma-separated arm names (default: config)")
     s.add_argument("--fail-on-severity", choices=["critical", "high", "medium", "low", "info"])
     s.add_argument("--gate-baseline", choices=["all", "new"],
@@ -466,18 +586,37 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--validate-max", type=int, help="cap findings sent to validation")
     s.add_argument("--validate-budget", type=float, default=0.5, help="max USD per validated finding")
     s.set_defaults(fn=cmd_scan)
+    su = sub.add_parser("setup", help="guided setup: pick a goal, write the config, "
+                                      "print a repo-specific cheat sheet")
+    su.add_argument("path", nargs="?", default=".")
+    su.add_argument("--profile", choices=["quick", "ci", "deep", "gov"],
+                    help="skip the questions and use this profile")
+    su.add_argument("--yes", action="store_true",
+                    help="non-interactive: accept defaults (profile quick unless --profile)")
+    su.add_argument("--force", action="store_true", help="overwrite an existing config")
+    su.set_defaults(fn=cmd_setup)
+
     d = sub.add_parser("doctor", help="check arm availability")
     d.set_defaults(fn=cmd_doctor)
     r = sub.add_parser("report", help="summarize or export a previous run directory")
     r.add_argument("run_dir")
     r.add_argument("--format",
-                   choices=["json", "md", "emass", "gitlab-sast", "gitlab-codequality",
+                   choices=["json", "md", "html", "csv", "emass", "cklb", "cyclonedx",
+                            "gitlab-sast", "gitlab-codequality",
                             "openvex", "oscal-ar", "oscal-poam"],
                    default="json",
-                   help="json summary (default), markdown, eMASS static-code-scans POST body, "
-                        "GitLab SAST / Code Quality report, OpenVEX, or OSCAL "
-                        "assessment-results / POA&M")
+                   help="json summary (default), markdown, self-contained HTML (print for "
+                        "PDF), triage CSV, eMASS static-code-scans POST body, STIG Viewer "
+                        "CKLB checklist (ASD V6R4), CycloneDX 1.6 VDR, GitLab SAST / Code "
+                        "Quality report, OpenVEX, or OSCAL assessment-results / POA&M")
+    r.add_argument("--bundle", choices=["triage", "gov", "all"],
+                   help="write a set of reports for one audience into --out-dir instead of "
+                        "printing one format: triage = csv+html+md, gov = openvex+oscal-ar+"
+                        "oscal-poam+cklb (+emass when --app-name/--app-version given)")
+    r.add_argument("--out-dir", help="bundle output directory (default: <run_dir>/exports)")
     r.add_argument("--detail-limit", type=int, default=50, help="findings rendered in full (md)")
+    r.add_argument("--classification", default="UNCLASSIFIED",
+                   help="classification stamped on CKLB rules (default UNCLASSIFIED)")
     r.add_argument("--app-name", help="eMASS applicationName (required for --format emass)")
     r.add_argument("--app-version", help="eMASS application version (required for --format emass)")
     r.add_argument("--scan-date", type=int,

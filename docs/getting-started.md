@@ -22,6 +22,27 @@ Runtime dependencies are deliberately minimal: the Python package needs only
   [arms.md](arms.md) and read [data-boundaries.md](data-boundaries.md) first.
 - **`.[mcp]` extra** (optional) — the MCP server ([mcp.md](mcp.md)).
 
+## Guided setup (recommended first command)
+
+```bash
+security-council setup           # one question, a written config, your next 3 commands
+```
+
+The wizard detects your repo (languages, CI system, git), asks what you're
+trying to do, and writes a commented `.security-council.yaml` using one of
+four **profiles** — the same presets `scan --profile` applies ad hoc:
+
+| Profile | What it sets up | Cost |
+|---|---|---|
+| `quick` | free deterministic scanners, defaults everywhere | $0 |
+| `ci` | same arms + `gate_baseline: new` (only findings new since `baseline set` fail the build) | $0 |
+| `deep` | adds the `claude-security`/`codex-security` AI reviewers (budget-capped) + the validation panel | real vendor spend per scan |
+| `gov` | `ci` posture; pair with `report <run> --bundle gov` for the compliance paperwork | $0 scan |
+
+Explicit keys in the config always win over the profile; `setup` never
+overwrites an existing config unless you pass `--force` (without it, it just
+prints the cheat sheet). `--yes` makes it non-interactive for scripts.
+
 ## First scan
 
 ```bash
@@ -107,6 +128,35 @@ reports:
 
 CLI flags (`--fail-on-severity`, `--gate-baseline`, `--min-arms`) override the
 file per run.
+
+## Reports: one format or one audience
+
+Every format renders from the same run directory, after the fact:
+
+```bash
+security-council report <run_dir> --format md          # readable summary (stdout)
+security-council report <run_dir> --format html        # self-contained page; print for PDF
+security-council report <run_dir> --format csv         # full triage spreadsheet
+security-council report <run_dir> --format cklb        # STIG Viewer 3 checklist (ASD V6R4)
+security-council report <run_dir> --format cyclonedx   # CycloneDX 1.6 VDR
+# also: emass, openvex, oscal-ar, oscal-poam, gitlab-sast, gitlab-codequality
+```
+
+When you need a *set* of reports rather than one, bundles write everything an
+audience expects into `<run_dir>/exports/` in one command:
+
+```bash
+security-council report <run_dir> --bundle triage      # findings.csv + summary.html + summary.md
+security-council report <run_dir> --bundle gov \
+    --app-name myapp --app-version 1.0                 # openvex + oscal-ar + oscal-poam
+                                                       # + checklist.cklb + cyclonedx + emass
+```
+
+Compliance formats withhold suppressed/demoted findings (they live in the
+summary's appendix); the triage CSV deliberately includes everything with its
+state spelled out. The CKLB is a *partial* checklist — only the SAST-informable
+subset of the 286 ASD rules, statuses only ever `open` or `not_reviewed` (an
+automated scan can never claim `not_a_finding`).
 
 ## Next steps
 
