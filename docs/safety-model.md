@@ -42,10 +42,29 @@ ones:
 | G6 | Suppressions expire (90 days) → the finding reopens |
 | G7 | Critical severity never auto-suppressed |
 | G8 | Context drift (the code around the finding changed) → the decision deactivates permanently and the finding reopens for re-validation |
+| G9 | Crypto and critical findings can never be taken out of the gate by **unsigned operator state**: a baseline never excuses them, and a stored suppression of one is re-affirmed every 30 days instead of 90 |
 
 Plus the meta-rule: **demote, never auto-close.** A refuted finding leaves
 the CI gate but stays open, renders as SARIF `suppressions[underReview]`, and
 appears in the summary's appendix.
+
+### The decision store is tamper-evident, not tamper-proof
+
+`.security-council/decisions/` and `baseline/latest.json` are plain local
+files that decide what does *not* gate. R9 found (and this project reproduced
+live) that a hand-written baseline could switch the CI gate off entirely — the
+fingerprints it needed are published in every SARIF report. That is closed:
+the baseline carries a content digest, and a baseline whose entries don't
+match it — **or that has no digest at all** — is refused, which means no
+baseline, which means everything gates.
+
+Be clear about what this buys. The digest is a **tripwire**, not a signature:
+someone who can write the file can recompute it. What actually protects a
+shared store is putting `decisions/` and `baseline/` behind CODEOWNERS and
+required review, so every change to what gets hidden is a reviewed diff. Every
+reapplied suppression is also listed individually in the report — who, when,
+expiry, and how many times it has been silently reapplied — because an
+aggregate count is the thing nobody re-reads.
 
 ## Scoring (`score.py`) — transparent, and honest about calibration
 
