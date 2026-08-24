@@ -35,8 +35,17 @@ def test_human_decision_reapplies_with_full_attribution(tmp_path):
     _human(store, _finding(), vex="inline_mitigations_already_exist")
     f = _finding()                          # a fresh scan's finding, same root cause
     actions = store.apply_prior_decisions([f], now_iso=LATER)
-    assert actions == [{"finding_id": f.id, "action": "reapplied_suppressed",
-                        "ref": f"decision:root_cause:{f.fingerprints.root_cause}"}]
+    # R9: action rows carry per-suppression provenance so the report can list
+    # every reapplied decision individually instead of an aggregate count
+    assert len(actions) == 1
+    a = actions[0]
+    assert a["finding_id"] == f.id and a["action"] == "reapplied_suppressed"
+    assert a["ref"] == f"decision:root_cause:{f.fingerprints.root_cause}"
+    assert a["title"] == f.title and a["severity"] == f.severity.label
+    assert a["operator"] == "clindell" and a["decided_at"] == NOW
+    assert a["expires_at"] == "2026-11-20T00:00:00Z"
+    assert a["expiry_clamped"] is False and a["high_assurance"] is False
+    assert a["reapplied_count"] == 1
     d = f.disposition
     assert d.lifecycle == "suppressed" and d.decided_by.kind == "human"
     assert d.decided_by.operator == "clindell" and d.expires_at == "2026-11-20T00:00:00Z"

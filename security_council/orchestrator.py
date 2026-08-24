@@ -45,6 +45,20 @@ def _safe_run(arm: Arm, root: Path, out_dir: Path, run_id: str, collected_at: st
                          exit_code=None, error=f"arm crashed: {e}", findings=[])
 
 
+def _shadow_runs_completed(store, config: dict, out_dir: Path, run_id: str) -> int:
+    """Shadow-run count, cross-checked against evidence on disk (R9).
+
+    The store's counter lives in `policy_state.json`, which an attacker who can
+    write the store can simply set high to skip shadow mode and unlock
+    auto-suppression. Taking the MINIMUM of the counter and the number of real
+    sibling run directories means forging it now also requires fabricating that
+    many complete run dirs. Both sources under-count in the fail-safe direction
+    (shadow mode stays on longer), so the min never weakens G4."""
+    counter = store.armed_runs_completed(config)
+    observed = policy_mod.count_prior_runs(Path(out_dir).parent, run_id)
+    return min(counter, observed)
+
+
 def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) -> tuple[int, list[dict]]:
     policy = config.get("policy", {})
     threshold = _SEV_RANK.get(policy.get("fail_on_severity", "high"), 4)
@@ -58,9 +72,13 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
               and not f.disposition.sarif_suppression
               and _SEV_RANK[f.severity.label] >= threshold
               # baseline mode "new": pre-existing (baselined) findings don't gate;
-              # findings with no baseline_state (no baseline set) always gate
+              # findings with no baseline_state (no baseline set) always gate.
+              # R9/G9: the baseline file is unsigned operator state, so it can
+              # never excuse a crypto or critical finding — mirroring G1/G7,
+              # a forged baseline still cannot switch off those gates.
               and not (gate_baseline == "new"
-                       and f.baseline_state in ("unchanged", "updated"))]
+                       and f.baseline_state in ("unchanged", "updated")
+                       and not policy_mod.baseline_ineligible(f))]
     ok = [r for r in results if r.ok]
     failed = [r for r in results if not r.ok]
     degr = [{"kind": "arm_failed", "arm": r.name, "detail": r.error} for r in failed]
@@ -218,7 +236,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             (config.get("score") or {}).get("calibration"), arm_results=results)
         decisions = policy_mod.apply_policy(
             merged, config, now_iso=decided_at,
-            prior_runs=store.armed_runs_completed(config) if armed else 0,
+            prior_runs=_shadow_runs_completed(store, config, out_dir, run_id) if armed else 0,
             history=store.history_counts(), calibration=cal)
         if cal is not None:
             cal_meta["applied_findings"] = sum(
@@ -232,8 +250,27 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             store.bump_armed_runs(config, run_id=run_id, now_iso=decided_at)
 
         baseline = store.load_baseline()
+        if baseline and baseline.get("integrity") != "intact":
+            # R9: the entry set must match the digest written by `baseline set`.
+            # A mismatch means the file was edited afterwards; a MISSING digest
+            # is refused too, or "omit the field" would be the cheapest bypass
+            # of the entire gate. Refusing means no baseline, and with no
+            # baseline every finding gates — the fail-safe direction.
+            why = ("content_sha256 mismatch — the file was modified after "
+                   "`baseline set`" if baseline["integrity"] == "tampered"
+                   else "no content_sha256 — created before integrity pinning "
+                        "or hand-written")
+            pre_degr.append({"kind": "baseline_refused",
+                             "detail": f"baseline/latest.json {why}; baseline ignored "
+                                       "(all findings gate). Re-run `baseline set`."})
+            baseline = None
         baseline_delta = (decisions_mod.annotate_baseline(merged, baseline, partial=partial)
                           if baseline else None)
+        if baseline_delta:
+            baseline_delta["integrity"] = baseline.get("integrity")
+            baseline_delta["content_sha256"] = baseline.get("content_sha256_actual")
+            baseline_delta["set_at"] = baseline.get("set_at")
+            baseline_delta["operator"] = baseline.get("operator")
 
         # fix lane (M-V4a): serial, after the scan/policy phase, each job in its
         # own fenced fresh copy. Only fix open, non-refuted findings.

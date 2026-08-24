@@ -231,17 +231,60 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
             out.append(f"- **Baseline** (vs run {_code(bd.get('baseline_run', '?'))}): "
                        f"{bd.get('new', 0)} new · {bd.get('unchanged', 0)} unchanged · "
                        f"{bd.get('updated', 0)} updated · {bd.get('absent', 0)} absent")
+            # R9: the baseline decides what does NOT gate, so its provenance is
+            # shown every run — set by whom, when, and the digest to compare.
+            prov = []
+            if bd.get("operator"):
+                prov.append(f"set by {_code(bd['operator'])}")
+            if bd.get("set_at"):
+                prov.append(f"on {_cell(str(bd['set_at'])[:10])}")
+            if bd.get("content_sha256"):
+                prov.append(f"digest {_code(str(bd['content_sha256'])[:12])}")
+            if bd.get("integrity") == "unpinned":
+                prov.append("⚠ no integrity digest (created before pinning)")
+            if prov:
+                out.append(f"  - baseline provenance: {' · '.join(prov)}")
         prior = manifest.get("prior_decisions") or []
-        reapplied = sum(1 for p in prior if str(p.get("action", "")).startswith("reapplied"))
+        reapplied = [p for p in prior if str(p.get("action", "")).startswith("reapplied")]
         reopened = [p for p in prior if str(p.get("action", "")).startswith("reopened")]
+        malformed = [p for p in prior if p.get("action") == "ignored_malformed"]
         if prior:
             bits = []
             if reapplied:
-                bits.append(f"{reapplied} suppression(s) reapplied")
+                bits.append(f"{len(reapplied)} suppression(s) reapplied")
             for p in reopened:
                 why = "expired" if p["action"] == "reopened_expired" else "context drift"
                 bits.append(f"finding {_code(p.get('finding_id', '?'))} REOPENED ({why})")
+            for p in malformed:
+                bits.append(f"finding {_code(p.get('finding_id', '?'))} decision IGNORED "
+                            "(malformed record)")
             out.append(f"- **Decision store:** {' · '.join(bits)}")
+        out.append("")
+    # R9: every reapplied suppression is listed individually. An aggregate count
+    # is the false-confidence surface — a hidden finding nobody re-reads. This
+    # renders PROVENANCE (who, when, expires, how many times), never assurance.
+    prior = manifest.get("prior_decisions") or []
+    reapplied = [p for p in prior if str(p.get("action", "")).startswith("reapplied")]
+    if reapplied:
+        out.append("### Suppressions reapplied from the decision store")
+        out.append("")
+        out.append("_These findings were hidden from the gate by a stored operator decision. "
+                   "The store is unsigned local state: review this list._")
+        out.append("")
+        out.append("| Finding | Severity | Title | Decided by | On | Expires | Times reapplied |")
+        out.append("|---|---|---|---|---|---|---|")
+        for p in sorted(reapplied, key=lambda r: _SEV_RANK.get(r.get("severity"), 9)):
+            n = p.get("reapplied_count", 1)
+            stale = " ⚠ stale" if isinstance(n, int) and n >= 5 else ""
+            ha = " 🔒 high-assurance" if p.get("high_assurance") else ""
+            clamp = " (expiry shortened)" if p.get("expiry_clamped") else ""
+            out.append(f"| {_code(p.get('finding_id', '?'))} | "
+                       f"{_sev_badge(str(p.get('severity', 'info')))}{ha} | "
+                       f"{_cell(p.get('title', ''), 60)} | "
+                       f"{_cell(p.get('operator') or 'unattributed')} | "
+                       f"{_cell(str(p.get('decided_at') or '—')[:10])} | "
+                       f"{_cell(str(p.get('expires_at') or '—')[:10])}{clamp} | "
+                       f"{n}{stale} |")
         out.append("")
     degr = manifest.get("degradations") or []
     if degr:

@@ -113,6 +113,23 @@ def _stamp(f: Finding, now_iso: str) -> None:
         panel_sha256=_panel_sha256(f))
 
 
+def high_assurance(f: Finding) -> bool:
+    """Findings the machine may never hide and unsigned operator state may never
+    excuse: crypto (G1) and critical severity (G7).
+
+    R9 generalized these from the auto-suppression path to every path that can
+    remove a finding from the gate — auto-suppression, stored-decision replay,
+    and the baseline. Those latter two read *unsigned on-disk operator state*,
+    so without this a hand-written file achieves what the policy engine is
+    structurally forbidden from doing."""
+    return is_crypto_finding(f) or f.severity.label == "critical"
+
+
+def baseline_ineligible(f: Finding) -> bool:
+    """G9: a baseline entry can never take this finding out of the gate."""
+    return high_assurance(f)
+
+
 def _suppression_guardrails(f: Finding, cfg: dict) -> list[str]:
     failed = []
     if not cfg["auto_suppress"]:

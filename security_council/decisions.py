@@ -48,9 +48,13 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import policy
 from .model import DecidedBy, Finding, assert_invariants
 
 SCHEMA_VERSION = 1
+# R9/G9: high-assurance (crypto / critical) suppressions are re-affirmed on a
+# short leash rather than riding the full 90-day expiry.
+HIGH_ASSURANCE_EXPIRY_DAYS = 30
 _HEX_RE = re.compile(r":([0-9a-f]{32})$")
 # config keys whose change resets the shadow counter (suppression-relevant only)
 POLICY_FP_KEYS = ("auto_suppress", "accept_suppression_risk", "shadow_runs",
@@ -175,13 +179,32 @@ class DecisionStore:
             if sup.get("status") != "active":
                 continue
             ref = sup.get("decision_ref")
-            if not sup.get("expires_at") or _now(now_iso) >= _now(sup["expires_at"]):
+            # R9/G9: a stored suppression is unsigned on-disk operator state. For
+            # high-assurance findings (crypto / critical) it is honored — a human
+            # is allowed to suppress those (I7) — but only on a SHORT leash: the
+            # effective expiry is clamped so the decision must be re-affirmed,
+            # and the reapplication is always surfaced individually in the report.
+            effective_expiry = sup.get("expires_at")
+            clamped = False
+            if effective_expiry and policy.high_assurance(f):
+                decided_at = (sup.get("decided_by") or {}).get("decided_at")
+                if decided_at:
+                    cap = (_now(decided_at)
+                           + timedelta(days=HIGH_ASSURANCE_EXPIRY_DAYS)).isoformat()
+                    cap = cap.replace("+00:00", "Z")
+                    if cap < effective_expiry:
+                        effective_expiry, clamped = cap, True
+            if not effective_expiry or _now(now_iso) >= _now(effective_expiry):
                 f.disposition.lifecycle = "reopened"                       # G6
-                f.disposition.reopen_reason = f"suppression_expired ({ref})"
+                reason = "suppression_expired" + ("_high_assurance" if clamped else "")
+                f.disposition.reopen_reason = f"{reason} ({ref})"
                 sup["status"] = "expired"
-                rec["history"].append({"at": now_iso, "kind": "expire", "finding_id": f.id})
+                rec["history"].append({"at": now_iso, "kind": "expire", "finding_id": f.id,
+                                       "high_assurance_clamp": clamped})
                 _atomic_write(self._path(rc), rec)
-                actions.append({"finding_id": f.id, "action": "reopened_expired", "ref": ref})
+                actions.append({"finding_id": f.id, "action": "reopened_expired", "ref": ref,
+                                "title": f.title, "severity": f.severity.label,
+                                "high_assurance": policy.high_assurance(f)})
             elif f.fingerprints.context_hash != rec.get("context_hash"):
                 f.disposition.lifecycle = "reopened"                       # G8
                 f.disposition.reopen_reason = f"context_drift ({ref})"
@@ -189,19 +212,45 @@ class DecisionStore:
                 rec["history"].append({"at": now_iso, "kind": "drift", "finding_id": f.id,
                                        "context_hash": f.fingerprints.context_hash})
                 _atomic_write(self._path(rc), rec)
-                actions.append({"finding_id": f.id, "action": "reopened_drift", "ref": ref})
+                actions.append({"finding_id": f.id, "action": "reopened_drift", "ref": ref,
+                                "title": f.title, "severity": f.severity.label,
+                                "high_assurance": policy.high_assurance(f)})
             else:
                 d = f.disposition
+                try:
+                    decided_by = DecidedBy(**sup["decided_by"])
+                except (TypeError, KeyError) as e:
+                    # a malformed/hand-edited record must degrade, never crash the
+                    # scan — and an unusable decision is simply not applied, which
+                    # is the fail-safe direction (the finding stays open)
+                    rec["history"].append({"at": now_iso, "kind": "malformed",
+                                           "finding_id": f.id, "detail": str(e)[:200]})
+                    _atomic_write(self._path(rc), rec)
+                    actions.append({"finding_id": f.id, "action": "ignored_malformed",
+                                    "ref": ref, "title": f.title,
+                                    "severity": f.severity.label, "detail": str(e)[:200]})
+                    continue
                 d.lifecycle = sup["lifecycle"]
-                d.decided_by = DecidedBy(**sup["decided_by"])
+                d.decided_by = decided_by
                 d.decision_ref = sup["decision_ref"]
-                d.expires_at = sup["expires_at"]
+                d.expires_at = effective_expiry
                 d.sarif_suppression = sup.get("sarif_suppression")
                 d.vex_status = sup.get("vex_status")
                 d.vex_justification = sup.get("vex_justification")
                 assert_invariants(f)
+                # "stale by repetition": a decision nobody has re-touched across
+                # many scans is a set-and-forget risk, so the count is surfaced.
+                reapplied = int(sup.get("reapplied_count", 0)) + 1
+                sup["reapplied_count"] = reapplied
+                sup["last_reapplied_at"] = now_iso
+                _atomic_write(self._path(rc), rec)
                 actions.append({"finding_id": f.id, "action": "reapplied_" + sup["lifecycle"],
-                                "ref": ref})
+                                "ref": ref, "title": f.title, "severity": f.severity.label,
+                                "operator": (sup.get("decided_by") or {}).get("operator"),
+                                "decided_at": (sup.get("decided_by") or {}).get("decided_at"),
+                                "expires_at": effective_expiry,
+                                "expiry_clamped": clamped, "reapplied_count": reapplied,
+                                "high_assurance": policy.high_assurance(f)})
         return actions
 
     # ------------------------------------------------------------------ #
@@ -314,16 +363,48 @@ class DecisionStore:
                     "uri": ((f.get("locations") or [{}])[0]).get("uri")}
                    for f in findings]
         payload = {"schema_version": SCHEMA_VERSION, "run_id": run_id,
-                   "set_at": now_iso, "operator": operator, "findings": entries}
+                   "set_at": now_iso, "operator": operator, "findings": entries,
+                   "content_sha256": baseline_content_sha256(entries)}
         _atomic_write(self.baseline_path, payload)
         return payload
 
     def load_baseline(self) -> dict | None:
+        """Load the baseline and stamp its integrity state (R9).
+
+        The baseline is gate-load-bearing under ``gate_baseline: "new"``, and it
+        is unsigned local state — a forged entry set switches the gate off for
+        every finding it names. The recorded ``content_sha256`` is a tamper
+        *tripwire*, not a signature: an attacker can recompute it, but a
+        hand-edited file that doesn't is refused outright, and the recomputed
+        digest is pinned into every run manifest so silent drift is visible
+        run-over-run. Real authorship proof needs the signing lane."""
         try:
             bl = json.loads(self.baseline_path.read_text())
-            return bl if isinstance(bl, dict) else None
         except (OSError, json.JSONDecodeError):
             return None
+        if not isinstance(bl, dict):
+            return None
+        actual = baseline_content_sha256(bl.get("findings") or [])
+        recorded = bl.get("content_sha256")
+        bl["content_sha256_actual"] = actual
+        if recorded is None:
+            # A baseline with no digest is REFUSED, not honored: "just omit the
+            # field" would otherwise be the cheapest bypass of the whole gate.
+            # Pre-R9 baselines are re-created with one `baseline set` run.
+            bl["integrity"] = "unpinned"
+        elif recorded == actual:
+            bl["integrity"] = "intact"
+        else:
+            bl["integrity"] = "tampered"       # refused by the caller (fail-safe)
+        return bl
+
+
+def baseline_content_sha256(entries: list[dict]) -> str:
+    """Digest over the identity-bearing baseline fields, order-independent."""
+    keyed = sorted(json.dumps({k: e.get(k) for k in
+                               ("id", "root_cause", "context_hash", "path_cwe_sink")},
+                              sort_keys=True) for e in entries)
+    return hashlib.sha256("\x00".join(keyed).encode()).hexdigest()
 
 
 def annotate_baseline(findings: list[Finding], baseline: dict, *, partial: bool = False) -> dict:
