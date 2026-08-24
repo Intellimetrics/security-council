@@ -27,3 +27,6 @@ __pycache__/
 # project venv (uv venv .venv; install -e .[mcp,dev])
 .venv/
 *.egg-info/
+
+# local benchmark corpora (never vendored — GPL; converter-only lane)
+.corpora/
