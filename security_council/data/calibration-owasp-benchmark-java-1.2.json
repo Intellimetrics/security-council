@@ -1,0 +1,237 @@
+{
+  "record": "security-council/calibration/v1",
+  "created_at": "2026-08-24T09:55:38Z",
+  "corpus": {
+    "corpus": "owasp-benchmark-java",
+    "version": "1.2",
+    "csv": "expectedresults-1.2.csv",
+    "git_sha": "0db793afb9e145bab95b332569fb4aec058b73eb",
+    "cases_total": 2740,
+    "cases_true": 1415,
+    "cases_false": 1325,
+    "categories": {
+      "pathtraver": {
+        "cwe": "CWE-22",
+        "family": "path_traversal",
+        "true": 133,
+        "false": 135
+      },
+      "hash": {
+        "cwe": "CWE-328",
+        "family": "crypto",
+        "true": 129,
+        "false": 107
+      },
+      "trustbound": {
+        "cwe": "CWE-501",
+        "family": null,
+        "true": 83,
+        "false": 43
+      },
+      "crypto": {
+        "cwe": "CWE-327",
+        "family": "crypto",
+        "true": 130,
+        "false": 116
+      },
+      "cmdi": {
+        "cwe": "CWE-78",
+        "family": "injection",
+        "true": 126,
+        "false": 125
+      },
+      "sqli": {
+        "cwe": "CWE-89",
+        "family": "injection",
+        "true": 272,
+        "false": 232
+      },
+      "weakrand": {
+        "cwe": "CWE-330",
+        "family": "crypto",
+        "true": 218,
+        "false": 275
+      },
+      "ldapi": {
+        "cwe": "CWE-90",
+        "family": "injection",
+        "true": 27,
+        "false": 32
+      },
+      "xss": {
+        "cwe": "CWE-79",
+        "family": "xss",
+        "true": 246,
+        "false": 209
+      },
+      "securecookie": {
+        "cwe": "CWE-614",
+        "family": null,
+        "true": 36,
+        "false": 31
+      },
+      "xpathi": {
+        "cwe": "CWE-643",
+        "family": "injection",
+        "true": 15,
+        "false": 20
+      }
+    }
+  },
+  "scanner": {
+    "arm": "semgrep",
+    "family": "semgrep",
+    "tool_version": "1.173.0",
+    "ruleset": "p/default"
+  },
+  "method": "per-family case-level empirical log-odds; Laplace a=1.0; min_n=30; stratified half-split seed=0",
+  "scope": {
+    "deterministic_singleton": true,
+    "source_families": [
+      "semgrep"
+    ],
+    "languages": [
+      "java"
+    ],
+    "prevalence": 0.5164
+  },
+  "families": {
+    "crypto": {
+      "detections": 216,
+      "tp": 216,
+      "p": 0.9954,
+      "logit": 5.3799,
+      "wilson95": [
+        0.9825,
+        1.0
+      ],
+      "floor_binding": false,
+      "per_category": {
+        "crypto": {
+          "detections": 65,
+          "tp": 65
+        },
+        "hash": {
+          "detections": 42,
+          "tp": 42
+        },
+        "weakrand": {
+          "detections": 109,
+          "tp": 109
+        }
+      }
+    },
+    "injection": {
+      "detections": 368,
+      "tp": 202,
+      "p": 0.5486,
+      "logit": 0.1952,
+      "wilson95": [
+        0.4978,
+        0.599
+      ],
+      "floor_binding": true,
+      "per_category": {
+        "cmdi": {
+          "detections": 112,
+          "tp": 58
+        },
+        "ldapi": {
+          "detections": 27,
+          "tp": 13
+        },
+        "sqli": {
+          "detections": 213,
+          "tp": 124
+        },
+        "xpathi": {
+          "detections": 16,
+          "tp": 7
+        }
+      }
+    },
+    "path_traversal": {
+      "detections": 116,
+      "tp": 58,
+      "p": 0.5,
+      "logit": 0.0,
+      "wilson95": [
+        0.4105,
+        0.5895
+      ],
+      "floor_binding": true,
+      "per_category": {
+        "pathtraver": {
+          "detections": 116,
+          "tp": 58
+        }
+      }
+    },
+    "xss": {
+      "detections": 154,
+      "tp": 101,
+      "p": 0.6538,
+      "logit": 0.636,
+      "wilson95": [
+        0.5778,
+        0.7263
+      ],
+      "floor_binding": false,
+      "per_category": {
+        "xss": {
+          "detections": 154,
+          "tp": 101
+        }
+      }
+    }
+  },
+  "excluded_families": {},
+  "labeling_audit": {
+    "findings_total": 1054,
+    "noise_findings_excluded": 773,
+    "cases_unmapped_family": 193,
+    "categories_unmapped": [
+      "securecookie",
+      "trustbound"
+    ]
+  },
+  "metrics": {
+    "test_detections": 849,
+    "ece_preclamp": 0.0217,
+    "ece_postclamp": 0.0179,
+    "brier_preclamp": 0.1789,
+    "brier_postclamp": 0.1785,
+    "per_family": {
+      "crypto": {
+        "n_test": 221,
+        "empirical": 1.0,
+        "p": 0.9954,
+        "p_clamped": 0.9954
+      },
+      "injection": {
+        "n_test": 362,
+        "empirical": 0.5746,
+        "p": 0.5486,
+        "p_clamped": 0.6
+      },
+      "path_traversal": {
+        "n_test": 110,
+        "empirical": 0.5636,
+        "p": 0.5,
+        "p_clamped": 0.6
+      },
+      "xss": {
+        "n_test": 156,
+        "empirical": 0.6474,
+        "p": 0.6538,
+        "p_clamped": 0.6538
+      }
+    }
+  },
+  "caveats": [
+    "fitted p is prevalence-conditional: Benchmark is ~50% real by construction; P(TP | detection) shifts with a repo's true base rate",
+    "corpus cases are templated near-duplicates: a random split leaks twins, so effective n is below nominal n and held-out ECE / Wilson CIs flatter the fit",
+    "labels are per CASE (Benchmark scorecard convention), while production scores clusters; on generated code context-tier clustering mixes true/false files",
+    "deployed floors are action-gates, not probability estimates: where floor_binding is true the deployed value is the floor, not the fitted p"
+  ]
+}

@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-23. Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-24. Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -23,7 +23,8 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --valida
 python3 -m security_council.cli scan . --arms claude-security --diff origin/main   # change-scoped (M-V1)
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
-python3 -m pytest tests/ -q        # 320 green + 1 skip (~1.2s); .venv/bin/python runs all 321 incl. MCP handshake
+python3 -m security_council.cli calibrate .corpora/BenchmarkJava  # fit calibration record from a Benchmark scan (R7)
+python3 -m pytest tests/ -q        # 360 green + 1 skip (~1.2s); .venv/bin/python runs all 361 incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -97,6 +98,7 @@ isolate(copy) → parallel arms → normalize → cluster(root-cause) → catego
 | **Orchestrator + CLI** | `orchestrator.py`, `cli.py` (`scan`/`doctor`/`report`), `config.py`, `manifest.py` | done |
 | **Seed fixture** | `tests/fixtures/seedrepo` (vulns across families + FP decoy + injection payload), `EXPECTED.yaml` | done |
 | **Envelope schema** | `security_council/schemas/agent_finding_envelope.v1.json` (portable strict-mode subset) | done |
+| **Calibration lane (R7)** | `eval/import_owasp.py` (converter-only importer — BenchmarkJava is GPL-2.0, NEVER vendored; user clones to `.corpora/`, gitignored) · `eval/calibrate.py` (case-level labels via the shared eval matcher; per-family Laplace fit + Wilson + dual ECE; caveats in-record) · `calibration.py` (runtime loader = trust boundary: schema/scope validation, ±2.5 logit clamp, min-n, fail→prior; `auto` enforces scanner version+ruleset pins; Java-language scope gate) · `score.py` fitted_base (replaces PRIOR+W_DETERMINISTIC only; label `fitted` ONLY strict-scope, composed stays `prior`) · CLI `calibrate` · packaged record `data/calibration-owasp-benchmark-java-1.2.json` (crypto .995→clamped, xss .654, injection .549+floored, path_traversal .500+floored; held-out ECE .022/.018) · summary/manifest surfaces, banned-word tests, adversarial-record gate test | done, council-reviewed (R7), live-verified (284 findings fitted under `auto`) |
 
 ### The finding model is the trust surface
 `model.py` enforces I1–I12 in `assert_invariants`, called at every ingress/egress boundary. The
@@ -151,13 +153,14 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 - **codex-security arm** (`arms/codex_security.py`): resolves the CLI as env `SECURITY_COUNCIL_CODEX_SECURITY_CMD` > `codex-security` on PATH > the **npx cache** (`~/.npm/_npx/*/node_modules/@openai/codex-security/bin/codex-security.mjs` via `node`, v0.1.16 cached here) — it never auto-installs. Output dir must be outside the worktree, 0700, with trusted ancestors → the arm scans into `mkdtemp` and copies the sealed bundle to `raw/codex-security/`. `--max-cost` fuse (default 5 USD). Needs `~/.codex` at 700 (done). Exit 2 = incomplete coverage *or* runtime error → success is decided by the sealed `scan-manifest.json`. **Live 2026-08-21:** stdout is **empty** — progress + cost go to stderr (`--format json` shapes the bundle only), so cost is parsed from stderr lines and full stderr is kept as `raw/codex-security/stderr.log`; the served model is reported **nowhere** → `model_unattested` in coverage (a D8 pin can't be positively attested); 18 min on the 12-file fixture, cost-stopped at $5.43 est. during the post-seal "analyzing attack paths" phase while the core bundle still sealed `completed`+`complete` (surfaced as `cost_stopped`) — give it `max_cost_usd: 8` to keep that phase; sealed producer stamps `codex-security-plugin` **0.1.22** (≠ CLI 0.1.16), which is what lands in `tool_version` provenance.
 - **Trivy is banned as a default** (supply-chain compromised Mar 2026, GHSA-69fq-xp46-6x23). Use cdxgen/syft/grype for future SBOM/SCA.
 - **Project venv at `.venv`** (gitignored; `uv venv .venv && uv pip install -p .venv/bin/python -e ".[mcp,dev]"`): system python3 is PEP-668 externally managed, so the `mcp` SDK (2.0.0) lives only there. The suite runs on both — the MCP handshake test skips wherever `mcp` is absent.
+- **OWASP Benchmark checkout at `.corpora/BenchmarkJava`** (gitignored — GPL-2.0, converter-only per R7; shallow clone, sha `0db793a`; `results/`+`scorecard/`+`data/` deleted locally to keep semgrep runs clean/fast). Its local `.security-council.yaml` enables `score.calibration: auto` — the live smoke config for the fitted record. Re-fit after a semgrep version bump: scan the checkout, run `calibrate`, copy the record into `security_council/data/` (the `auto` pin check refuses stale records loudly).
 
 ## 7. Known limitations / deferred (honest list)
 
 1. **Validator prompt is SAST-shaped; doesn't fit SCA/dependency findings** → `supply_chain` is skipped from LLM validation (osv is authoritative). A dep-reachability validator is a future lane. (See R2.)
 2. **Validator verdict fidelity**: parses an explicit `VERDICT:` line from the transcript (S2 pattern). Works, but a redacted-secret finding validates to `needs_human` (no snippet to cite) — safe but blunt.
 3. **codex-security served model is unattestable** — the CLI reports it nowhere (stdout empty, not in stderr or the sealed bundle), so a D8 model pin can only fail open: the arm sets `model_unattested` in coverage and the summary renders "unattested", but a silent substitution by the vendor would be invisible. Revisit if a future CLI version surfaces the model.
-4. **`calibration` stays `"prior"`** — the seven score weights are hand-set; the eval gate is zero-tolerance on the 7-TP corpus, and fitting waits for a larger corpus (§8.5). Never say "calibrated" in any report until `calibration == "fitted"`.
+4. **Calibration is fitted but deliberately narrow (R7).** Default stays `"prior"`; the opt-in record covers ONLY semgrep deterministic singletons, Java, four families — everything else (panel terms, other languages/arms) is still hand-set. Known honest gaps: fitted p is prevalence-conditional (~50%-real corpus); templated near-twins leak across the train/test split (CIs/ECE flatter); the 0.60 floor censors injection/path_traversal fitted values. The word "calibrated" stays banned everywhere (tested). Next corpora: a negative corpus, a non-Java benchmark, panel-sample fitting for the panel terms.
 5. **Reports:** SARIF + JSON + manifest + `summary.md` + **eMASS static-code-scans** + **OpenVEX** + **OSCAL AR/POA&M** (`report --format emass|openvex|oscal-ar|oscal-poam`; all spec-verified, schema-validated in tests). Missing: CKLB (ASD STIG V6R4), SBOM (CycloneDX), CSV, HTML/PDF.
 6. **CI surfaces built for all three platforms (ADO / GitHub / GitLab) but none has run on real infrastructure yet**: the ADO template needs an ADO Server instance, the GitHub Action (`action.yml`, `uses: Intellimetrics/security-council@main`) needs a workflow run in a real repo, and the GitLab job template + MR notes need a GitLab project (+ a project access token — `CI_JOB_TOKEN` can't post notes). Local halves are live-verified (annotations, schema-valid reports, REST payloads via fake openers). ~~MCP transport unproven~~ — live-handshaken 2026-08-22 (mcp 2.0.0, protocol 2025-11-25); `tests/test_mcp_handshake.py` keeps it verified wherever `.[mcp]` is installed.
 7a. **Fix lane (M-V4a) is offline-built; live vendor patch-generation unproven.** The bwrap
@@ -274,8 +277,14 @@ before the decision store — never wire the history feedback loop onto an unmea
      M-V5 voters.**
    Must NOT build: fix application to user code (no `--apply`), PoC generation/execution (Red,
    D5), vendor decision/tracking state or export egress, default-mounted vendor MCP servers.
-6. **Calibration fitting** — deferred until a larger corpus exists (OWASP Benchmark importer lane);
-   `calibration: "prior"` stays honestly labeled until then.
+6. ~~**Calibration fitting**~~ — **DONE 2026-08-24** (R7, `docs/reviews/R7-calibration-corpus.md`;
+   council quick-mode quorum met, claude+antigravity converged, codex timeout again).
+   OWASP Benchmark importer (converter-only — GPL-2.0, checkout at `.corpora/BenchmarkJava`,
+   gitignored) + per-family fit + trust-boundary loader + scoped score integration +
+   packaged opt-in record; `security-council calibrate`. Default remains `prior`; §7.4 has
+   the honest-scope caveats. **§8 roadmap is now complete.** Remaining project work is in
+   §7 (real-infra CI runs, live vendor fix/verify spend runs, decision-store sync/signing,
+   CKLB/SBOM/CSV/HTML exporters, further calibration corpora).
 
 (§8.1 live verification of the dedicated arms was completed 2026-08-21 — run `20260821_130516`,
 kept under `tests/fixtures/seedrepo/.security-council/runs/` (gitignored) as the live reference.

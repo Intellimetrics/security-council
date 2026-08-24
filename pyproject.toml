@@ -35,6 +35,9 @@ security-council-mcp = "security_council.mcp_server:main"
 [tool.setuptools.packages.find]
 include = ["security_council*"]
 
+[tool.setuptools.package-data]
+security_council = ["schemas/*.json", "prompts/*.md", "data/*.json"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

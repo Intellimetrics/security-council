@@ -179,9 +179,12 @@ Plain-language version with code pointers:
 
 ## Status & the fine print
 
-Working v1: 233 tests, live-verified end to end with every arm family. Not
-yet done: score calibration (confidence numbers are labeled `prior`,
-deliberately never called "calibrated"), OpenVEX/OSCAL exports, CI runs on
+Working v1: 360+ tests, live-verified end to end with every arm family.
+Confidence numbers default to hand-set weights (labeled `prior`, deliberately
+never called "calibrated"); an **opt-in** fitted record measured on the OWASP
+Benchmark ships with the package (`security-council calibrate`,
+`score.calibration: auto` — Java/semgrep scope only, caveats stated inside the
+record, all fail-safe floors still apply). Not yet done: CI runs on
 outside infrastructure. `tests/fixtures/seedrepo/` is **intentionally
 vulnerable** (including fake AWS keys) — it's the practice target and test
 corpus; see [SECURITY.md](SECURITY.md).

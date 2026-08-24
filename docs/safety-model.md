@@ -61,10 +61,24 @@ fully-verified defender showed the mitigating code; an unreliable panel
 opinion caps p at 0.50 *and* flags human review; missing cross-file
 navigation or an uncovered category flags human review.
 
-**The word "calibrated" is banned** in code, docs, and reports until the
-weights are fitted on ground truth with reported ECE (`calibration:
-"fitted"`). Today they are hand-set (`calibration: "prior"`), and the docs
-say so.
+**The word "calibrated" is banned** in code, docs, and reports. The default
+weights are hand-set (`calibration: "prior"`), and the docs say so.
+
+Since R7 an **opt-in fitted record** exists (`score.calibration: off | auto |
+<path>`; default `off`): per-family `P(TP | semgrep detection)` measured on the
+OWASP Benchmark corpus (`security-council calibrate`, see the packaged
+`data/calibration-owasp-benchmark-java-1.2.json`). Its honesty rules are
+structural: the record is a **trust boundary** (schema/scope validated, logits
+clamped to ±2.5, low-n families dropped, any failure → prior with a manifest
+note); it applies only to deterministic singletons inside the record's fitted
+arm/language/family scope, replacing only the base — every clamp and guardrail
+is untouched, and floors still censor low fitted values (rendered as
+"measured X; deployed value raised by …"). A finding is labeled `fitted` only
+when nothing but the fitted base contributed; a composed score stays `prior`
+even though its base was measured. `auto` refuses the record when the run's
+scanner version/ruleset don't match the record's pins. The record itself
+carries its caveats (prevalence-conditional, templated-corpus split leakage,
+case-level labeling) — read them before trusting the numbers cross-repo.
 
 ## The validator panel
 
@@ -87,8 +101,9 @@ red test (the gate catches the published 22% failure mode by construction).
 
 Honesty about scale: the corpus is currently 7 true positives + decoys. At
 n=7 a "≤5% suppression rate" is meaningless (one wrongful suppression is
-already 14%), which is exactly why the gate is zero-tolerance and why
-calibration fitting is deferred until a larger corpus exists.
+already 14%), which is exactly why the gate is zero-tolerance. Fitting uses a
+separate, larger corpus (the OWASP Benchmark importer, R7) — and the gate is
+additionally proven to hold under an adversarial minimum-logit record.
 
 ## What is *not* claimed
 

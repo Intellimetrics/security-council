@@ -190,11 +190,15 @@ def cmd_report(args) -> int:
         print(f"gitlab: {meta}", file=sys.stderr)
         return 0
     if args.format == "md":
+        from . import calibration as cal_mod
         from .export import markdown
         from .jsonio import finding_from_dict
         fj = Path(args.run_dir) / "findings.json"
         findings = [finding_from_dict(d) for d in json.load(open(fj))] if fj.is_file() else []
-        print(markdown.to_markdown(findings, m, detail_limit=args.detail_limit))
+        pj = Path(args.run_dir) / "policy.json"
+        scores = cal_mod.fitted_scores(json.load(open(pj))) if pj.is_file() else {}
+        print(markdown.to_markdown(findings, m, detail_limit=args.detail_limit,
+                                   scores=scores or None))
         return 0
     print(json.dumps({"run_id": m["run_id"], "counts": m["counts"], "exit_code": m.get("exit_code"),
                       "reports": [r["path"] for r in m["reports"]]}, indent=2))
@@ -356,6 +360,68 @@ def cmd_eval(args) -> int:
     return 1 if run.report.violations else 0
 
 
+def cmd_calibrate(args) -> int:
+    """Fit a calibration record from an OWASP Benchmark checkout + a prior scan
+    of it (R7). Converter-only: the checkout is the user's own clone."""
+    from .eval import calibrate as cal_fit
+    from .eval import import_owasp
+    from .jsonio import finding_from_dict
+    checkout = Path(args.checkout)
+    try:
+        cases, meta = import_owasp.load_cases(checkout)
+    except import_owasp.BenchmarkImportError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    run_dir = Path(args.run) if args.run else None
+    if run_dir is None:
+        runs = sorted((checkout / ".security-council" / "runs").glob("*"))
+        if not runs:
+            print("error: no prior scan of the checkout found — run "
+                  f"`security-council scan {checkout} --arms semgrep` first, or pass --run",
+                  file=sys.stderr)
+            return EXIT_USAGE
+        run_dir = runs[-1]
+    fj, mf = run_dir / "findings.json", run_dir / "manifest.json"
+    if not (fj.is_file() and mf.is_file()):
+        print(f"error: {run_dir} has no findings.json/manifest.json", file=sys.stderr)
+        return EXIT_USAGE
+    findings = [finding_from_dict(d) for d in json.load(open(fj))]
+    run_manifest = json.load(open(mf))
+    arm = next((a for a in run_manifest.get("arms", []) if a.get("name") == "semgrep"), None)
+    if arm is None or not arm.get("ok"):
+        print("error: the run has no successful semgrep arm — the fit covers "
+              "semgrep deterministic singletons only", file=sys.stderr)
+        return EXIT_USAGE
+    from .arms.scanner import SEMGREP_RULESET
+    expected = import_owasp.ground_truth(cases)
+    outcomes, audit = cal_fit.label_cases(expected, findings)
+    record = cal_fit.fit(
+        outcomes, corpus_meta=meta, audit=audit,
+        scanner={"arm": "semgrep", "family": "semgrep",
+                 "tool_version": arm.get("tool_version"), "ruleset": SEMGREP_RULESET},
+        min_n=args.min_n, seed=args.seed)
+    out_path = Path(args.out) if args.out else \
+        checkout / ".security-council" / "calibration.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(record, indent=2) + "\n")
+    m = record["metrics"]
+    print(f"calibration record written: {out_path}")
+    print(f"  corpus {meta['corpus']} {meta['version']} ({meta['cases_total']} cases) · "
+          f"semgrep {arm.get('tool_version')} ({SEMGREP_RULESET})")
+    for fam, row in record["families"].items():
+        floored = "  [deployed value floored]" if row["floor_binding"] else ""
+        print(f"  {fam:15} p={row['p']:.3f} logit={row['logit']:+.2f} "
+              f"n={row['detections']} wilson95={row['wilson95']}{floored}")
+    for fam, why in record["excluded_families"].items():
+        print(f"  {fam:15} EXCLUDED: {why}")
+    if m.get("test_detections"):
+        print(f"  held-out: {m['test_detections']} detections · "
+              f"ECE pre-clamp {m['ece_preclamp']} / post-clamp {m['ece_postclamp']} · "
+              f"Brier {m['brier_preclamp']}/{m['brier_postclamp']}")
+    print("  enable with: score.calibration: <path> (or 'auto' for the packaged record)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="security-council")
     p.add_argument("--version", action="version", version=__version__)
@@ -426,6 +492,17 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--fixtures", default="tests/fixtures",
                    help="corpus root containing seedrepo/, raw/, EXPECTED.yaml, eval/")
     e.set_defaults(fn=cmd_eval)
+
+    cb = sub.add_parser("calibrate",
+                        help="fit a score-calibration record from an OWASP Benchmark checkout")
+    cb.add_argument("checkout", help="path to a user-cloned BenchmarkJava checkout (GPL; "
+                                     "read at runtime, never vendored)")
+    cb.add_argument("--run", help="scan run dir of the checkout (default: its latest run)")
+    cb.add_argument("--out", help="record output path (default: "
+                                  "<checkout>/.security-council/calibration.json)")
+    cb.add_argument("--min-n", type=int, default=30, help="min train detections per family")
+    cb.add_argument("--seed", type=int, default=0, help="train/test split seed")
+    cb.set_defaults(fn=cmd_calibrate)
 
     o = sub.add_parser("outcome", help="record operator ground truth for a finding")
     osub = o.add_subparsers(dest="action", required=True)
