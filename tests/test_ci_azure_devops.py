@@ -127,3 +127,20 @@ def test_template_parses_and_wires_the_pieces():
     assert "System.AccessToken" in text
     gate = doc["steps"][-1]
     assert gate["condition"] == "always()" and "securityCouncilExit" in gate["bash"]
+
+def test_baselined_high_assurance_is_an_error_not_a_warning():
+    """R12 round 9: the split claims "the same filter as the exit gate" but had
+    no equivalent of G9's `baseline_ineligible`, so a BASELINED crypto/critical
+    finding was annotated a warning while the gate failed the build. `ci` and
+    `gov` both set gate_baseline "new", so this was reachable by default."""
+    from security_council.ci.azure_devops import split_findings
+    manifest = {"policy": {"fail_on_severity": "high", "gate_baseline": "new"}}
+    base = {"disposition": {"lifecycle": "open", "state": "new"},
+            "baseline_state": "unchanged", "taxonomy": {"cwe": ["CWE-89"]}}
+    critical = {**base, "severity": {"label": "critical"}}
+    crypto = {**base, "severity": {"label": "high"},
+              "taxonomy": {"cwe": ["CWE-327"], "cwe_family": "crypto"}}
+    ordinary = {**base, "severity": {"label": "high"}}
+    errors, warnings = split_findings([critical, crypto, ordinary], manifest)
+    assert critical in errors and crypto in errors      # G9: never excused by a baseline
+    assert ordinary in warnings                         # an ordinary baselined finding still is

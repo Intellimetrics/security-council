@@ -544,6 +544,16 @@ def validate_finding(f: "Finding") -> list[str]:
             and db.kind != "human"):
         errs.append("I7: crypto finding auto-hidden (forbidden)")
 
+    # I7b - nor is a CRITICAL finding. R12 round 9: G7 forbade auto-suppressing
+    # critical in the POLICY layer, but only crypto had a structural invariant,
+    # so a critical finding hidden by any path that bypasses policy could not be
+    # constructed for crypto yet could for critical. The pair G1/G7 now has the
+    # matching pair I7/I7b.
+    if (f.severity.label == "critical"
+            and f.disposition.lifecycle in HIDDEN_LIFECYCLES
+            and db.kind != "human"):
+        errs.append("I7b: critical finding auto-hidden (forbidden)")
+
     # I8 - corroboration count arithmetic
     distinct = len(set(f.corroboration.agent_sources) | set(f.corroboration.deterministic_sources))
     if f.corroboration.count != distinct:

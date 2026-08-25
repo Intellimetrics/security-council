@@ -298,3 +298,18 @@ def test_G11_does_not_block_a_properly_backed_crypto_demotion():
     [d] = policy.apply_policy([f], _armed(suppress_below=0.99), now_iso=NOW, prior_runs=99)
     assert d.action == "demote"
     assert f.disposition.state == "refuted"
+
+
+def test_I7b_a_critical_finding_cannot_be_machine_hidden():
+    """R12 round 9: G7 forbade auto-suppressing critical in the POLICY layer, but
+    only crypto had the structural invariant (I7) — so a critical finding hidden
+    by a path that bypasses policy could not be CONSTRUCTED for crypto, yet
+    could for critical."""
+    f = _refuted(sev="critical")
+    f.disposition.lifecycle = "suppressed"
+    f.disposition.decided_by = m.DecidedBy(kind="auto", decided_at=NOW)
+    try:
+        m.assert_invariants(f)
+        raise AssertionError("a machine-hidden critical finding was constructible")
+    except m.FindingInvariantError as e:
+        assert "I7b" in str(e)

@@ -27,6 +27,7 @@ import json
 import os
 import sys
 import urllib.request
+from .. import model as _m
 from pathlib import Path
 
 _SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
@@ -44,8 +45,29 @@ def _esc_prop(s: str) -> str:
     return _esc_msg(s).replace("]", "%5D").replace(";", "%3B")
 
 
+_CRYPTO_CWES = frozenset(_m.CRYPTO_CWES)
+
+
 def _sev(row: dict) -> str:
     return ((row.get("severity") or {}).get("label")) or "info"
+
+
+def _high_assurance(row: dict) -> bool:
+    """Row-level mirror of `policy.high_assurance` (crypto family or critical).
+
+    R12 round 9: this split claims "the same filter as the exit gate" but had no
+    equivalent of G9's `baseline_ineligible`, so a BASELINED crypto or critical
+    finding was annotated as a mere warning while the gate — correctly — still
+    failed the build. `ci` and `gov` both set `gate_baseline: "new"`, so the
+    divergence was reachable by default: the annotations a reviewer reads would
+    disagree with the exit code they are gated on.
+    """
+    if _sev(row) == "critical":
+        return True
+    tax = row.get("taxonomy") or {}
+    if tax.get("cwe_family") == "crypto":
+        return True
+    return any(str(c) in _CRYPTO_CWES for c in (tax.get("cwe") or []))
 
 
 def _open_unresolved(row: dict) -> bool:
@@ -66,7 +88,8 @@ def split_findings(rows: list[dict], manifest: dict) -> tuple[list[dict], list[d
         if not _open_unresolved(r):
             continue
         baselined = (gate_baseline == "new"
-                     and r.get("baseline_state") in ("unchanged", "updated"))
+                     and r.get("baseline_state") in ("unchanged", "updated")
+                     and not _high_assurance(r))          # G9
         if _SEV_RANK.get(_sev(r), 1) >= threshold and not baselined:
             errors.append(r)
         else:
