@@ -92,7 +92,8 @@ def coverage_verdict(result) -> str:
         return NONE
     # every PARTIAL signal is checked BEFORE not_applicable: "nothing was in
     # scope" is only an honest clean when the arm actually finished looking
-    if (cov.get("partial_scan") or cov.get("cost_stopped")
+    if (cov.get("ignore_files")            # the repo told the tool to skip things
+            or cov.get("partial_scan") or cov.get("cost_stopped")
             or cov.get("completion") in ("partial", "declined")
             or cov.get("declined_categories")):
         return PARTIAL

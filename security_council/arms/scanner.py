@@ -37,6 +37,10 @@ class ScannerSpec:
     # dependency manifests, which is not-applicable, not a failure — without
     # this every dependency-free repo scans "degraded" (exit 3) instead of clean.
     not_applicable_markers: tuple[str, ...] = ()
+    # Files IN THE SCANNED REPO that tell this tool to skip things. They are
+    # honoured (a repo may legitimately ignore vendored code) but they mean
+    # coverage is REDUCED, and a reduced scan must never report as verified.
+    ignore_files: tuple[str, ...] = ()
 
 
 SCANNER_SPECS: dict[str, ScannerSpec] = {
@@ -50,7 +54,8 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
                      "--output=/out/semgrep.sarif", "--metrics=off",
                      "--exclude=.llm-council", "--exclude=.security-council", _MOUNT),
         sarif_name="semgrep.sarif", success_exit_codes=(0, 1),
-        version_args=("--version",), docker_version_args=("semgrep", "--version"), network=True),
+        version_args=("--version",), docker_version_args=("semgrep", "--version"), network=True,
+        ignore_files=(".semgrepignore",)),
     "gitleaks": ScannerSpec(
         name="gitleaks", family="gitleaks", bin="gitleaks", image="zricethezav/gitleaks:latest",
         local_args=("detect", "--source={target}", "--no-git", "--report-format=sarif",
@@ -58,14 +63,16 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
         docker_args=("detect", "--source=" + _MOUNT, "--no-git", "--report-format=sarif",
                      "--report-path=/out/gitleaks.sarif", "--redact"),
         sarif_name="gitleaks.sarif", success_exit_codes=(0, 1),
-        version_args=("version",), docker_version_args=("version",), network=False),
+        version_args=("version",), docker_version_args=("version",), network=False,
+        ignore_files=(".gitleaksignore",)),
     "osv-scanner": ScannerSpec(
         name="osv-scanner", family="osv", bin="osv-scanner", image="ghcr.io/google/osv-scanner:latest",
         local_args=("scan", "source", "--format=sarif", "--output={out}/osv.sarif", "{target}"),
         docker_args=("scan", "source", "--format=sarif", "--output=/out/osv.sarif", _MOUNT),
         sarif_name="osv.sarif", success_exit_codes=(0, 1),
         version_args=("--version",), docker_version_args=("--version",), network=True,
-        not_applicable_markers=("no package sources found",)),
+        not_applicable_markers=("no package sources found",),
+        ignore_files=("osv-scanner.toml",)),
 }
 
 
@@ -115,13 +122,23 @@ class ScannerArm:
             cmd = [self.spec.bin, *[a.format(**fmt) for a in self.spec.local_args]]
             scan_root = str(target)
 
+        # R12 round 16: a repo's own ignore-files are copied into the scratch tree
+        # and honoured, so `printf '*' > .semgrepignore` turned the vulnerable
+        # fixture from 3 findings / exit 1 into a CLEAN, `verified`, exit-0 scan.
+        # Two lines to write, no store and no panel involved, default profile.
+        # They stay honoured — ignoring vendored code is legitimate — but a scan
+        # the repo told to look away is not a verified scan.
+        ignored = sorted({str(pth.relative_to(target))
+                          for name in self.spec.ignore_files
+                          for pth in target.rglob(name) if pth.is_file()})
+
         r = proc.run_command(cmd, timeout=1800, success_exit_codes=self.spec.success_exit_codes)
         version = self._version(use_docker)
         sarif_path = raw_dir / self.spec.sarif_name
         findings = []
         error = "" if r.ok else (r.stderr or f"exit {r.exit_code}")[:500]
         raw_count = 0
-        cov: dict = {}
+        cov: dict = {"ignore_files": ignored} if ignored else {}
         # R12 round 11: this was a substring match over stdout+stderr COMBINED,
         # so any failed run whose output happened to contain the marker — a
         # scanned path, a longer error quoting it — was laundered into VERIFIED

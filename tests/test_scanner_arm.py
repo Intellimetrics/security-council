@@ -17,6 +17,7 @@ import json
 
 from security_council.arms import scanner as sc
 from security_council.arms.scanner import ScannerArm
+from security_council.normalize import coverage as cov_mod
 
 
 class _R:
@@ -139,3 +140,27 @@ def test_sarif_result_inherits_the_rules_default_level(tmp_path):
                        family="semgrep", run_id="r", collected_at="t", tool_version="1")
     findings = registry.normalize_sarif(doc, "semgrep", ctx)
     assert [f.severity.label for f in findings] == ["high"]   # gates at the default
+
+
+def test_a_repo_ignore_file_makes_the_scan_partial(monkeypatch, tmp_path):
+    """R12 round 16, the cleanest exploit of the review and in the DEFAULT
+    config: `printf '*' > .semgrepignore` turned the vulnerable fixture from
+    3 findings / exit 1 into a clean, `verified`, exit-0 scan. Two lines to
+    write, no decision store and no panel involved.
+
+    Ignore files stay honoured — ignoring vendored code is legitimate — but a
+    scan the repository told to look away is not a verified scan."""
+    (tmp_path / ".semgrepignore").write_text("*\n")
+    empty = {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "semgrep"}},
+                                           "results": []}]}
+    res = _run(monkeypatch, tmp_path, "semgrep", _R(ok=True, exit_code=0), write_sarif=empty)
+    assert res.ok is True                       # the run itself succeeded
+    assert res.coverage["ignore_files"] == [".semgrepignore"]
+    assert cov_mod.coverage_verdict(res) == cov_mod.PARTIAL      # but coverage is reduced
+
+
+def test_no_ignore_file_stays_verified(monkeypatch, tmp_path):
+    empty = {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "semgrep"}},
+                                           "results": []}]}
+    res = _run(monkeypatch, tmp_path, "semgrep", _R(ok=True, exit_code=0), write_sarif=empty)
+    assert cov_mod.coverage_verdict(res) == cov_mod.VERIFIED

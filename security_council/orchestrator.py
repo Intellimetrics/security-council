@@ -140,6 +140,9 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
 
 def _partial_reason(r: ArmResult) -> str:
     cov = r.coverage or {}
+    if cov.get("ignore_files"):
+        return (f"the repository's own ignore rules were in effect and reduced what was "
+                f"scanned: {', '.join(cov['ignore_files'][:5])}")
     if cov.get("partial_scan"):
         return "timed out mid-scan; its report covers only what was flushed"
     if cov.get("cost_stopped"):
