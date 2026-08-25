@@ -12,10 +12,14 @@ reports unless ``calibration == "fitted"`` (with ECE reported). v1 is prior-only
 Clamps are the scoring shadow of the policy guardrails and are fail-safe in one
 direction only — they can raise p or force human review, never lower p:
 - crypto findings never score below 0.50 (and policy never auto-suppresses them);
-- a deterministically-corroborated finding scores >= 0.60 unless a defender with
-  100% verified citations showed the mitigating code;
+- a deterministically-corroborated finding scores >= 0.60 unless a defender who
+  actually refuted, with 100% verified citations, showed the mitigating code
+  *in the finding's own code* (R10: "verified" proves a reference RESOLVES, not
+  that a claim is SUPPORTED, so the citation must also be anchored);
 - an unreliable panel opinion caps p at 0.50 *and* flags human review — an
   unreliable panel can never ground a suppression;
+- an attempted refutation that cited nothing flags human review (the panel
+  already refuses to count it; this makes the report say so);
 - no cross-file navigation or an uncovered category flags human review (the
   published failure mode: removing navigation dropped triage accuracy 96%->44%).
 
@@ -67,10 +71,54 @@ def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
-def _fully_verified_defender(panel: list[PanelOpinion]) -> bool:
-    """A defender whose every citation resolved against the repo (>=1 citation)."""
-    return any(op.role == "defender" and op.status == "ok" and op.citations
-               and op.citation_pass_rate == 1.0 for op in panel)
+# A citation spanning more than this many lines is not pointing at anything in
+# particular. llm-council's verify_ref bounds start_line but NOT end_line, so a
+# whole-file span would otherwise "verify" and trivially intersect any anchor.
+MAX_ANCHOR_SPAN_LINES = 80
+# How far from the finding's own lines a citation may sit and still be about it
+# (a mitigating guard clause usually sits just above the sink).
+ANCHOR_WINDOW_LINES = 25
+
+
+def _anchor_ranges(f: Finding) -> dict[str, list[tuple[int, int]]]:
+    """The finding's own code: every location plus every data-flow step. A
+    refutation has to point at one of these to be evidence *about this finding*."""
+    out: dict[str, list[tuple[int, int]]] = {}
+    for loc in [*f.locations, *(st.location for st in f.data_flow)]:
+        out.setdefault(loc.uri, []).append((loc.start_line, loc.end_line))
+    return out
+
+
+def _is_anchored(c, anchors: dict[str, list[tuple[int, int]]]) -> bool:
+    """True when a VERIFIED citation lands on the finding's own code."""
+    if c.verified is not True:
+        return False
+    if (c.end_line - c.start_line) > MAX_ANCHOR_SPAN_LINES:
+        return False
+    return any(c.start_line <= end + ANCHOR_WINDOW_LINES
+               and c.end_line >= start - ANCHOR_WINDOW_LINES
+               for start, end in anchors.get(c.path, ()))
+
+
+def _fully_verified_defender(panel: list[PanelOpinion], finding: Finding) -> bool:
+    """A defender that actually refuted, whose every citation resolved, and at
+    least one of whose citations lands on the finding's own code.
+
+    R10 (2026-08-25): this used to ask only for `>= 1 citation` and
+    `citation_pass_rate == 1.0`. Since `verified` proves a reference RESOLVES —
+    llm-council checks path-resolves and `start_line <= line_count`, nothing
+    more — a defender citing `README.md:1-1` was a "fully verified defender",
+    which cleared G2 and let a semgrep-corroborated finding be refuted out of
+    the CI gate (reproduced). The anchor is what ties evidence to the claim.
+    The verdict check closes a second hole: the function gating refutation did
+    not require the defender to be refuting.
+    """
+    anchors = _anchor_ranges(finding)
+    return any(op.role == "defender" and op.status == "ok"
+               and op.verdict == "false_positive"
+               and op.citations and op.citation_pass_rate == 1.0
+               and any(_is_anchored(c, anchors) for c in op.citations)
+               for op in panel)
 
 
 def _term_adjudicator(panel: list[PanelOpinion]) -> float:
@@ -145,7 +193,7 @@ def score_finding(f: Finding, *, history: dict | None = None,
     if is_crypto_finding(f) and p < CRYPTO_FLOOR:
         p = CRYPTO_FLOOR
         clamps.append("crypto_floor")
-    if corr.deterministic_sources and not _fully_verified_defender(panel) \
+    if corr.deterministic_sources and not _fully_verified_defender(panel, f) \
             and p < DETERMINISTIC_FLOOR:
         p = DETERMINISTIC_FLOOR
         clamps.append("deterministic_floor")
@@ -154,6 +202,11 @@ def score_finding(f: Finding, *, history: dict | None = None,
             p = UNRELIABLE_CAP
             clamps.append("unreliable_cap")
         reasons.append("unreliable_panel_opinion")
+    # R10: an attempt to refute WITHOUT evidence is the wrongful-suppression
+    # shape. The panel already refuses to count it (see synthesize_validation),
+    # but surface it so the report says why the finding stayed open.
+    if any(op.status == "unevidenced" and op.verdict == "false_positive" for op in panel):
+        reasons.append("unevidenced_refutation_attempt")
     if f.validation and f.validation.no_cross_file_navigation:
         reasons.append("no_cross_file_navigation")
     if corr.uncovered:

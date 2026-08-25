@@ -35,7 +35,7 @@ ones:
 | | Rule |
 |---|---|
 | G1 | Crypto never auto-suppressed (backed by a scoring floor: crypto p ≥ 0.50) |
-| G2 | An LLM panel alone cannot refute a deterministic-scanner finding — without a defender whose *every* citation verified against the repo, the finding escalates to `needs_human` (which still fails the gate) |
+| G2 | An LLM panel alone cannot refute a deterministic-scanner finding — without a defender who actually refuted, whose *every* citation verified, and at least one of whose citations is **anchored to the finding's own code**, it escalates to `needs_human` (which still fails the gate) |
 | G3 | Every suppression fully attributed (see I6) |
 | G4 | First 5 armed runs are shadow mode; the counter counts only armed runs and resets on suppression-config change |
 | G5 | Decisions scope to one root-cause fingerprint — never a rule, CWE, or glob |
@@ -77,8 +77,10 @@ coverage decline, human-outcome history). Every term and clamp is recorded in
 Clamps are fail-safe in one direction only (they can raise p or force human
 review, never lower p): crypto floor 0.50; deterministic floor 0.60 unless a
 fully-verified defender showed the mitigating code; an unreliable panel
-opinion caps p at 0.50 *and* flags human review; missing cross-file
-navigation or an uncovered category flags human review.
+opinion caps p at 0.50 *and* flags human review; an attempted refutation that cited
+nothing flags human review; missing cross-file navigation (the finding spans
+several files but no panel opinion cited more than one — the published
+96% → 44% failure mode) or an uncovered category flags human review.
 
 **The word "calibrated" is banned** in code, docs, and reports. The default
 weights are hand-set (`calibration: "prior"`), and the docs say so.
@@ -102,11 +104,33 @@ case-level labeling) — read them before trusting the numbers cross-repo.
 ## The validator panel
 
 Three seats on distinct vendor families — prosecutor, defender, adjudicator —
-so one vendor's blind spot can't both produce and confirm a verdict. Evidence
-rules: citations are re-verified against the repository; an opinion with no
-verified citations carries no weight; **a defender that fabricates a citation
-is the classic wrongful-suppression vector, and it forces `needs_human`**
-rather than a refutation.
+so one vendor's blind spot can't both produce and confirm a verdict.
+
+**Be precise about what a "verified" citation proves.** Verification resolves
+the *reference*: the path exists under the repo root and the line numbers fall
+inside the file. It says nothing about whether the cited lines support the
+claim. R10 found the consequence live — a defender citing `README.md:1-1` was
+counted as a "fully verified defender", which cleared G2 and let a
+semgrep-corroborated finding be refuted out of the CI gate.
+
+So refuting is now gated harder than confirming, deliberately, because
+refuting is the wrongful-suppression direction:
+
+| Rule | Effect |
+|---|---|
+| **Anchored** | A defender's refutation counts only when a verified citation lands on the finding's own code — its `locations` ∪ `data_flow` steps, within ±25 lines, spanning ≤80 lines so a whole-file citation can't trivially intersect |
+| **Refuting** | The defender must actually have voted `false_positive` — the function gating refutation previously didn't require the defender to be refuting |
+| **Evidenced** | Only a fully-evidenced (`ok`) opinion may refute. `unevidenced` (cited nothing) and `unreliable` (cited badly) still count toward `true_positive`, the fail-safe direction, but never toward `false_positive` |
+| **Independent** | Refuters must span ≥2 *distinct vendor families*, counted by family and not by seat |
+| **Honest** | Any peer arguing `false_positive` off a fabricated citation forces `needs_human` — not just the seat holding the defender role |
+| **Costly** | Malformed citations count against the pass rate instead of being dropped, which used to *raise* it by shrinking the denominator |
+
+A blocked refutation is named in the report (`refutation_blocked`), so "two
+peers voted to drop this and were not counted" is visible rather than silent.
+
+This can't be solved by reference-checking alone — only claim-checking would
+settle relevance — so the anchor is a narrowing, not a proof. What it removes
+is the ability to refute anything while pointing anywhere.
 
 ## The eval gate (`security_council/eval/`, runs inside pytest)
 

@@ -22,26 +22,39 @@ ROLE_BY_STANCE = {"for": "prosecutor", "against": "defender", "neutral": "adjudi
 _LABEL_TO_VERDICT = {"yes": "true_positive", "no": "false_positive", "tradeoff": "uncertain"}
 
 
-def _citations(evidence: list[dict]) -> list[EvidenceCitation]:
-    out = []
+def _citations(evidence: list[dict]) -> tuple[list[EvidenceCitation], int]:
+    """Returns (well-formed citations, malformed_count).
+
+    R10: malformed entries used to be dropped silently, which meant junk RAISED
+    the pass rate — it shrank the denominator. They now count against it. An
+    entry with no `path` at all is prose evidence, not a broken citation, so it
+    is neither counted nor penalised.
+    """
+    out: list[EvidenceCitation] = []
+    malformed = 0
     for e in evidence:
         path = e.get("path")
-        if not path or not _URI_RE.match(path):
+        if path is None:
+            continue                      # prose evidence, not a citation claim
+        if not path or not _URI_RE.match(str(path)):
+            malformed += 1
             continue
         s, en = e.get("start_line"), e.get("end_line")
         if not isinstance(s, int) or not isinstance(en, int) or s < 1 or en < s:
+            malformed += 1
             continue
         out.append(EvidenceCitation(path=path, start_line=s, end_line=en,
                                     claim=e.get("text", "")[:300], verified=e.get("verified")))
-    return out
+    return out, malformed
 
 
 def _opinion(peer, prompt_sha256: str) -> PanelOpinion:
     role = ROLE_BY_STANCE.get(peer.stance or "", "adjudicator")
-    cites = _citations(peer.evidence)
+    cites, malformed = _citations(peer.evidence)
     verdict = peer.verdict or _LABEL_TO_VERDICT.get(peer.label or "", "uncertain")
     verified = [c for c in cites if c.verified is True]
-    pass_rate = (len(verified) / len(cites)) if cites else None
+    denom = len(cites) + malformed
+    pass_rate = (len(verified) / denom) if denom else None
     status = "ok"
     if not peer.ok:
         status = "absent"
@@ -65,24 +78,44 @@ def synthesize_validation(finding: Finding, cr: CouncilResult, *, prompt_sha256:
     # satisfy the >=2-voice quorum — it is advisory, surfaced but non-deciding.
     deciding = [op for op in ok if op.independent]
     reals = [op for op in deciding if op.verdict == "true_positive"]
-    fps = [op for op in deciding if op.verdict == "false_positive"]
+
+    # R10 — refuting is the wrongful-suppression direction, so it is gated harder
+    # than confirming, in three ways:
+    #  (a) only a FULLY-EVIDENCED opinion may refute. An `unevidenced` peer cited
+    #      nothing and an `unreliable` one cited badly; neither is a basis for
+    #      taking a finding out of the CI gate. Both still count toward
+    #      `true_positive`, which is the fail-safe direction.
+    #  (b) refuters must span >= 2 DISTINCT vendor families, so one vendor's blind
+    #      spot cannot both produce and confirm a refutation. (FAMILY_BY_PEER maps
+    #      antigravity and gemini onto the same "google" family.)
+    #  (c) ANY peer arguing false_positive off a fabricated citation forces human
+    #      review — previously only the seat holding the defender role did.
+    refuters = [op for op in deciding
+                if op.verdict == "false_positive" and op.status == "ok"]
+    refuter_families = {op.family for op in refuters}
+    blocked_refuters = [op for op in deciding
+                        if op.verdict == "false_positive" and op.status != "ok"]
 
     # a defender that fabricated a citation is the classic auto-suppression failure
     defender_hallucinated = any(
         op.role == "defender" and any(c.verified is False for c in op.citations) for op in panel)
+    refuter_hallucinated = any(
+        op.verdict == "false_positive" and any(c.verified is False for c in op.citations)
+        for op in panel)
 
     verdict: Verdict
-    if cr.degraded or len(deciding) < 2 or defender_hallucinated:
+    if cr.degraded or len(deciding) < 2 or defender_hallucinated or refuter_hallucinated:
         verdict = "needs_human"
-    elif len(reals) >= 2 and len(reals) > len(fps):
+    elif len(reals) >= 2 and len(reals) > len(refuters):
         verdict = "true_positive"
-    elif len(fps) >= 2 and len(fps) > len(reals):
+    elif len(refuter_families) >= 2 and len(refuters) > len(reals):
         verdict = "false_positive"
     else:
         verdict = "uncertain"
 
     denom = max(1, len(deciding))
-    conf = {"true_positive": len(reals) / denom, "false_positive": len(fps) / denom}.get(verdict, 0.5)
+    conf = {"true_positive": len(reals) / denom,
+            "false_positive": len(refuters) / denom}.get(verdict, 0.5)
     all_cites = [c for op in panel for c in op.citations]
     advisory = [op for op in ok if not op.independent]
     evidence_check = {
@@ -90,7 +123,15 @@ def synthesize_validation(finding: Finding, cr: CouncilResult, *, prompt_sha256:
         "citations_verified": sum(1 for c in all_cites if c.verified is True),
         "hallucinated": sum(1 for c in all_cites if c.verified is False),
         "defender_hallucinated": defender_hallucinated,
+        "refuter_hallucinated": refuter_hallucinated,
+        "refuter_families": sorted(refuter_families),
     }
+    if blocked_refuters:
+        # say out loud that someone voted to drop this finding and was not counted
+        evidence_check["refutation_blocked"] = {
+            "voters": [op.participant for op in blocked_refuters],
+            "statuses": [op.status for op in blocked_refuters],
+        }
     if advisory:
         # record what the vendor voters said and whether they DISAGREE — a signal
         # for humans, not an input to the automated verdict
@@ -100,8 +141,19 @@ def synthesize_validation(finding: Finding, cr: CouncilResult, *, prompt_sha256:
             "disagrees_with_panel": any(op.verdict != verdict for op in advisory
                                         if op.verdict in ("true_positive", "false_positive")),
         }
+    # R10: `no_cross_file_navigation` was READ by score.py and assigned nowhere,
+    # so the clamp advertised in docs/safety-model.md had never once fired.
+    # Deterministic signal for it: the finding spans more than one file, but no
+    # panel opinion cited more than one — the panel never followed the flow across
+    # files, which is the published 96% -> 44% triage-accuracy failure mode.
+    finding_files = {loc.uri for loc in finding.locations} | {
+        st.location.uri for st in finding.data_flow}
+    max_files_cited = max((len({c.path for c in op.citations}) for op in ok), default=0)
+    no_xfile = len(finding_files) > 1 and max_files_cited <= 1
+
     return Validation(verdict=verdict, confidence=round(conf, 3), panel=panel,
-                      evidence_check=evidence_check, calibration="prior")
+                      evidence_check=evidence_check, calibration="prior",
+                      no_cross_file_navigation=no_xfile)
 
 
 _VENDOR_VERDICT = {"yes": "true_positive", "true_positive": "true_positive", "confirmed": "true_positive",

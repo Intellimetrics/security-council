@@ -193,7 +193,7 @@ def apply_policy(findings: list[Finding], config: dict, *, now_iso: str,
 
         # G2: an LLM panel alone cannot refute what a deterministic scanner saw.
         if state == "refuted" and f.corroboration.deterministic_sources \
-                and not _fully_verified_defender(f.validation.panel):
+                and not _fully_verified_defender(f.validation.panel, f):
             reasons.append("G2_deterministic_refutation_unsupported")
 
         if reasons and state != "needs_human":
