@@ -102,3 +102,18 @@ def test_github_action_composite_shape():
     assert upload["with"]["category"] == "security-council"
     assert steps[1]["run"].strip().endswith("exit 0")          # capture, don't fail mid-flow
     assert "exit-code" in steps[-1]["run"]                     # gate re-raises
+
+def test_every_ci_template_runs_python_in_safe_path_mode():
+    """R12 round 17 (codex): all three templates ran `python -m security_council...`
+    from the CALLER's checkout, and `-m` puts cwd first on sys.path — so a
+    `security_council/` directory in the scanned repo replaced the scanner.
+    Reproduced: a stub package gave exit 0 with no output, and the gate passed.
+    `-P` (safe-path, Python >= 3.11) stops cwd being consulted."""
+    import re
+    from pathlib import Path
+    for path in ("action.yml", "templates/security-council.yml",
+                 "templates/security-council.gitlab-ci.yml"):
+        text = Path(path).read_text()
+        bare = re.findall(r"python3? -m security_council", text)
+        assert not bare, f"{path}: unsafe invocation(s) {bare}"
+        assert re.search(r"python3? -P -m security_council\.cli scan", text), path

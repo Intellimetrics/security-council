@@ -45,7 +45,7 @@ parameters:
 steps:
   - bash: |
       set +e
-      python3 -m security_council.cli scan "${{ parameters.scanPath }}" \
+      python3 -P -m security_council.cli scan "${{ parameters.scanPath }}" \
         --arms "${{ parameters.arms }}" \
         --fail-on-severity "${{ parameters.failOnSeverity }}" \
         --gate-baseline "${{ parameters.gateBaseline }}" \
@@ -78,7 +78,7 @@ steps:
       if [ "${POST_PR_THREAD}" = "True" ] || [ "${POST_PR_THREAD}" = "true" ]; then
         EXTRA="--post-pr-thread"
       fi
-      python3 -m security_council.ci.azure_devops "$(securityCouncilRunDir)" ${EXTRA}
+      python3 -P -m security_council.ci.azure_devops "$(securityCouncilRunDir)" ${EXTRA}
     condition: and(always(), ne(variables['securityCouncilRunDir'], ''))
     env:
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
