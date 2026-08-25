@@ -340,5 +340,6 @@ def test_scan_json_record_always_carries_out_dir(tmp_path, monkeypatch, capsys):
                         lambda names, config, diff=None: [FakeArm("semgrep", "scanner", "semgrep", [])])
     for extra in ([], ["--min-arms", "5"]):        # clean, and degraded (insufficient arms)
         rc = cli.main(["scan", str(tmp_path), "--json", "--out", str(tmp_path / "out"), *extra])
-        rec = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        out = capsys.readouterr().out
+        rec = _json.loads(out[out.index("{"):])          # the record is pretty-printed
         assert rec["out_dir"] and rec["run_id"] and rec["exit_code"] == rc
