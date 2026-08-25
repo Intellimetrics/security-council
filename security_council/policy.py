@@ -113,6 +113,23 @@ def _stamp(f: Finding, now_iso: str) -> None:
         panel_sha256=_panel_sha256(f))
 
 
+def _panel_backed_refutation(f: Finding) -> bool:
+    """Whether a `refuted` state is backed by a panel that actually refuted.
+
+    `synthesize_validation` cannot return `false_positive` without >= 2
+    independent, evidenced, anchored, cross-family refuters — so for a normal
+    run this is always true. It guards the paths that do not go through the
+    panel at all: a hand-written decision record, a future producer setting the
+    state directly, a replay of a validation from another run.
+    """
+    val = getattr(f, "validation", None)
+    if val is None or val.verdict != "false_positive":
+        return False
+    refuters = [op for op in (val.panel or [])
+                if op.independent and op.status == "ok" and op.verdict == "false_positive"]
+    return len({op.family for op in refuters}) >= 2
+
+
 def high_assurance(f: Finding) -> bool:
     """Findings the machine may never hide and unsigned operator state may never
     excuse: crypto (G1) and critical severity (G7).
@@ -201,6 +218,23 @@ def apply_policy(findings: list[Finding], config: dict, *, now_iso: str,
             _stamp(f, now_iso)
             decisions.append(PolicyDecision(finding_id=f.id, action="escalate_human",
                                             p=s.p, reasons=reasons, score=s))
+        elif state == "refuted" and high_assurance(f) and not _panel_backed_refutation(f):
+            # G11 (R12): a high-assurance finding may leave the gate only on a
+            # refutation an actual panel produced. Demotion removes a finding
+            # from the build just as suppression does, but G1/G7 only cover
+            # suppression and G9 only covers baselines, so nothing checked that
+            # a crypto/critical `refuted` state had evidence behind it.
+            #
+            # Deliberately NOT a blanket ban: the eval corpus's MD5-cache decoy
+            # is a crypto FALSE POSITIVE, and demoting it on properly anchored,
+            # cross-family panel agreement (the R10 rules) is the behaviour this
+            # tool exists to provide. What is refused is a `refuted` state with
+            # no qualifying panel behind it.
+            f.disposition.state = "needs_human"
+            _stamp(f, now_iso)
+            decisions.append(PolicyDecision(
+                finding_id=f.id, action="escalate_human", p=s.p,
+                reasons=["G11_high_assurance_refutation_not_panel_backed"], score=s))
         elif state == "refuted":
             # demote: stays open, renders as suppressions[underReview], off the gate
             _stamp(f, now_iso)

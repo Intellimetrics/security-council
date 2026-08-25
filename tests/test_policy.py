@@ -17,10 +17,18 @@ def _sha(s):
     return hashlib.sha256(s.encode()).hexdigest()
 
 
-def _op(role, verdict, *, cites=1, verified=True, pass_rate=1.0, status="ok", model="mdl-x"):
+# one family per seat, as a real panel has: `synthesize_validation` cannot
+# return `false_positive` without >= 2 DISTINCT vendor families, so a
+# single-family refuting panel is a state the pipeline never produces
+_FAMILY_BY_ROLE = {"prosecutor": "claude", "defender": "codex", "adjudicator": "google"}
+
+
+def _op(role, verdict, *, cites=1, verified=True, pass_rate=1.0, status="ok", model="mdl-x",
+        family=None):
     citations = [m.EvidenceCitation(path="app/reports.py", start_line=9, end_line=9,
                                     claim="c", verified=verified) for _ in range(cites)]
-    return m.PanelOpinion(role=role, participant=role[:4], family="claude",
+    return m.PanelOpinion(role=role, participant=role[:4],
+                          family=family or _FAMILY_BY_ROLE.get(role, "claude"),
                           prompt_sha256=_sha("p"), verdict=verdict, rationale="r",
                           model_id=model, citations=citations,
                           citation_pass_rate=pass_rate if citations else None, status=status)
@@ -263,3 +271,30 @@ def test_scan_writes_policy_json_and_manifest_actions(tmp_path):
     assert pj[0]["action"] == "none" and pj[0]["reasons"] == ["not_validated"]
     assert run.manifest["disposition_actions"] == {"none": 1}
     assert any(r["path"].endswith("policy.json") for r in run.manifest["reports"])
+
+
+def test_G11_high_assurance_refutation_needs_a_real_panel():
+    """R12 round 8: `demote` removes a finding from the build just as suppression
+    does, but G1/G7 only cover suppression and G9 only covers baselines — so a
+    crypto/critical `refuted` state with NO panel behind it left the gate and the
+    scan exited 0. Not reachable via synthesize_validation (an empty panel yields
+    needs_human), so this guards the non-panel paths: a hand-written decision
+    record, a replayed validation, a future producer setting state directly."""
+    f = _refuted(sev="critical", panel=[])          # state refuted, nothing behind it
+    [d] = policy.apply_policy([f], _armed(), now_iso=NOW, prior_runs=99)
+    assert d.action == "escalate_human"
+    assert "G11_high_assurance_refutation_not_panel_backed" in d.reasons
+    assert f.disposition.state == "needs_human"     # gates
+    m.assert_invariants(f)
+
+
+def test_G11_does_not_block_a_properly_backed_crypto_demotion():
+    """Deliberately not a blanket ban: the eval corpus's MD5-cache decoy is a
+    crypto FALSE POSITIVE, and demoting it on anchored cross-family agreement is
+    what this tool is for."""
+    f = _refuted(sev="high")
+    f.taxonomy.cwe = ["CWE-327"]            # keep I4 consistent with the family
+    f.taxonomy.cwe_family = "crypto"
+    [d] = policy.apply_policy([f], _armed(suppress_below=0.99), now_iso=NOW, prior_runs=99)
+    assert d.action == "demote"
+    assert f.disposition.state == "refuted"

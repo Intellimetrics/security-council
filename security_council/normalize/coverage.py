@@ -104,6 +104,13 @@ def coverage_verdict(result) -> str:
         return PARTIAL
     if cov.get("not_applicable"):
         return VERIFIED
+    # An AGENT arm is required to self-report `completion`; the house envelope
+    # has a `scan` block for exactly that. A missing or unrecognised value means
+    # it never said it finished, and absence of a claim is not a claim of
+    # completeness — it fell through to `verified` before. Scanners never report
+    # completion (their report IS the claim), so they are unaffected.
+    if getattr(result, "kind", "") == "agent_cli" and cov.get("completion") != "complete":
+        return PARTIAL
     return VERIFIED
 
 
