@@ -187,6 +187,32 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 9. **gitleaks/osv can't path-exclude via CLI** — isolation (scratch copy excluding runtime dirs) is what keeps scans clean; don't remove it.
 10. **`coverage.CATEGORY_POLICY` is keyed by arm name** (`POLICY_ALIASES` maps `claude`/`codex` → `house`). A new arm without an entry/alias is `unknown` for every family → never eligible → its findings mislabel as singleton/uncovered. Add a policy row when adding an arm.
 
+## 7.9 Release state — 0.1.0 (2026-08-25)
+
+**Ship review:** `docs/reviews/R12-ship-readiness.md` — eighteen council rounds
+on one question (any reachable path to a silently wrong "clean" or a wrongly
+passing CI gate). Every round to sixteen found something real; the root cause
+was one design flaw — coverage as a per-arm boolean — replaced by
+`normalize/coverage.coverage_verdict()` (`none | partial | verified`), read by
+the gate, the corroboration context and SARIF `executionSuccessful`. Added
+G10, G11, I7b, I13, widened I6. The simplest exploit — `printf '*' >
+.semgrepignore` → clean exit 0 in the default profile — was found at round
+sixteen; repo ignore-files now make coverage `partial`. osv-scanner runs
+`--recursive` (nested manifests were a silent pass). CI templates run
+`python -P -m` (a `security_council/` dir in the scanned repo replaced the
+scanner). Rounds 17–18 returned YES (antigravity, claude); codex times out in
+most rounds — plan for 2/3.
+
+**Not functional in 0.1.0, labelled so in `--help`:** `--fix`, `--verify-fix`,
+`--analyze`. Deterministic verify-fix (re-run scanners on the patched tree) is
+the agreed redesign, not built. `codex-security` dedicated arm needs an
+interactive `codex-security login`. The four R11 fence defects are fixed and
+live-verified even though the lane is disabled.
+
+**Known residuals, documented:** decision store is tamper-evident not
+tamper-proof (signing lane designed in R9, not built); ADO/GitLab templates
+unproven on real infrastructure; CKLB never opened in a live STIG Viewer.
+
 ## 8. Recommended next steps (in rough priority)
 
 _Ordering council-reviewed 2026-08-22 (R3, `docs/reviews/R3-scope-eval-first.md`): eval gate
