@@ -128,3 +128,51 @@ repo exits 0; the vulnerable fixture still finds 17 clusters and exits 1.
 and each instance has a regression. A third round would be worth running
 before tagging, since rounds 1 and 2 each found real defects in the previous
 round's fix.
+
+
+## Round 3 — 3/3 again, NO-SHIP again, and the pattern named
+
+`.llm-council/runs/20260825_123217_*` — claude, codex, antigravity all **no**.
+
+They caught the thing rounds 1 and 2 should have taught me: **I kept fixing
+instances instead of the class.** `coverage_unverified` was honoured in
+`llm_cli.py` only. `claude_security.py` and `codex_security.py` set the same
+flag and still returned `ok=True, error=""` — and a test in
+`test_dedicated_arms.py` asserted exactly that, so the defect had a guard
+protecting it.
+
+The real fix is structural and lives in the one place that decides:
+
+```python
+def _counts_as_coverage(r: ArmResult) -> bool:
+    return bool(r.ok) and not (r.coverage or {}).get("coverage_unverified")
+```
+
+The gate now derives `ok` from that, so an arm which produced no findings
+without a completed scan never counts as coverage **whatever it reports about
+itself**, and the next arm added cannot forget. An arm that outright lies
+(`ok=True` while unverified) still cannot produce a pass — there is a test that
+constructs exactly that liar.
+
+Also fixed this round:
+
+- **A timed-out scanner was resurrected by partial findings.** `if not r.ok and
+  findings: r.ok = True` treated any report as proof of a productive run, but a
+  timeout's report is only whatever had been flushed when the clock ran out.
+  Timeouts now stay failed and are marked `partial_scan`.
+- **`--deep` read the config's enabled list rather than the effective one**, so
+  it ignored `--arms`.
+
+## Verified
+
+429 tests, ruff clean, eval gate green (`true_positive_suppression_rate` 0.0,
+`crypto_suppression_rate` 0.0, no violations). Live: clean dependency-free repo
+exits 0, vulnerable fixture exits 1.
+
+## Standing recommendation
+
+Three rounds, three no-ship verdicts, and each round found a real defect in the
+previous round's fix — including two defects I introduced while fixing. Do not
+read the fixes above as clearance to tag. Run a fourth round; the release is
+ready when a round comes back without a new silent-clean path, not when the
+last known one is closed.

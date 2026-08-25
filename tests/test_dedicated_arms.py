@@ -262,9 +262,14 @@ def test_claude_security_unverified_report_is_partial_and_unverified_when_empty(
         return _FakeProc(0, _claude_stdout())
     monkeypatch.setattr(subprocess, "run", fake_run)
     res = ClaudeSecurityArm().run(tgt, tmp_path / "out", run_id="r", collected_at="t")
-    assert res.ok and res.findings == []
+    assert res.findings == []
     assert res.coverage["completion"] == "partial" and res.coverage["coverage_unverified"] is True
     assert res.coverage["verification_reason"] == "votes.json is absent"
+    # R12: this test asserted `res.ok` — it encoded the defect. An arm that
+    # produced no findings without a completed scan verified nothing, so it is
+    # not a successful arm and must not count toward coverage.
+    assert res.ok is False
+    assert "NOT clean" in res.error
 
 
 def test_claude_security_available_needs_cli_and_plugin(monkeypatch):

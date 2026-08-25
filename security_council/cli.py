@@ -74,7 +74,7 @@ def cmd_scan(args) -> int:
         # `deep` PROFILE moved to the house arms the `--deep` FLAG became a
         # no-op for it. Apply depth to whichever arms are actually enabled.
         opts = config["arms"].setdefault("options", {})
-        enabled = set(config["arms"].get("enabled") or ())
+        enabled = set(names)      # `names` is the effective list; --arms wins over config
         for dn, key, val in (("codex-security", "mode", "deep"),
                              ("claude-security", "effort", "high"),
                              ("claude", "effort", "high"),

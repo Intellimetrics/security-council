@@ -37,6 +37,18 @@ def _utc_stamp() -> tuple[str, str]:
     return now.strftime("%Y%m%d_%H%M%S"), now.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _counts_as_coverage(r: ArmResult) -> bool:
+    """Whether an arm result may be counted as "this was actually scanned".
+
+    R12: the gate read `r.ok` alone, so every arm had to remember to set
+    `ok=False` when it set `coverage_unverified` — and two of the three did
+    not. Deciding it HERE, once, is what stops the next arm from forgetting:
+    an arm that produced no findings without a completed scan verified nothing,
+    whatever it reports about itself.
+    """
+    return bool(r.ok) and not (r.coverage or {}).get("coverage_unverified")
+
+
 def _unavailable(arm: Arm, detail: str) -> ArmResult:
     return ArmResult(name=arm.name, kind=arm.kind, family=arm.family, ok=False,
                      exit_code=None, error=f"arm unavailable: {detail}", findings=[])
@@ -96,9 +108,14 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
               and not (gate_baseline == "new"
                        and f.baseline_state in ("unchanged", "updated")
                        and not policy_mod.baseline_ineligible(f))]
-    ok = [r for r in results if r.ok]
+    ok = [r for r in results if _counts_as_coverage(r)]
     failed = [r for r in results if not r.ok]
+    unverified = [r for r in results if r.ok and not _counts_as_coverage(r)]
     degr = [{"kind": "arm_failed", "arm": r.name, "detail": r.error} for r in failed]
+    degr += [{"kind": "coverage_unverified", "arm": r.name,
+              "detail": "arm reported no findings without a completed scan — "
+                        "it verified nothing, so it does not count as coverage"}
+             for r in unverified]
     # R12: structural floor, independent of min_arms_ok. With `min_arms_ok: 0`
     # (or `--min-arms 0`) and no arm succeeding, every later branch was skipped
     # and this returned 0 — a scan where NOTHING ran reported the repo clean.
@@ -111,7 +128,7 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
         return 3, degr
     if gating:
         return 1, degr
-    if failed:
+    if failed or unverified:
         return 3, degr
     return 0, degr
 

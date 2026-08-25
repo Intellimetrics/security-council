@@ -150,9 +150,14 @@ class ScannerArm:
                                    collected_at=collected_at, tool_version=version)
                 findings = registry.normalize_sarif(sarif, self.name, ctx)
                 raw_count = sum(len(run.get("results", [])) for run in sarif.get("runs", []))
-                if not r.ok and findings:      # findings present => productive run, not a failure
+                # findings present => productive run, not a failure — EXCEPT a
+                # timeout, whose report is whatever had been flushed when the
+                # clock ran out. R12: resurrecting that hid a partial scan.
+                if not r.ok and findings and not r.timed_out:
                     r.ok = True
                     error = ""
+                elif r.timed_out and findings:
+                    cov["partial_scan"] = True
             except Exception as e:  # noqa: BLE001
                 # R12: this set an error string but left r.ok TRUE, so an
                 # unreadable report produced ok=True with findings=[] — the same

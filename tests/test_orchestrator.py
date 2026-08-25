@@ -35,9 +35,10 @@ def _finding(*, family="injection", sev="high", source_id, kind, vendor, rc="sha
 
 
 class FakeArm:
-    def __init__(self, name, kind, family, findings, ok=True, error=""):
+    def __init__(self, name, kind, family, findings, ok=True, error="", coverage=None):
         self.name, self.kind, self.family = name, kind, family
         self._f, self._ok, self._e = findings, ok, error
+        self._cov = coverage or {}
 
     def available(self):
         return True, "fake"
@@ -46,7 +47,8 @@ class FakeArm:
         return ArmResult(name=self.name, kind=self.kind, family=self.family, ok=self._ok,
                          exit_code=0 if self._ok else 1, error=self._e, findings=self._f,
                          tool_version="fake", coverage={"raw_results": len(self._f),
-                                                        "normalized": len(self._f)})
+                                                        "normalized": len(self._f),
+                                                        **self._cov})
 
 
 def _run(arms, tmp_path, **policy):
@@ -116,3 +118,17 @@ def test_arm_crash_is_isolated(tmp_path):
     run = _run([Crasher()], tmp_path, min_arms_ok=1)
     assert run.exit_code == 3
     assert any("crashed" in (d.get("detail") or "") for d in run.degradations)
+
+
+def test_coverage_unverified_arm_does_not_count_as_coverage(tmp_path):
+    """R12 structural rule: the gate used to read `r.ok` alone, so every arm had
+    to remember to set ok=False alongside `coverage_unverified` — and two of the
+    three did not. Deciding it in ONE place stops the next arm forgetting.
+
+    An arm that lies (ok=True while unverified) must still not produce a pass.
+    """
+    arm = FakeArm("claude", "agent_cli", "claude", [], ok=True,
+                  coverage={"coverage_unverified": True})
+    run = _run([arm], tmp_path, min_arms_ok=1)
+    assert run.exit_code == 3
+    assert any(d["kind"] == "coverage_unverified" for d in run.degradations)

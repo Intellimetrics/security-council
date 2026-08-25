@@ -190,8 +190,14 @@ class ClaudeSecurityArm:
                "skipped": dict(ctx.skipped)}
         if not findings and not verified:
             cov["coverage_unverified"] = True
-        return ArmResult(name=self.name, kind=self.kind, family=self.family, ok=True,
-                         exit_code=r.exit_code, error="", findings=findings,
+        unverified = bool(cov.get("coverage_unverified"))
+        return ArmResult(name=self.name, kind=self.kind, family=self.family,
+                         ok=not unverified,
+                         exit_code=r.exit_code,
+                         error=("" if not unverified else
+                                "no findings without a completed scan — "
+                                "coverage unverified, NOT clean"),
+                         findings=findings,
                          tool_version=served or self.model, elapsed_seconds=r.elapsed_seconds,
                          command=_redact(cmd), raw_path=str(sarif_path), coverage=cov)
 
