@@ -45,4 +45,17 @@ widened I6. The simplest exploit — `printf '*' > .semgrepignore` producing a
 clean exit-0 scan in the default profile — was found at round sixteen and is
 closed: repository ignore-files now make coverage `partial`.
 
+Rounds seventeen to nineteen, on the released code, found and closed three
+more — all in the default configuration, all reproduced before fixing:
+
+- A `security_council/` directory in the *scanned* repository replaced the
+  scanner in every CI template (`python -m` puts the caller's checkout first on
+  `sys.path`; a stub gave exit 0 with no output). Templates run `python -P -m`.
+- `osv-scanner` honoured the repository's `.gitignore` by default, so naming
+  `requirements.txt` there yielded a verified-clean exit 0. It runs
+  `--no-ignore`; semgrep is pinned `--no-git-ignore`. The scanned repository
+  never decides what gets scanned.
+- A decision record with an unreadable `expires_at` crashed the scan instead
+  of degrading.
+
 The word "calibrated" is not used anywhere unless a fitted record is in force.
