@@ -68,7 +68,15 @@ more — all in the default configuration, all reproduced before fixing:
   templates pass `--ignore-repo-config`, and `--config PATH` names an
   operator-controlled file instead.
 
-The principle behind the last five of these: **the scanned repository never
+- The CI templates picked "the latest run" by globbing the scanned repo's
+  `runs/` directory, so a committed `runs/99999999_999999/` would have been
+  uploaded and annotated in place of the real run. They now read the run
+  directory from `scan --json`'s own record. (A round-21 edit had also left a
+  doubled line continuation in all three templates — every CI scan failed
+  with a usage error until round 22 caught it; the templates are now
+  shell-parsed in a test and were re-run on real GitHub runners.)
+
+The principle behind the last six of these: **the scanned repository never
 decides what gets scanned.** Ignore-files the tools still honour
 (`.semgrepignore`, `.gitleaksignore`) make coverage `partial` and are named in
 the report; scanner configs are pinned; `.gitignore` handling is disabled for

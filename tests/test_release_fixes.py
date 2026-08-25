@@ -327,3 +327,18 @@ def test_ci_templates_take_the_run_dir_from_the_scan_record_not_a_glob():
         text = Path(path).read_text()
         assert 'runs"/*/' not in text, path
         assert "--json" in text and '["out_dir"]' in text, path
+
+
+def test_scan_json_record_always_carries_out_dir(tmp_path, monkeypatch, capsys):
+    """The CI templates now depend on `scan --json` emitting `out_dir`; pin the
+    contract on a real (fake-arm) run, including a degraded one."""
+    import json as _json
+    from security_council import cli
+    from tests.test_orchestrator import FakeArm
+    (tmp_path / "a.py").write_text("x = 1\n")
+    monkeypatch.setattr(cli, "_build_arms",
+                        lambda names, config, diff=None: [FakeArm("semgrep", "scanner", "semgrep", [])])
+    for extra in ([], ["--min-arms", "5"]):        # clean, and degraded (insufficient arms)
+        rc = cli.main(["scan", str(tmp_path), "--json", "--out", str(tmp_path / "out"), *extra])
+        rec = _json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert rec["out_dir"] and rec["run_id"] and rec["exit_code"] == rc
