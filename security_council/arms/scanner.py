@@ -75,9 +75,15 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
         # "No package sources found" for a repo whose requirements.txt sat one
         # directory down, and that marker then read as a VERIFIED clean scan.
         # Any monorepo with nested manifests got a silent osv pass.
-        local_args=("scan", "source", "--recursive", "--format=sarif",
+        # --no-ignore (R12 round 19, verified live): osv-scanner honours the
+        # repo's .gitignore by default, so `printf requirements.txt > .gitignore`
+        # made it read nothing, print "No package sources found", and that came
+        # out as a VERIFIED clean scan with exit 0. What to leave out of a scan
+        # is this tool's decision (the scratch copy's excludes), never the
+        # scanned repository's.
+        local_args=("scan", "source", "--recursive", "--no-ignore", "--format=sarif",
                     "--output={out}/osv.sarif", "{target}"),
-        docker_args=("scan", "source", "--recursive", "--format=sarif",
+        docker_args=("scan", "source", "--recursive", "--no-ignore", "--format=sarif",
                      "--output=/out/osv.sarif", _MOUNT),
         sarif_name="osv.sarif", success_exit_codes=(0, 1),
         version_args=("--version",), docker_version_args=("--version",), network=True,

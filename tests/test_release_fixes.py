@@ -28,6 +28,9 @@ def test_osv_scans_recursively():
     clean. Any monorepo with nested manifests got a silent osv pass."""
     spec = SCANNER_SPECS["osv-scanner"]
     assert "--recursive" in spec.local_args and "--recursive" in spec.docker_args
+    # round 19: it also honours .gitignore by default, so naming the manifest
+    # there hid it and the scan came out verified-clean. Not the repo's call.
+    assert "--no-ignore" in spec.local_args and "--no-ignore" in spec.docker_args
 
 
 def test_not_applicable_needs_the_tools_exit_code_too(monkeypatch, tmp_path):
