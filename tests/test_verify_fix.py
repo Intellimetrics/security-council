@@ -130,6 +130,7 @@ def test_verdict_parser():
 
 def test_scan_verify_flow_leaves_disposition_untouched(tmp_path, monkeypatch):
     from security_council import proc as realproc
+    from security_council.arms import fix as fixmod
     from security_council.orchestrator import run_scan
     from tests.test_entitlements import _cfg
     from tests.test_fix_lane import _fake_cert as fix_fake_cert
@@ -151,6 +152,12 @@ def test_scan_verify_flow_leaves_disposition_untouched(tmp_path, monkeypatch):
         return _R()
     monkeypatch.setattr(realproc, "run_command", fenced_fake)
     monkeypatch.setattr(vf.VerifyFixArm, "_apply_patch", lambda self, work: True)
+    # R12: `_safe_run` now honours `available()`, and on this host the fenced
+    # arms correctly refuse (the vendor CLI lives outside the fence's bind set).
+    # This test is about the fix -> verify ORCHESTRATION, so simulate a host
+    # where the fence can reach the CLI.
+    monkeypatch.setattr(fixmod.FixArm, "available", lambda self: (True, "test"))
+    monkeypatch.setattr(vf.VerifyFixArm, "available", lambda self: (True, "test"))
 
     target = tmp_path / "repo"
     (target / "app").mkdir(parents=True)

@@ -37,7 +37,24 @@ def _utc_stamp() -> tuple[str, str]:
     return now.strftime("%Y%m%d_%H%M%S"), now.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _unavailable(arm: Arm, detail: str) -> ArmResult:
+    return ArmResult(name=arm.name, kind=arm.kind, family=arm.family, ok=False,
+                     exit_code=None, error=f"arm unavailable: {detail}", findings=[])
+
+
 def _safe_run(arm: Arm, root: Path, out_dir: Path, run_id: str, collected_at: str) -> ArmResult:
+    # R12: `available()` used to be consulted ONLY by `doctor`, the MCP doctor
+    # and the setup wizard — never on the scan path — so an arm that reported
+    # itself unusable ran anyway. Observed live: the analysis lane ran 131s and
+    # reported ok while `available()` returned False. An arm that refuses is now
+    # a failed arm, which counts against `min_arms_ok` and degrades the run
+    # rather than letting it look clean.
+    try:
+        ok, detail = arm.available()
+    except Exception as e:  # noqa: BLE001
+        return _unavailable(arm, f"availability check crashed: {e}")
+    if not ok:
+        return _unavailable(arm, detail)
     try:
         return arm.run(root, out_dir, run_id=run_id, collected_at=collected_at)
     except Exception as e:  # noqa: BLE001

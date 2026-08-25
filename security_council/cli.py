@@ -113,7 +113,10 @@ def cmd_scan(args) -> int:
         fix_spec = {"jobs": [args.fix_job], "finding_ids": ids, "model": fix_model,
                     "verify": bool(getattr(args, "verify_fix", False))}
     run = run_scan(target, _build_arms(names, config, diff=diff), config,
-                   out_dir=Path(args.out) if args.out else None,
+                   # R12: must be ABSOLUTE — the scanner arms hand this path to
+                   # `docker -v`, and a relative one is read as a volume NAME
+                   # ("includes invalid characters for a local volume name").
+                   out_dir=Path(args.out).resolve() if args.out else None,
                    isolate=not args.inplace,
                    validate=args.validate or bool((config.get("defaults") or {}).get("validate")),
                    validate_max_findings=args.validate_max,
