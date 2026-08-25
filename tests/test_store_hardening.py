@@ -327,3 +327,26 @@ def test_a_record_missing_lifecycle_degrades_instead_of_crashing(tmp_path):
     actions = store.apply_prior_decisions([f], now_iso="2026-08-25T00:00:00Z")
     assert any(a["action"] == "ignored_malformed" for a in actions)
     assert f.disposition.lifecycle == "open"       # fail-safe: stays open
+
+
+def test_a_record_with_an_unreadable_date_degrades_instead_of_crashing(tmp_path):
+    """R12 round 18: expires_at / decided_at were parsed BEFORE the
+    malformed-record guard, so `expires_at: not-a-date` raised an uncaught
+    ValueError and crashed the scan."""
+    import json
+    from security_council.decisions import DecisionStore
+    f = _finding()
+    store = DecisionStore(tmp_path)
+    rc = f.fingerprints.root_cause
+    path = store._path(rc)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "schema_version": 1, "root_cause": rc, "history": [],
+        "context_hash": f.fingerprints.context_hash,
+        "suppression": {"status": "active", "lifecycle": "suppressed", "decision_ref": "ref",
+                        "expires_at": "not-a-date",
+                        "decided_by": {"kind": "human", "operator": "x",
+                                       "decided_at": "2026-08-20T00:00:00Z"}}}))
+    actions = store.apply_prior_decisions([f], now_iso="2026-08-25T00:00:00Z")
+    assert any(a["action"] == "ignored_malformed" and "timestamp" in a["detail"] for a in actions)
+    assert f.disposition.lifecycle == "open"

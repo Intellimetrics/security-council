@@ -186,6 +186,24 @@ class DecisionStore:
             # and the reapplication is always surfaced individually in the report.
             effective_expiry = sup.get("expires_at")
             clamped = False
+            # R12 round 18: the two timestamps were parsed BEFORE the
+            # malformed-record guard, so `expires_at: not-a-date` raised an
+            # uncaught ValueError and crashed the scan. Validate them first;
+            # a record with an unreadable date is malformed and is not applied.
+            try:
+                if effective_expiry:
+                    _now(effective_expiry)
+                if (sup.get("decided_by") or {}).get("decided_at"):
+                    _now(sup["decided_by"]["decided_at"])
+            except (ValueError, TypeError) as e:
+                rec["history"].append({"at": now_iso, "kind": "malformed",
+                                       "finding_id": f.id, "detail": f"bad timestamp: {e}"[:200]})
+                _atomic_write(self._path(rc), rec)
+                actions.append({"finding_id": f.id, "action": "ignored_malformed",
+                                "ref": ref, "title": f.title,
+                                "severity": f.severity.label,
+                                "detail": f"bad timestamp: {e}"[:200]})
+                continue
             if effective_expiry and policy.high_assurance(f):
                 decided_at = (sup.get("decided_by") or {}).get("decided_at")
                 if decided_at:
