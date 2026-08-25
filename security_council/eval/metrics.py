@@ -128,6 +128,27 @@ def compute(expected: dict, findings: list[Finding]) -> EvalReport:
             f"recall is not 1.0 — {len(missed)} of {len(tps)} ground-truth true "
             f"positives were not detected: {', '.join(sorted(missed)[:8])}")
 
+    # R12 round 14: `expected_arms` was declared on every case in EXPECTED.yaml
+    # and read by NOTHING — a corpus asserting a per-case attribution the gate
+    # never checked. Enforce the reachable half: a detected case must be
+    # reported by at least one of the arms the corpus says should find it,
+    # otherwise the replay has drifted and the case is passing for the wrong
+    # reason.
+    for c in tps:
+        want = {str(a) for a in (c.get("expected_arms") or [])}
+        found = matches.get(c["id"]) or []
+        if not want or not found:
+            continue
+        # the corpus names producers by FAMILY in places (`osv`, `house`) and by
+        # source id in others (`osv-scanner`, `claude-security`); accept either,
+        # which is why this never worked as a plain source_id compare
+        got = {p_.source_id for f in found for p_ in f.provenance} | \
+              {p_.family for f in found for p_ in f.provenance}
+        if not (want & got):
+            violations.append(
+                f"case {c['id']}: expected_arms {sorted(want)} but it was reported only by "
+                f"{sorted(got)} — the replay has drifted from what this case asserts")
+
     # unhandled false positives = decoy/noise findings still standing open
     unhandled_fp = [f for f in [*decoy_findings.values(), *noise]
                     if not is_demoted_or_hidden(f) and f.disposition.state != "disputed"]

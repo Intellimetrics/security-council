@@ -102,7 +102,7 @@ def test_an_empty_corpus_cannot_pass_the_gate():
     corpus that produced NO ground-truth true positives scored a perfect gate.
     A gate that cannot fail is not a gate."""
     from security_council.eval.metrics import compute
-    res = compute({"cases": [], "decoys": []}, [])
+    res = compute({"findings": [], "decoys": []}, [])
     assert res.violations, "an empty corpus passed the gate"
     assert "vacuous" in " ".join(res.violations)
 
@@ -113,10 +113,45 @@ def test_partial_recall_fails_the_gate():
     alone — so losing half the corpus still exited 0. pytest pins recall 1.0,
     but the standalone command is what a user actually runs."""
     from security_council.eval.metrics import compute
-    expected = {"cases": [{"id": "TP-1", "path": "app/a.py", "cwe": "CWE-89"},
-                          {"id": "TP-2", "path": "app/b.py", "cwe": "CWE-79"}],
+    expected = {"findings": [{"id": "TP-1", "path": "app/a.py", "cwe": "CWE-89"},
+                             {"id": "TP-2", "path": "app/b.py", "cwe": "CWE-79"}],
                 "decoys": []}
     res = compute(expected, [])          # nothing detected at all
     assert res.violations
-    res2 = compute({"cases": [], "decoys": []}, [])
+    res2 = compute({"findings": [], "decoys": []}, [])
     assert any("vacuous" in v for v in res2.violations)
+
+
+def test_expected_arms_is_actually_enforced():
+    """R12 round 14: `expected_arms` was declared on every case in EXPECTED.yaml
+    and read by NOTHING — a corpus asserting an attribution the gate never
+    checked. A case reported by none of its expected producers now violates."""
+    from security_council.eval.metrics import compute
+    from tests.test_validate import _finding
+    f = _finding()                                   # reported by semgrep + house
+    expected = {"findings": [{"id": "C1", "path": "app/reports.py", "cwe": "CWE-89",
+                              "expected_arms": ["gitleaks"]}],    # wrong producer
+                "decoys": []}
+    res = compute(expected, [f])
+    assert any("expected_arms" in v for v in res.violations)
+
+    ok = {"findings": [{"id": "C1", "path": "app/reports.py", "cwe": "CWE-89",
+                        "expected_arms": ["semgrep"]}], "decoys": []}
+    assert not [v for v in compute(ok, [f]).violations if "expected_arms" in v]
+
+
+def test_unknown_lifecycle_cannot_be_constructed():
+    """R12 round 14: every hiding invariant and the CI gate key on SET
+    MEMBERSHIP, so an invented lifecycle like "wontfix" was in none of them —
+    no invariant fired and the gate dropped the finding. Reproduced on a
+    CRITICAL finding: exit 0, no complaint."""
+    from security_council import model as m
+    from tests.test_validate import _finding
+    f = _finding(sev="critical")
+    f.taxonomy.cwe = ["CWE-89"]
+    f.disposition.lifecycle = "wontfix"
+    try:
+        m.assert_invariants(f)
+        raise AssertionError("an unknown lifecycle was constructible")
+    except m.FindingInvariantError as e:
+        assert "I13" in str(e)

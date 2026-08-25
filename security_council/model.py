@@ -538,6 +538,18 @@ def validate_finding(f: "Finding") -> list[str]:
     if f.disposition.lifecycle == "fixed" and db.kind != "human" and f.baseline_state != "absent":
         errs.append("I6: auto 'fixed' requires baseline_state == 'absent' (never auto-close)")
 
+    # I13 - the lifecycle must be one the model knows. Every hiding invariant
+    # (I6/I7/I7b/I11) and the CI gate key on SET MEMBERSHIP — HIDDEN_LIFECYCLES,
+    # CLOSED_LIFECYCLES, OPEN_LIFECYCLES — so an INVENTED value like "wontfix"
+    # is in none of them: no invariant fires, and `lifecycle in ("open",
+    # "reopened")` is False so the gate drops it. Reproduced: a CRITICAL finding
+    # with lifecycle "wontfix" left the build with exit 0 and no complaint.
+    # Decision records are untrusted operator state (R9) and the docs tell teams
+    # to commit `decisions/`, so this is reachable, not theoretical.
+    if f.disposition.lifecycle not in (OPEN_LIFECYCLES | CLOSED_LIFECYCLES):
+        errs.append(f"I13: unknown lifecycle {f.disposition.lifecycle!r} "
+                    f"(known: {sorted(OPEN_LIFECYCLES | CLOSED_LIFECYCLES)})")
+
     # I7 - crypto is never auto-hidden (fail-closed on kind)
     if (is_crypto_finding(f)
             and f.disposition.lifecycle in HIDDEN_LIFECYCLES
