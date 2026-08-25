@@ -35,6 +35,35 @@ def test_osv_scans_recursively():
     assert "--no-git-ignore" in sg.local_args and "--no-git-ignore" in sg.docker_args
 
 
+def test_gitleaks_and_osv_configs_are_pinned_not_auto_loaded():
+    """R12 round 20 (claude + codex): gitleaks auto-loads <source>/.gitleaks.toml
+    and osv-scanner reads osv-scanner.toml when no --config is given, so the
+    scanned repository could allowlist everything — reproduced as a verified
+    clean exit 0. Both now pass a config WE ship; verified live that a repo
+    allowlisting every path and one ignoring a real CVE change nothing."""
+    from pathlib import Path
+    pkg = Path(sc.__file__).resolve().parent.parent
+    for name in ("gitleaks", "osv-scanner"):
+        spec = SCANNER_SPECS[name]
+        assert spec.config_file and (pkg / spec.config_file).is_file(), name
+        assert any(a.startswith("--config") for a in spec.local_args), name
+        assert any(a.startswith("--config") for a in spec.docker_args), name
+    assert "useDefault = true" in (pkg / "data" / "gitleaks.toml").read_text()
+    assert "IgnoredVulns" not in (pkg / "data" / "osv-scanner.toml").read_text().replace(
+        "# a repository could ignore vulnerabilities by id", "")
+
+
+def test_a_missing_pinned_config_fails_the_arm_rather_than_falling_back(monkeypatch, tmp_path):
+    """Never fall back to "no --config": that is exactly the auto-load path the
+    pinned file exists to close."""
+    spec = SCANNER_SPECS["gitleaks"]
+    monkeypatch.setitem(SCANNER_SPECS, "gitleaks",
+                        type(spec)(**{**spec.__dict__, "config_file": "data/does-not-exist.toml"}))
+    monkeypatch.setattr(sc.shutil, "which", lambda b: f"/usr/bin/{b}")
+    res = ScannerArm("gitleaks").run(tmp_path, tmp_path, run_id="r", collected_at="t")
+    assert res.ok is False and "pinned config missing" in res.error
+
+
 def test_not_applicable_needs_the_tools_exit_code_too(monkeypatch, tmp_path):
     """The marker line alone was not enough: a different failure that also
     prints the phrase must not be excused. osv exits 128 for the real case."""

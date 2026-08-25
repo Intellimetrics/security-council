@@ -1,0 +1,8 @@
+# security-council's pinned gitleaks configuration (R12 round 20).
+#
+# gitleaks auto-loads `<source>/.gitleaks.toml` when no --config is given, so a
+# scanned repository could allowlist every path and come out clean. Passing
+# this file makes gitleaks use ITS OWN default rules and never consult the
+# repository's. Nothing here narrows detection.
+[extend]
+useDefault = true

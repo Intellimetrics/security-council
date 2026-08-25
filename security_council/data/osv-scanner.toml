@@ -1,0 +1,5 @@
+# security-council's pinned osv-scanner configuration (R12 round 20).
+#
+# osv-scanner reads `osv-scanner.toml` from scanned directories by default, so
+# a repository could ignore vulnerabilities by id. Passing this (empty) file
+# makes the scanner use it instead. Nothing here ignores anything.

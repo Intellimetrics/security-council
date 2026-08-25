@@ -13,6 +13,8 @@ from ..normalize.base import ParseContext
 from .base import ArmResult
 
 _MOUNT = "/src"
+_CONFIG_MOUNT = "/sc-config.toml"
+_PKG = Path(__file__).resolve().parent.parent
 
 # The one ruleset the semgrep arm runs. Calibration records pin it (R7): a
 # fitted record only auto-applies when the run's ruleset matches the pin.
@@ -44,6 +46,10 @@ class ScannerSpec:
     # honoured (a repo may legitimately ignore vendored code) but they mean
     # coverage is REDUCED, and a reduced scan must never report as verified.
     ignore_files: tuple[str, ...] = ()
+    # A config file WE ship, passed explicitly so the tool never auto-loads one
+    # from the scanned repository (gitleaks reads <source>/.gitleaks.toml,
+    # osv-scanner reads osv-scanner.toml, when none is given). Package-relative.
+    config_file: str | None = None
 
 
 SCANNER_SPECS: dict[str, ScannerSpec] = {
@@ -65,10 +71,14 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
         ignore_files=(".semgrepignore",)),
     "gitleaks": ScannerSpec(
         name="gitleaks", family="gitleaks", bin="gitleaks", image="zricethezav/gitleaks:latest",
+        # --config pinned (R12 round 20, verified live): with none given, gitleaks
+        # auto-loads <source>/.gitleaks.toml, so a repository allowlisting every
+        # path came out as a verified clean scan with exit 0.
         local_args=("detect", "--source={target}", "--no-git", "--report-format=sarif",
-                    "--report-path={out}/gitleaks.sarif", "--redact"),
+                    "--report-path={out}/gitleaks.sarif", "--redact", "--config={config}"),
         docker_args=("detect", "--source=" + _MOUNT, "--no-git", "--report-format=sarif",
-                     "--report-path=/out/gitleaks.sarif", "--redact"),
+                     "--report-path=/out/gitleaks.sarif", "--redact", "--config=" + _CONFIG_MOUNT),
+        config_file="data/gitleaks.toml",
         sarif_name="gitleaks.sarif", success_exit_codes=(0, 1),
         version_args=("version",), docker_version_args=("version",), network=False,
         ignore_files=(".gitleaksignore",)),
@@ -86,14 +96,18 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
         # is this tool's decision (the scratch copy's excludes), never the
         # scanned repository's.
         local_args=("scan", "source", "--recursive", "--no-ignore", "--format=sarif",
-                    "--output={out}/osv.sarif", "{target}"),
+                    "--config={config}", "--output={out}/osv.sarif", "{target}"),
         docker_args=("scan", "source", "--recursive", "--no-ignore", "--format=sarif",
-                     "--output=/out/osv.sarif", _MOUNT),
+                     "--config=" + _CONFIG_MOUNT, "--output=/out/osv.sarif", _MOUNT),
+        config_file="data/osv-scanner.toml",
         sarif_name="osv.sarif", success_exit_codes=(0, 1),
         version_args=("--version",), docker_version_args=("--version",), network=True,
         not_applicable_markers=("no package sources found",),
         not_applicable_exit_codes=(128,),           # verified live
-        ignore_files=("osv-scanner.toml",)),
+        # osv-scanner.toml is NOT in ignore_files: with --config pinned the
+        # repo's file is inert (verified live — an IgnoredVulns entry for a real
+        # CVE changed nothing), so flagging it would be a false degradation.
+        ignore_files=()),
 }
 
 
@@ -132,14 +146,22 @@ class ScannerArm:
         raw_dir = out_dir / "raw" / self.name
         raw_dir.mkdir(parents=True, exist_ok=True)
         use_docker = shutil.which(self.spec.bin) is None
+        cfg = (_PKG / self.spec.config_file) if self.spec.config_file else None
+        if cfg is not None and not cfg.is_file():
+            # never fall back to "no --config": that is exactly the auto-load
+            # path the pinned file exists to close
+            return ArmResult(name=self.name, kind=self.kind, family=self.family, ok=False,
+                             exit_code=None, findings=[],
+                             error=f"pinned config missing: {cfg} (packaging error)")
         if use_docker:
             net = [] if self.spec.network else ["--network=none"]
+            cfg_mount = ["-v", f"{cfg}:{_CONFIG_MOUNT}:ro"] if cfg else []
             cmd = ["docker", "run", "--rm", *net,
-                   "-v", f"{target}:{_MOUNT}:ro", "-v", f"{raw_dir}:/out",
+                   "-v", f"{target}:{_MOUNT}:ro", "-v", f"{raw_dir}:/out", *cfg_mount,
                    self.spec.image, *self.spec.docker_args]
             scan_root: str | None = _MOUNT
         else:
-            fmt = {"target": str(target), "out": str(raw_dir)}
+            fmt = {"target": str(target), "out": str(raw_dir), "config": str(cfg)}
             cmd = [self.spec.bin, *[a.format(**fmt) for a in self.spec.local_args]]
             scan_root = str(target)
 
