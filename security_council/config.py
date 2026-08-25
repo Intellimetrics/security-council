@@ -47,12 +47,18 @@ PROFILES: dict[str, dict] = {
     # CI gate posture: same $0 arms; only findings NEW since the operator-set
     # baseline fail the build (no baseline set -> everything gates, fail-safe).
     "ci": {"policy": {"gate_baseline": "new"}},
-    # Deep audit: adds both dedicated AI reviewer arms (real vendor cost,
-    # budget-fused) and turns on the cross-vendor validation panel.
+    # Deep audit: adds the three house LLM-CLI reviewer arms (one per vendor
+    # family, so corroboration is cross-vendor) and turns on the validation
+    # panel. Real vendor cost, on your CLI subscriptions.
+    #
+    # R12: this previously shipped the two DEDICATED vendor plugin arms
+    # (claude-security, codex-security). They remain available via
+    # `--arms claude-security,codex-security` and are more thorough, but they
+    # are not what a default profile should carry: codex-security needs its own
+    # login and separate per-run budget fuses, while the house arms are
+    # live-verified on all three CLIs and need neither.
     "deep": {"arms": {"enabled": ["semgrep", "gitleaks", "osv-scanner",
-                                  "claude-security", "codex-security"],
-                      "options": {"claude-security": {"effort": "low", "max_budget_usd": 10},
-                                  "codex-security": {"max_cost_usd": 8}}},
+                                  "claude", "codex", "agy"]},
              "defaults": {"validate": True}},
     # Government / compliance posture: $0 arms + CI-style baseline gating; the
     # paperwork itself comes from `report <run> --bundle gov` afterwards.

@@ -21,14 +21,29 @@ def test_profiles_reference_only_known_arms_and_valid_keys():
 
 
 def test_config_file_profile_applies_under_file_keys(tmp_path):
+    """A profile fills in what the file does not say; the file always wins."""
     (tmp_path / ".security-council.yaml").write_text(
-        "profile: deep\narms:\n  options:\n    claude-security: {max_budget_usd: 3}\n")
+        "profile: deep\narms:\n  options:\n    codex: {max_cost_usd: 3}\n")
     c = cfg.load_config(tmp_path)
-    assert "claude-security" in c["arms"]["enabled"]              # from the profile
+    assert "codex" in c["arms"]["enabled"]                        # from the profile
     assert c["defaults"]["validate"] is True                      # from the profile
-    assert c["arms"]["options"]["claude-security"]["max_budget_usd"] == 3   # file wins
-    assert c["arms"]["options"]["claude-security"]["effort"] == "low"       # profile kept
+    assert c["arms"]["options"]["codex"]["max_cost_usd"] == 3     # from the file
     assert c["profile"] == "deep"
+
+
+def test_config_file_overrides_a_value_the_profile_sets(tmp_path):
+    (tmp_path / ".security-council.yaml").write_text(
+        "profile: deep\ndefaults:\n  validate: false\n")
+    c = cfg.load_config(tmp_path)
+    assert c["defaults"]["validate"] is False      # file beats the profile's True
+
+
+def test_deep_profile_only_ships_live_verified_arms(tmp_path):
+    """R12: `deep` used to enable the dedicated vendor plugins, one of which
+    needs its own login. A shipped profile must only contain arms that work."""
+    enabled = cfg.resolve_profile({}, "deep")["arms"]["enabled"]
+    assert "claude-security" not in enabled and "codex-security" not in enabled
+    assert {"claude", "codex", "agy"} <= set(enabled)   # one per vendor family
 
 
 def test_unknown_profile_in_config_fails_closed(tmp_path):

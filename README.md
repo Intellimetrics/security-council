@@ -15,6 +15,20 @@ reading the reports. security-council attacks both at once:
   cross-examination panel** and demoted — but by design it is **never
   silently deleted**, so a real bug can't be quietly buried.
 
+### What you get by default, and what costs money
+
+Be clear about this before you start:
+
+| | Default (`quick`, `ci`, `gov`) | `--profile deep` / `--validate` |
+|---|---|---|
+| Scanners | semgrep, gitleaks, osv-scanner | + AI reviewers on claude, codex and agy |
+| AI cross-examination panel | **off** | on |
+| Cost | **$0** — no AI calls at all | real vendor spend on your CLI subscriptions |
+
+The default is deterministic scanners only. Cross-vendor agreement scoring and
+the cross-examination panel are the *opt-in* half of this tool — they are what
+the design is about, but they are not what you get for free.
+
 ```mermaid
 flowchart LR
     A[your repo] --> B[isolated copy]

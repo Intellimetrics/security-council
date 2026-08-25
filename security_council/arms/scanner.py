@@ -32,6 +32,11 @@ class ScannerSpec:
     version_args: tuple[str, ...]           # local: [bin, *version_args]
     docker_version_args: tuple[str, ...]    # docker: [run IMAGE, *docker_version_args]
     network: bool                   # docker: allow network (rules/db)
+    # Output the tool emits when it had NOTHING IN SCOPE rather than when it
+    # failed. osv-scanner exits non-zero and writes no SARIF on a repo with no
+    # dependency manifests, which is not-applicable, not a failure — without
+    # this every dependency-free repo scans "degraded" (exit 3) instead of clean.
+    not_applicable_markers: tuple[str, ...] = ()
 
 
 SCANNER_SPECS: dict[str, ScannerSpec] = {
@@ -59,7 +64,8 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
         local_args=("scan", "source", "--format=sarif", "--output={out}/osv.sarif", "{target}"),
         docker_args=("scan", "source", "--format=sarif", "--output=/out/osv.sarif", _MOUNT),
         sarif_name="osv.sarif", success_exit_codes=(0, 1),
-        version_args=("--version",), docker_version_args=("--version",), network=True),
+        version_args=("--version",), docker_version_args=("--version",), network=True,
+        not_applicable_markers=("no package sources found",)),
 }
 
 
@@ -115,6 +121,25 @@ class ScannerArm:
         findings = []
         error = "" if r.ok else (r.stderr or f"exit {r.exit_code}")[:500]
         raw_count = 0
+        cov: dict = {}
+        blob = f"{r.stdout}\n{r.stderr}".lower()
+        not_applicable = any(m in blob for m in self.spec.not_applicable_markers)
+        if not sarif_path.is_file():
+            if not_applicable:
+                # nothing in scope for this tool — honest "clean" for its category
+                r.ok, error = True, ""
+                cov["not_applicable"] = True
+            elif r.ok:
+                # R12: THE dangerous case. The tool exited inside
+                # success_exit_codes (semgrep/gitleaks/osv all treat 1 as
+                # success = "findings found") but produced NO report, so nothing
+                # was actually examined — and we returned ok=True with
+                # findings=[], i.e. a silent CLEAN result. That is the exact
+                # failure mode this project exists to prevent. Fail loudly.
+                r.ok = False
+                error = (f"exited {r.exit_code} but wrote no {self.spec.sarif_name} — "
+                         f"nothing was scanned (coverage unverified, NOT clean)")
+                cov["coverage_unverified"] = True
         if sarif_path.is_file():
             try:
                 sarif = json.load(open(sarif_path))
@@ -132,5 +157,5 @@ class ScannerArm:
             name=self.name, kind=self.kind, family=self.family, ok=r.ok, exit_code=r.exit_code,
             error=error, findings=findings, tool_version=version, elapsed_seconds=r.elapsed_seconds,
             command=cmd, raw_path=str(sarif_path) if sarif_path.is_file() else None,
-            coverage={"raw_results": raw_count, "normalized": len(findings)},
+            coverage={"raw_results": raw_count, "normalized": len(findings), **cov},
         )
