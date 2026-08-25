@@ -200,8 +200,16 @@ G10, G11, I7b, I13, widened I6. The simplest exploit — `printf '*' >
 sixteen; repo ignore-files now make coverage `partial`. osv-scanner runs
 `--recursive` (nested manifests were a silent pass). CI templates run
 `python -P -m` (a `security_council/` dir in the scanned repo replaced the
-scanner). Rounds 17–18 returned YES (antigravity, claude); codex times out in
-most rounds — plan for 2/3.
+scanner). Rounds 17–21 each surfaced one more default-config path, all
+reproduced live then closed: `.gitignore` honoured by osv (`--no-ignore`;
+semgrep pinned `--no-git-ignore`); gitleaks auto-loading the repo's
+`.gitleaks.toml` and osv reading `osv-scanner.toml` (configs now SHIPPED in
+`data/` and passed with `--config`, docker ro-mount at `/sc-config.toml`); the
+repo's own `.security-council.yaml` choosing the arms/gate (`--config PATH`,
+`--ignore-repo-config`, `config_source` in manifest + summary, CI templates
+pass the flag). Rule: **the scanned repository never decides what gets
+scanned.** codex times out or votes "no" with no evidence in most rounds;
+antigravity often returns empty — plan for 1–2 usable peers.
 
 **Not functional in 0.1.0, labelled so in `--help`:** `--fix`, `--verify-fix`,
 `--analyze`. Deterministic verify-fix (re-run scanners on the patched tree) is
