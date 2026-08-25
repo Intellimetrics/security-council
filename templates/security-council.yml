@@ -50,9 +50,13 @@ steps:
         --arms "${{ parameters.arms }}" \
         --fail-on-severity "${{ parameters.failOnSeverity }}" \
         --gate-baseline "${{ parameters.gateBaseline }}" \
-        ${{ parameters.extraScanArgs }}
+        ${{ parameters.extraScanArgs }} \
+        --json > "$(Agent.TempDirectory)/security-council-scan.json"
       SCAN_EXIT=$?
-      RUN_DIR=$(ls -d "${{ parameters.scanPath }}/.security-council/runs"/*/ 2>/dev/null | sort | tail -1)
+      # R12 round 23: run dir from the scan's own JSON record, never a glob of
+      # the repo's runs/ dir (a committed runs/99999999_999999/ would be reported)
+      RUN_DIR=$(python3 -P -c 'import json,sys; print(json.load(open(sys.argv[1]))["out_dir"])' \
+        "$(Agent.TempDirectory)/security-council-scan.json" 2>/dev/null || true)
       echo "##vso[task.setvariable variable=securityCouncilExit]${SCAN_EXIT}"
       echo "##vso[task.setvariable variable=securityCouncilRunDir]${RUN_DIR%/}"
       exit 0

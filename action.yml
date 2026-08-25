@@ -75,11 +75,15 @@ runs:
           --ignore-repo-config \
           --arms "${{ inputs.arms }}" \
           --fail-on-severity "${{ inputs.fail-on-severity }}" \
-          --gate-baseline "${{ inputs.gate-baseline }}"
+          --gate-baseline "${{ inputs.gate-baseline }}" \
+          --json > "$RUNNER_TEMP/security-council-scan.json"
         SCAN_EXIT=$?
         set -e
-        RUN_DIR=$(ls -d "${{ inputs.path }}/.security-council/runs"/*/ 2>/dev/null | sort | tail -1)
-        RUN_DIR="${RUN_DIR%/}"
+        # R12 round 23: the run dir comes from the scan's own JSON record, never
+        # from globbing the repo's runs/ dir — a committed runs/99999999_999999/
+        # would otherwise be uploaded and annotated in place of the real run.
+        RUN_DIR=$(python3 -P -c 'import json,sys; print(json.load(open(sys.argv[1]))["out_dir"])' \
+          "$RUNNER_TEMP/security-council-scan.json" 2>/dev/null || true)
         echo "exit-code=${SCAN_EXIT}" >> "$GITHUB_OUTPUT"
         echo "run-dir=${RUN_DIR}" >> "$GITHUB_OUTPUT"
         if [ -f "${RUN_DIR}/merged.sarif" ]; then

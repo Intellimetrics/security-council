@@ -314,3 +314,16 @@ def test_ci_scan_commands_shell_parse_cleanly():
         assert "\\" not in tokens, (path, tokens)                      # no stray backslash arg
         assert tokens[:4] == tokens[0:1] + ["-P", "-m", "security_council.cli"], (path, tokens)
         assert "--ignore-repo-config" in tokens, path
+
+
+def test_ci_templates_take_the_run_dir_from_the_scan_record_not_a_glob():
+    """R12 round 23 (claude): `ls -d runs/*/ | sort | tail -1` picked the
+    lexically-last run dir under the SCANNED repo, so a committed
+    runs/99999999_999999/ would be uploaded and annotated in place of the real
+    run (the exit code was unaffected; the reports were spoofable)."""
+    from pathlib import Path
+    for path in ("action.yml", "templates/security-council.yml",
+                 "templates/security-council.gitlab-ci.yml"):
+        text = Path(path).read_text()
+        assert 'runs"/*/' not in text, path
+        assert "--json" in text and '["out_dir"]' in text, path
