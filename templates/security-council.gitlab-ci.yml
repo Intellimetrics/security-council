@@ -37,19 +37,25 @@ security_council:
     SECURITY_COUNCIL_GATE_BASELINE: 'all'
   script:
     - pip install security-council
-    - set +e
-    - >-
-      python -m security_council.cli scan "$CI_PROJECT_DIR"
-      --arms "$SECURITY_COUNCIL_ARMS"
-      --fail-on-severity "$SECURITY_COUNCIL_FAIL_ON"
-      --gate-baseline "$SECURITY_COUNCIL_GATE_BASELINE"
-    - SCAN_EXIT=$?
-    - set -e
+    # R12: `SCAN_EXIT=$?` MUST be in the same script entry as the command.
+    # GitLab Runner runs each list entry as its own line with its own output
+    # markers, so a `$?` on the next entry can read that machinery's status
+    # instead of the scan's — and the job would then pass with findings present.
+    # Capturing in one entry is what makes the gate real.
+    - |
+      set +e
+      python -m security_council.cli scan "$CI_PROJECT_DIR" \
+        --arms "$SECURITY_COUNCIL_ARMS" \
+        --fail-on-severity "$SECURITY_COUNCIL_FAIL_ON" \
+        --gate-baseline "$SECURITY_COUNCIL_GATE_BASELINE"
+      SCAN_EXIT=$?
+      set -e
+      echo "$SCAN_EXIT" > "$CI_PROJECT_DIR/.security-council-exit"
     - RUN_DIR=$(ls -d "$CI_PROJECT_DIR/.security-council/runs"/*/ | sort | tail -1); RUN_DIR=${RUN_DIR%/}
     - python -m security_council.ci.gitlab "$RUN_DIR" --write-reports "$CI_PROJECT_DIR" --post-mr-note
     - cp "$RUN_DIR/merged.sarif" "$CI_PROJECT_DIR/security-council.sarif" || true
     - cp "$RUN_DIR/summary.md" "$CI_PROJECT_DIR/security-council-summary.md" || true
-    - exit $SCAN_EXIT
+    - exit "$(cat "$CI_PROJECT_DIR/.security-council-exit")"
   artifacts:
     when: always
     reports:

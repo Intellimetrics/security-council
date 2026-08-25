@@ -85,8 +85,12 @@ def test_empty_findings_partial_is_coverage_unverified(monkeypatch, tmp_path):
     stdout = json.dumps({"result": json.dumps(_envelope([], completion="partial")),
                          "model": "claude-fable-5", "is_error": False})
     res = _run("claude", monkeypatch, tmp_path, stdout=stdout)
-    assert res.ok and res.findings == []
+    assert res.findings == []
     assert res.coverage["coverage_unverified"] is True
+    # R12: NOT ok. It used to be, so arms that declined every category still
+    # counted toward min_arms_ok and a run of only such arms exited 0 = clean.
+    assert res.ok is False
+    assert "NOT clean" in res.error
 
 
 def test_empty_findings_complete_is_clean(monkeypatch, tmp_path):

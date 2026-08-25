@@ -99,6 +99,13 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
     ok = [r for r in results if r.ok]
     failed = [r for r in results if not r.ok]
     degr = [{"kind": "arm_failed", "arm": r.name, "detail": r.error} for r in failed]
+    # R12: structural floor, independent of min_arms_ok. With `min_arms_ok: 0`
+    # (or `--min-arms 0`) and no arm succeeding, every later branch was skipped
+    # and this returned 0 — a scan where NOTHING ran reported the repo clean.
+    if not ok:
+        degr.append({"kind": "no_arms_succeeded",
+                     "detail": "no arm produced a usable result; nothing was scanned"})
+        return 3, degr
     if len(ok) < min_arms:
         degr.append({"kind": "insufficient_arms", "detail": f"{len(ok)} ok < min_arms_ok {min_arms}"})
         return 3, degr

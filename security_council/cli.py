@@ -70,13 +70,17 @@ def cmd_scan(args) -> int:
     elif getattr(args, "diff", None):
         diff = DiffSpec(kind="diff", base=args.diff, head=args.diff_head)
     if getattr(args, "deep", False):
+        # R12: this only ever touched the two dedicated plugin arms, so once the
+        # `deep` PROFILE moved to the house arms the `--deep` FLAG became a
+        # no-op for it. Apply depth to whichever arms are actually enabled.
         opts = config["arms"].setdefault("options", {})
-        for dn in ("codex-security", "claude-security"):
-            opts.setdefault(dn, {})
-            if dn == "codex-security":
-                opts[dn]["mode"] = "deep"
-            else:
-                opts[dn]["effort"] = "high"
+        enabled = set(config["arms"].get("enabled") or ())
+        for dn, key, val in (("codex-security", "mode", "deep"),
+                             ("claude-security", "effort", "high"),
+                             ("claude", "effort", "high"),
+                             ("agy", "effort", "high")):
+            if dn in enabled:
+                opts.setdefault(dn, {})[key] = val
     if diff is not None and not any(
             getattr(build_arm(n), "supports_diff", False) for n in names):
         print(f"error: --diff/--working-tree needs a diff-capable arm "

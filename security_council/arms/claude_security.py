@@ -96,6 +96,15 @@ class ClaudeSecurityArm:
         if not dirs:
             return False, (f"claude-security plugin not installed "
                            f"(claude plugin install claude-security@{PLUGIN_MARKETPLACE})")
+        # R12: `scan-changes` scans COMMITTED changes only. DiffSpec's docstring
+        # already said this arm "is skipped in this mode", but nothing skipped
+        # it — so asking for a working-tree scan silently got a committed-diff
+        # scan instead, and uncommitted vulnerable code went unexamined while
+        # the arm reported success. Refuse, and let the run degrade honestly.
+        if getattr(self, "diff", None) is not None and self.diff.kind == "working_tree":
+            return False, ("claude-security scan-changes covers committed changes only; "
+                           "it cannot scan the working tree (use codex-security, or drop "
+                           "--working-tree)")
         return True, f"local: {p} + plugin {Path(dirs[-1]).name}"
 
     def _env(self) -> dict:

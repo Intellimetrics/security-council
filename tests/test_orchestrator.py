@@ -95,7 +95,17 @@ def test_insufficient_arms_exit_3(tmp_path):
     arms = [FakeArm("gitleaks", "scanner", "gitleaks", [], ok=False, error="boom")]
     run = _run(arms, tmp_path, min_arms_ok=1)
     assert run.exit_code == 3
-    assert any(d["kind"] == "insufficient_arms" for d in run.degradations)
+    # zero successful arms trips the structural floor before the min_arms count
+    assert any(d["kind"] == "no_arms_succeeded" for d in run.degradations)
+
+
+def test_no_arms_succeeded_cannot_pass_even_with_min_arms_zero(tmp_path):
+    """R12: with `min_arms_ok: 0` and nothing succeeding, every later branch was
+    skipped and _exit_code returned 0 — a scan where NOTHING ran said clean."""
+    arms = [FakeArm("gitleaks", "scanner", "gitleaks", [], ok=False, error="boom")]
+    run = _run(arms, tmp_path, min_arms_ok=0)
+    assert run.exit_code == 3
+    assert any(d["kind"] == "no_arms_succeeded" for d in run.degradations)
 
 
 def test_arm_crash_is_isolated(tmp_path):

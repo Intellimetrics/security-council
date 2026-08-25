@@ -197,8 +197,18 @@ class LlmCliArm:
                "declined_categories": (meta or {}).get("declined_categories", [])}
         if not findings and completion != "complete":
             cov["coverage_unverified"] = True    # zero findings but not a clean complete scan
-        return ArmResult(name=self.name, kind=self.kind, family=self.family, ok=True,
-                         exit_code=r.exit_code, error="", findings=findings,
+        # R12: this returned ok=True regardless, so an arm that DECLINED every
+        # category still counted as a successful arm. With only such arms
+        # enabled, `results` was non-empty, nothing gated, and the run exited 0
+        # — a repo reported clean by arms that examined nothing.
+        unverified = bool(cov.get("coverage_unverified"))
+        return ArmResult(name=self.name, kind=self.kind, family=self.family,
+                         ok=not unverified,
+                         exit_code=r.exit_code,
+                         error=("" if not unverified else
+                                f"completion={completion or 'unknown'} with no findings — "
+                                f"coverage unverified, NOT clean"),
+                         findings=findings,
                          tool_version=parsed.served_model, elapsed_seconds=r.elapsed_seconds,
                          command=_redact(cmd), raw_path=str(raw_dir / "envelope.json"), coverage=cov)
 

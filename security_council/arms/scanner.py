@@ -125,8 +125,10 @@ class ScannerArm:
         blob = f"{r.stdout}\n{r.stderr}".lower()
         not_applicable = any(m in blob for m in self.spec.not_applicable_markers)
         if not sarif_path.is_file():
-            if not_applicable:
-                # nothing in scope for this tool — honest "clean" for its category
+            if not_applicable and not r.timed_out:
+                # nothing in scope for this tool — honest "clean" for its category.
+                # Bounded to a run that actually finished: a timeout that happens
+                # to print the marker is a failure, not a not-applicable.
                 r.ok, error = True, ""
                 cov["not_applicable"] = True
             elif r.ok:
@@ -152,7 +154,12 @@ class ScannerArm:
                     r.ok = True
                     error = ""
             except Exception as e:  # noqa: BLE001
+                # R12: this set an error string but left r.ok TRUE, so an
+                # unreadable report produced ok=True with findings=[] — the same
+                # silent clean result as a missing report, one branch over.
+                r.ok = False
                 error = error or f"sarif parse failed: {e}"
+                cov["coverage_unverified"] = True
         return ArmResult(
             name=self.name, kind=self.kind, family=self.family, ok=r.ok, exit_code=r.exit_code,
             error=error, findings=findings, tool_version=version, elapsed_seconds=r.elapsed_seconds,

@@ -79,7 +79,12 @@ def test_gitlab_template_wires_reports_and_gate():
     script = "\n".join(job["script"])
     assert "security_council.cli scan" in script and "--gate-baseline" in script
     assert "security_council.ci.gitlab" in script and "--write-reports" in script
-    assert script.rstrip().endswith("exit $SCAN_EXIT")
+    # R12: SCAN_EXIT must be captured in the SAME script entry as the scan —
+    # GitLab Runner runs each entry separately, so a `$?` on the next entry can
+    # read that machinery's status and the job would pass with findings.
+    scan_entry = next(e for e in job["script"] if "security_council.cli scan" in e)
+    assert "SCAN_EXIT=$?" in scan_entry
+    assert script.rstrip().endswith('exit "$(cat "$CI_PROJECT_DIR/.security-council-exit")"')
 
 
 def test_github_action_composite_shape():
