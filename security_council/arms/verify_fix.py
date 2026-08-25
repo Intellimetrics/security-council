@@ -38,7 +38,9 @@ class VerifyFixArm:
 
     def __init__(self, *, finding: dict, patch_path: str, patch_sha256: str,
                  base_commit: str | None = None, family: str = "codex",
-                 model: str | None = None, timeout: int = 1800) -> None:
+                 model: str | None = None, timeout: int = 1800,
+                 fix_family: str | None = None) -> None:
+        self.fix_family = fix_family            # vendor family that PRODUCED the patch
         self.finding = finding
         self.patch_path = patch_path            # abs path to the .patch on disk
         self.patch_sha256 = patch_sha256
@@ -54,7 +56,12 @@ class VerifyFixArm:
         ok, detail = _fence.bwrap_available()
         if not ok:
             return False, f"verify-fix needs bwrap: {detail}"
-        return (bool(shutil.which(self.command)), f"fenced: {self.command} {self.skill}")
+        if not shutil.which(self.command):
+            return False, f"{self.command} not on PATH"
+        reach, why = _fence.reachable_in_fence(self.command)   # see fix.py
+        if not reach:
+            return False, f"verify-fix cannot run fenced: {why}"
+        return True, f"fenced: {self.command} {self.skill}"
 
     def _apply_patch(self, work: Path) -> bool:
         """The ORCHESTRATOR applies the patch to a fresh copy — never the agent."""
@@ -121,8 +128,11 @@ class VerifyFixArm:
                   note: str, ok: bool, exit_code=None, elapsed: float = 0.0) -> ArmResult:
         fid = self.finding.get("id", "")
         rel = f"verify:{fid}:{self.patch_sha256[:12]}"
-        # non-independent when the verifier is the same vendor family that fixed it
-        independent = True
+        # non-independent when the verifier is the same vendor family that fixed it.
+        # R11: this was hardcoded True while the orchestrator passes the FIXING
+        # arm's own family as the verifier family — so it was always wrong, and
+        # always in the flattering direction. Unknown provenance => not independent.
+        independent = bool(self.fix_family) and self.family != self.fix_family
         art = Artifact(
             id=artifact_id(kind="verify-fix", producer=self.name, path=rel, run_id=run_id),
             kind="verify-fix", title=f"Verify-fix: {verdict} for {fid}", path=rel,
@@ -140,10 +150,22 @@ class VerifyFixArm:
                          coverage=cov, artifacts=[evidence])
 
 
+# R11: substring matching made "could not determine whether this is fixed"
+# return "fixed" — claiming a patch landed when the verifier said it could not
+# tell is the fail-unsafe direction. A hedged verdict is UNPROVEN.
+_HEDGES = ("could not determine", "cannot determine", "unable to determine",
+           "could not confirm", "cannot confirm", "unable to confirm",
+           "could not verify", "cannot verify", "unable to verify",
+           "inconclusive", "unclear", "uncertain", "not certain",
+           "insufficient", "no evidence", "cannot assess", "unable to assess")
+
+
 def _parse_verdict(stdout: str, stderr: str) -> str:
     text = f"{stdout}\n{stderr}".lower()
     if "not fixed" in text or "still vulnerable" in text or "not_fixed" in text:
         return "not_fixed"
+    if any(h in text for h in _HEDGES):
+        return "unproven"
     if "fixed" in text or "remediat" in text:
         return "fixed"
     return "unproven"

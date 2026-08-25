@@ -126,7 +126,7 @@ def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: 
             varm = VerifyFixArm(finding=row, patch_path=res.raw_path,
                                 patch_sha256=meta.get("sha256", ""),
                                 base_commit=meta.get("base_commit"),
-                                family=arm.family, model=model)
+                                family=arm.family, fix_family=arm.family, model=model)
             vres = _safe_run(varm, target, out_dir, run_id, collected_at)
             artifacts += vres.artifacts
             if vres.artifacts:

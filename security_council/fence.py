@@ -34,6 +34,26 @@ FENCE_TTL_SECONDS = 3600
 _RO_SYSTEM_DIRS = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc")
 
 
+def reachable_in_fence(cmd: str) -> tuple[bool, str]:
+    """Whether `cmd` resolves to a path the fence actually binds.
+
+    R10 (verified live): the fence binds only `_RO_SYSTEM_DIRS`, but the vendor
+    CLIs live outside them — `codex` under `~/.nvm/versions/node/*/bin`,
+    `claude` and `agy` under `~/.local/bin`. A fenced run of one produced
+    `bwrap: execvp codex: No such file or directory` several minutes into the
+    lane. Checking up front turns that into an honest `available()` refusal.
+    """
+    p = shutil.which(cmd)
+    if not p:
+        return False, f"{cmd} not on PATH"
+    real = str(Path(p).resolve())
+    if any(real == d or real.startswith(d.rstrip("/") + "/") for d in _RO_SYSTEM_DIRS):
+        return True, f"fence binds {real}"
+    return False, (f"{cmd} resolves to {real}, which the fence does not bind "
+                   f"(binds only {', '.join(_RO_SYSTEM_DIRS)}) — it would be "
+                   f"invisible inside the namespace")
+
+
 def bwrap_available() -> tuple[bool, str]:
     p = shutil.which("bwrap")
     if not p:
@@ -148,18 +168,23 @@ def allowlisted_env(*, home: str, extra_keys: tuple[str, ...] = ()) -> dict:
     """A minimal environment for a fenced agent: base locale/PATH + vendor auth,
     HOME pointed at the ephemeral dir, NESTED markers. CI/cloud tokens dropped."""
     src = os.environ
-    out: dict[str, str] = {}
+    allowed: dict[str, str] = {}
     for k in (*_BASE_ENV_KEYS, *_VENDOR_ENV_KEYS, *extra_keys):
         if k in src:
-            out[k] = src[k]
+            allowed[k] = src[k]
     for k, v in src.items():
-        if k.startswith(_VENDOR_ENV_PREFIXES) and not any(d in k.upper() for d in ("SECRET",)):
-            out[k] = v
-    # positive allowlist wins, but scrub anything that slipped in by prefix
-    out = {k: v for k, v in out.items()
-           if k in (*_BASE_ENV_KEYS, *extra_keys)
-           or k.startswith(_VENDOR_ENV_PREFIXES)
-           or not any(d in k.upper() for d in _ENV_DENY_SUBSTR)}
+        if k.startswith(_VENDOR_ENV_PREFIXES):
+            allowed[k] = v
+    # R11: DENY WINS over the prefix allow. The old comprehension exempted
+    # anything matching a vendor prefix, and every _VENDOR_ENV_KEYS entry also
+    # matches a prefix — so _ENV_DENY_SUBSTR, labelled "never pass these, even
+    # if a broad rule would", could not remove a single key. A var such as
+    # CODEX_GITHUB_TOKEN or ANTHROPIC_AWS_SECRET rode straight in on its prefix.
+    # Only the explicitly enumerated vendor keys and the caller's extra_keys are
+    # exempt; none of those contain a denied substring.
+    exempt = frozenset((*_BASE_ENV_KEYS, *_VENDOR_ENV_KEYS, *extra_keys))
+    out = {k: v for k, v in allowed.items()
+           if k in exempt or not any(d in k.upper() for d in _ENV_DENY_SUBSTR)}
     out["HOME"] = home
     out["SECURITY_COUNCIL_NESTED"] = "1"
     out["LLM_COUNCIL_NESTED"] = "1"

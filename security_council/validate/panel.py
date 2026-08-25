@@ -12,6 +12,7 @@ from ..model import (
     Verdict,
     _URI_RE,
 )
+from ..score import _anchor_ranges, _is_anchored
 from . import council_client
 from .council_client import CouncilResult
 from .prompts import build_validation_prompt
@@ -48,6 +49,22 @@ def _citations(evidence: list[dict]) -> tuple[list[EvidenceCitation], int]:
     return out, malformed
 
 
+def _refutation_block_reason(op: PanelOpinion, anchors) -> str | None:
+    """Why this `false_positive` vote may not carry a refutation — None if it may.
+
+    R10 follow-up: anchoring was originally enforced only through
+    `_fully_verified_defender` -> G2, which applies only to findings with a
+    deterministic source. That left AGENT-ONLY findings — the cross-file IDOR
+    shape this project exists to catch — refutable by peers citing
+    `README.md:1-1`. The anchor now gates every refutation, at the panel.
+    """
+    if op.status != "ok":
+        return op.status                      # unevidenced / unreliable
+    if not any(_is_anchored(c, anchors) for c in op.citations):
+        return "unanchored"
+    return None
+
+
 def _opinion(peer, prompt_sha256: str) -> PanelOpinion:
     role = ROLE_BY_STANCE.get(peer.stance or "", "adjudicator")
     cites, malformed = _citations(peer.evidence)
@@ -63,7 +80,10 @@ def _opinion(peer, prompt_sha256: str) -> PanelOpinion:
     elif pass_rate is not None and pass_rate < 0.67:
         status = "unreliable"
     return PanelOpinion(
-        role=role, participant=peer.name, family=FAMILY_BY_PEER.get(peer.name, peer.name),
+        # an UNMAPPED peer is of unknown provenance: bucket it as "unknown" so two
+        # of them cannot pass as two independent vendor families. Add a row to
+        # FAMILY_BY_PEER when seating a new peer; `participant` still names it.
+        role=role, participant=peer.name, family=FAMILY_BY_PEER.get(peer.name, "unknown"),
         prompt_sha256=prompt_sha256, verdict=verdict,
         rationale=(peer.blockers[0] if peer.blockers else ""),
         model_id=peer.model, citations=cites, citation_pass_rate=pass_rate, status=status)
@@ -90,11 +110,12 @@ def synthesize_validation(finding: Finding, cr: CouncilResult, *, prompt_sha256:
     #      antigravity and gemini onto the same "google" family.)
     #  (c) ANY peer arguing false_positive off a fabricated citation forces human
     #      review — previously only the seat holding the defender role did.
-    refuters = [op for op in deciding
-                if op.verdict == "false_positive" and op.status == "ok"]
+    anchors = _anchor_ranges(finding)
+    fp_votes = [op for op in deciding if op.verdict == "false_positive"]
+    blocked_refuters = [(op, r) for op in fp_votes
+                        if (r := _refutation_block_reason(op, anchors)) is not None]
+    refuters = [op for op in fp_votes if _refutation_block_reason(op, anchors) is None]
     refuter_families = {op.family for op in refuters}
-    blocked_refuters = [op for op in deciding
-                        if op.verdict == "false_positive" and op.status != "ok"]
 
     # a defender that fabricated a citation is the classic auto-suppression failure
     defender_hallucinated = any(
@@ -129,8 +150,8 @@ def synthesize_validation(finding: Finding, cr: CouncilResult, *, prompt_sha256:
     if blocked_refuters:
         # say out loud that someone voted to drop this finding and was not counted
         evidence_check["refutation_blocked"] = {
-            "voters": [op.participant for op in blocked_refuters],
-            "statuses": [op.status for op in blocked_refuters],
+            "voters": [op.participant for op, _ in blocked_refuters],
+            "statuses": [reason for _, reason in blocked_refuters],
         }
     if advisory:
         # record what the vendor voters said and whether they DISAGREE — a signal

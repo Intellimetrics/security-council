@@ -17,11 +17,29 @@ Trust-boundary rules this module encodes:
 - Every artifact carries provenance: producer, model id, entitlement,
   safeguard posture (so a Mythos/Daybreak-produced write-up is labeled).
 
-Invocation contract (verified against the installed plugin): these are Codex
-plugin skills triggered as ``$threat-model`` etc. inside a codex session — no
-standalone CLI subcommand — analogous to claude-security's ``/claude-security``.
-The runner (`arms/artifact_runner.py`) drives that headlessly; like the
-dedicated scan arms it is built offline first, live-run pending real spend.
+Invocation contract — **CORRECTED BY R10 (2026-08-25), verified live.** The
+earlier claim here was that these are Codex plugin skills triggered as
+``$threat-model`` inside a codex session. That is wrong, and the lane could
+never have run:
+
+- ``codex plugin add`` installs from a marketplace snapshot only, so the
+  bundled plugin cannot be registered; ``codex plugin list`` shows only
+  gmail/github.
+- The reference producer (``@openai/codex-security``) runs ``codex exec
+  ... --disable plugins`` and **inlines** the skill instructions. It never
+  triggers ``$skill``.
+- ``codex-security`` exposes no threat-model/attack-path/hardening subcommand,
+  and ``skills list`` only wraps its own subcommands.
+- ``skills/threat-model/SKILL.md`` is not self-contained (it reads
+  ``../../references/*.md``) and states that standard scans build their threat
+  models within the ordinary workflow, never via this phase skill.
+
+These skills are internal phases of ``codex-security scan``, not a public API.
+``ArtifactRunnerArm.available()`` therefore refuses for the codex family rather
+than emitting an artifact stamped with vendor-skill provenance we cannot
+support. Reframing the lane onto our own house prompt (which would work across
+all three CLIs, with honest provenance) is an open decision — see
+``docs/reviews/R10-live-vendor-runs.md`` §4.
 """
 
 from __future__ import annotations

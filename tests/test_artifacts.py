@@ -79,7 +79,24 @@ def test_runner_builds_skill_prompt_and_returns_artifact(monkeypatch, tmp_path):
     a = res.artifacts[0]
     assert a["kind"] == "threat-model" and a["path"].startswith("raw/codex-analysis_threat-model/")
     assert a["export_excluded"] is False
-    assert "$threat-model" in captured["cmd"][captured["cmd"].index("-p") + 1]
+    # R10: the command must follow CODEX's real contract. `-p` on codex is
+    # `--profile`, not the prompt — passing it there is why the lane could
+    # never run. The prompt is the trailing positional arg of `codex exec`.
+    cmd = captured["cmd"]
+    assert cmd[:3] == ["codex", "exec", "--ignore-user-config"]
+    assert "-p" not in cmd
+    assert "--output-format" not in cmd          # a Claude Code flag
+    assert "$threat-model" in cmd[-1]
+
+
+def test_codex_analysis_lane_refuses_because_the_skill_is_unreachable():
+    """R10: these skills are internal phases of `codex-security scan`, not a
+    public surface. Refusing beats emitting an artifact stamped with
+    vendor-skill provenance we cannot support."""
+    arm = ArtifactRunnerArm(job="threat-model", family="codex")
+    ok, why = arm.available()
+    assert ok is False
+    assert "not independently invocable" in why
 
 
 def test_runner_failure_when_no_artifact(monkeypatch, tmp_path):

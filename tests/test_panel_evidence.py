@@ -12,6 +12,8 @@ Every scenario below was reproduced against the real code before it was fixed.
 from __future__ import annotations
 
 from security_council import policy, score
+from security_council.arms.base import ArmResult
+from security_council.orchestrator import _exit_code
 from security_council.validate import panel
 from tests.test_validate import _cite, _finding
 from tests.test_vendor_validate import _cr
@@ -25,6 +27,16 @@ IRRELEVANT = {"path": "README.md", "start_line": 1, "end_line": 1,
               "text": "unrelated", "verified": True}
 WHOLE_FILE = {"path": "app/reports.py", "start_line": 1, "end_line": 5000,
               "text": "the whole file", "verified": True}
+
+
+def _gates(f) -> bool:
+    """The property that actually matters: this finding still fails the build.
+    Asserting on the exact state label is brittle — `disputed`, `needs_human`
+    and `likely` all gate; only `refuted` escapes."""
+    arm = ArmResult(name="a", kind="scanner", family="x", ok=True, exit_code=0,
+                    error="", findings=[])
+    code, _ = _exit_code([f], [arm], {"policy": {"fail_on_severity": "high"}})
+    return code == 1
 
 
 def _judge(f, votes):
@@ -45,11 +57,13 @@ def test_irrelevant_citation_cannot_clear_G2():
     defender", so a SEMGREP-corroborated finding was refuted out of the gate."""
     f = _finding()                                   # semgrep + house sources
     assert f.corroboration.deterministic_sources     # G2 is in scope
-    _judge(f, [("claude", "for", "yes", [IRRELEVANT]),
-               ("codex", "against", "no", [IRRELEVANT]),
-               ("antigravity", "neutral", "no", [IRRELEVANT])])
-    assert f.disposition.state == "needs_human"      # was "refuted"
+    val = _judge(f, [("claude", "for", "yes", [IRRELEVANT]),
+                     ("codex", "against", "no", [IRRELEVANT]),
+                     ("antigravity", "neutral", "no", [IRRELEVANT])])
+    assert f.disposition.state != "refuted"          # was "refuted"
     assert f.disposition.lifecycle == "open"
+    assert _gates(f)
+    assert val.evidence_check["refutation_blocked"]["statuses"] == ["unanchored"] * 2
 
 
 def test_anchored_refutation_still_works():
@@ -70,7 +84,8 @@ def test_whole_file_span_does_not_anchor():
     _judge(f, [("claude", "for", "yes", [_cite()]),
                ("codex", "against", "no", [WHOLE_FILE]),
                ("antigravity", "neutral", "no", [WHOLE_FILE])])
-    assert f.disposition.state == "needs_human"
+    assert f.disposition.state != "refuted"
+    assert _gates(f)
 
 
 def test_defender_must_actually_be_refuting_to_clear_G2():
@@ -198,3 +213,108 @@ def test_no_cross_file_navigation_is_actually_assigned():
                      ("antigravity", "neutral", "yes", [_cite()])])
     assert val.no_cross_file_navigation is True
     assert "no_cross_file_navigation" in score.score_finding(f).needs_human_reasons
+
+
+# --------------------------------------------------------------------------- #
+# R10 follow-up: gaps council found in the FIRST version of this fix
+# --------------------------------------------------------------------------- #
+
+
+def test_agent_only_finding_cannot_be_refuted_by_unanchored_citations():
+    """The first cut enforced anchoring only through `_fully_verified_defender`
+    -> G2, which needs a deterministic source. That left AGENT-ONLY findings —
+    the cross-file IDOR shape this project exists to catch — refutable by peers
+    citing README.md:1-1. Reproduced before this was closed."""
+    f = _finding(sources=LLM_ONLY)
+    assert not f.corroboration.deterministic_sources        # G2 out of scope
+    val = _judge(f, [("claude", "for", "yes", [IRRELEVANT]),
+                     ("codex", "against", "no", [IRRELEVANT]),
+                     ("antigravity", "neutral", "no", [IRRELEVANT])])
+    assert val.verdict != "false_positive"
+    assert f.disposition.state != "refuted"
+    assert _gates(f)
+    assert val.evidence_check["refutation_blocked"]["statuses"] == ["unanchored"] * 2
+
+
+def test_agent_only_finding_can_still_be_refuted_when_anchored():
+    """Control: the panel keeps its purpose for agent-only findings too."""
+    f = _finding(sources=LLM_ONLY)
+    val = _judge(f, [("claude", "for", "yes", [IRRELEVANT]),
+                     ("codex", "against", "no", [_cite()]),
+                     ("antigravity", "neutral", "no", [_cite()])])
+    assert val.verdict == "false_positive"
+    assert f.disposition.state == "refuted"
+
+
+def test_unmapped_peers_do_not_pass_as_distinct_families():
+    """FAMILY_BY_PEER fell back to the participant NAME, so two unmapped peers
+    counted as two independent vendor families and could carry a refutation."""
+    f = _finding()
+    val = _judge(f, [("claude", "for", "yes", [IRRELEVANT]),
+                     ("peerA", "against", "no", [_cite()]),
+                     ("peerB", "neutral", "no", [_cite()])])
+    assert val.evidence_check["refuter_families"] == ["unknown"]
+    assert val.verdict != "false_positive"
+    assert _gates(f)
+
+
+# --------------------------------------------------------------------------- #
+# R11 — defects council found in the fix/verify lane and the fence
+# --------------------------------------------------------------------------- #
+
+
+def test_hedged_verify_verdict_is_unproven_not_fixed():
+    """Substring matching returned "fixed" for "could not determine whether this
+    is fixed" — claiming a patch landed when the verifier said it could not tell."""
+    from security_council.arms.verify_fix import _parse_verdict
+    assert _parse_verdict("could not determine whether this is fixed", "") == "unproven"
+    assert _parse_verdict("unable to confirm it is remediated", "") == "unproven"
+    assert _parse_verdict("inconclusive: the sink may still be reachable", "") == "unproven"
+    # and the real verdicts still parse
+    assert _parse_verdict("the issue is fixed", "") == "fixed"
+    assert _parse_verdict("still vulnerable", "") == "not_fixed"
+
+
+def test_verify_fix_independence_is_computed_not_asserted():
+    """`independent` was hardcoded True while the orchestrator passes the FIXING
+    arm's own family as the verifier family — always wrong, always flattering."""
+    from security_council.arms.verify_fix import VerifyFixArm
+
+    def indep(**kw):
+        a = VerifyFixArm(finding={}, patch_path="p", patch_sha256="0" * 64, **kw)
+        return bool(a.fix_family) and a.family != a.fix_family
+
+    assert indep(family="codex", fix_family="codex") is False    # what really happens
+    assert indep(family="claude", fix_family="codex") is True
+    assert indep(family="claude") is False                       # unknown => not independent
+
+
+def test_env_deny_list_beats_the_vendor_prefix(monkeypatch):
+    """_ENV_DENY_SUBSTR is labelled "never pass these, even if a broad rule
+    would", but every vendor key also matched a vendor PREFIX, and the prefix
+    clause exempted everything — so the deny list could not remove a key."""
+    from security_council import fence
+    for k, v in {"CODEX_GITHUB_TOKEN": "x", "ANTHROPIC_AWS_SECRET": "x",
+                 "GITHUB_TOKEN": "x", "ANTHROPIC_API_KEY": "keep",
+                 "CLAUDE_CONFIG_DIR": "keep"}.items():
+        monkeypatch.setenv(k, v)
+    env = fence.allowlisted_env(home="/tmp/h")
+    assert "CODEX_GITHUB_TOKEN" not in env
+    assert "ANTHROPIC_AWS_SECRET" not in env
+    assert "GITHUB_TOKEN" not in env
+    assert env["ANTHROPIC_API_KEY"] == "keep"     # enumerated vendor auth survives
+    assert env["CLAUDE_CONFIG_DIR"] == "keep"     # benign vendor config survives
+
+
+def test_fenced_arms_refuse_when_the_vendor_binary_is_unreachable():
+    """The fence binds only _RO_SYSTEM_DIRS; the vendor CLIs live outside it, so
+    a fenced run died minutes in with `bwrap: execvp codex: No such file or
+    directory`. available() now says so up front."""
+    from security_council import fence
+    ok, why = fence.reachable_in_fence("git")
+    assert ok and "/usr" in why
+    for cmd in ("codex", "claude", "agy"):
+        ok, why = fence.reachable_in_fence(cmd)
+        if ok:                     # a distro-packaged CLI under /usr would be fine
+            continue
+        assert "does not bind" in why

@@ -37,7 +37,7 @@ participants:
     - --strict-mcp-config
     - --exclude-dynamic-system-prompt-sections
     model: null
-    timeout: 240
+    timeout: 480
     max_prompt_chars: 120000
     stdin_prompt: true
     env_passthrough:
@@ -62,7 +62,7 @@ participants:
     - '{cwd}'
     - '-'
     model: null
-    timeout: 240
+    timeout: 600
     max_prompt_chars: 120000
     stdin_prompt: true
     env_passthrough:

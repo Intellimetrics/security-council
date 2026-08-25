@@ -53,6 +53,27 @@ class ArtifactRunnerArm:
         p = shutil.which(self.command)
         if not p:
             return False, f"{self.command} not on PATH"
+        if self.family == "codex":
+            # R10, verified live 2026-08-25: these analysis skills are NOT
+            # reachable through any supported surface, so the lane cannot
+            # honestly claim vendor-skill provenance.
+            #  - `codex plugin add` installs from a marketplace snapshot only,
+            #    so the bundled plugin cannot be registered; `codex plugin list`
+            #    shows only gmail/github.
+            #  - the reference producer runs `codex exec ... --disable plugins`
+            #    and INLINES the skill instructions; it never triggers `$skill`.
+            #  - `codex-security` has no threat-model/attack-path/hardening
+            #    subcommand, and `skills list` exposes only wrappers for its own
+            #    subcommands.
+            #  - skills/threat-model/SKILL.md is not self-contained (it reads
+            #    ../../references/*.md) and says standard scans build their
+            #    threat models in the ordinary workflow, never via this skill.
+            # They are internal phases of `codex-security scan`. Refuse rather
+            # than emit an artifact stamped with a provenance we cannot support.
+            return False, (f"analysis skill {self.spec.skill} is not independently "
+                           "invocable: it is an internal phase of `codex-security "
+                           "scan`, not a public surface (see docs/reviews/"
+                           "R10-live-vendor-runs.md §4)")
         return True, f"local: {p} (analysis skill {self.spec.skill})"
 
     def _env(self) -> dict:
@@ -66,6 +87,17 @@ class ArtifactRunnerArm:
                 f"repository and write the result to a markdown file. {ACKNOWLEDGEMENT}")
 
     def _cmd(self, prompt: str) -> list[str]:
+        """R10: this previously passed CLAUDE CODE flags to codex, where `-p` is
+        `--profile`, not the prompt — so the lane could never have run. Shapes
+        below follow each CLI's real contract (`codex exec --help`, and the
+        reference producer's own spawn in @openai/codex-security)."""
+        if self.command == "codex":
+            cmd = ["codex", "exec", "--ignore-user-config", "--ephemeral",
+                   "--color", "never", "--skip-git-repo-check",
+                   "-c", "mcp_servers={}", "-s", "workspace-write"]
+            if self.model:
+                cmd += ["-m", self.model]
+            return [*cmd, prompt]
         cmd = [self.command, "-p", prompt, "--output-format", "json",
                "--dangerously-skip-permissions", "--no-session-persistence",
                "--strict-mcp-config"]

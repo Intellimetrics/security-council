@@ -89,6 +89,14 @@ class FixArm:
             return False, f"fix lane needs bwrap: {detail}"
         if not shutil.which(self.command):
             return False, f"{self.command} not on PATH"
+        # R10: refuse up front rather than burning minutes and vendor spend to
+        # end in a vague `no_patch`. The fence as configured cannot run any
+        # vendor CLI: the binary is outside its bind set, `--unshare-net` blocks
+        # the model API the generation depends on, and the tmpfs HOME drops
+        # ~/.codex/auth.json. All three were verified live 2026-08-25.
+        reach, why = _fence.reachable_in_fence(self.command)
+        if not reach:
+            return False, f"fix lane cannot run fenced: {why}"
         return True, f"fenced: bwrap {detail}; {self.command} {self.skill}"
 
     def _cmd(self, home: Path) -> list[str]:
