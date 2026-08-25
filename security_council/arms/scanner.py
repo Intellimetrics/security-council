@@ -49,12 +49,16 @@ class ScannerSpec:
 SCANNER_SPECS: dict[str, ScannerSpec] = {
     "semgrep": ScannerSpec(
         name="semgrep", family="semgrep", bin="semgrep", image="semgrep/semgrep",
+        # --no-git-ignore: pinned explicitly (R12 round 19). Verified live that
+        # semgrep does not apply .gitignore in our .git-less scratch copy today,
+        # but the scanned repository must never decide what gets scanned, and
+        # osv-scanner DID honour .gitignore by default — so pin it here too.
         local_args=("scan", f"--config={SEMGREP_RULESET}", "--sarif",
-                    "--output={out}/semgrep.sarif",
+                    "--output={out}/semgrep.sarif", "--no-git-ignore",
                     "--metrics=off", "--exclude=.llm-council", "--exclude=.security-council",
                     "{target}"),
         docker_args=("semgrep", "scan", f"--config={SEMGREP_RULESET}", "--sarif",
-                     "--output=/out/semgrep.sarif", "--metrics=off",
+                     "--output=/out/semgrep.sarif", "--no-git-ignore", "--metrics=off",
                      "--exclude=.llm-council", "--exclude=.security-council", _MOUNT),
         sarif_name="semgrep.sarif", success_exit_codes=(0, 1),
         version_args=("--version",), docker_version_args=("semgrep", "--version"), network=True,
