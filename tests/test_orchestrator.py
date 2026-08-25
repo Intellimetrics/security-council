@@ -5,6 +5,7 @@ import json
 from security_council import model as m
 from security_council.arms.base import ArmResult
 from security_council.config import DEFAULT_CONFIG
+from security_council.decisions import DecisionStore
 from security_council.orchestrator import run_scan
 
 
@@ -197,7 +198,6 @@ def test_a_degraded_run_does_not_consume_a_shadow_run(tmp_path):
     the G10 copy, so a degraded run burned one of the five shadow runs it could
     never use. After five, the first properly-verified run would suppress for
     real with no shadow observation behind it."""
-    from security_council.decisions import DecisionStore
     low = _finding(source_id="semgrep", kind="scanner", vendor="semgrep", sev="low")
     arms = [FakeArm("semgrep", "scanner", "semgrep", [low],
                     coverage={"completion": "partial"})]
@@ -210,3 +210,25 @@ def test_a_degraded_run_does_not_consume_a_shadow_run(tmp_path):
     # the run roots its store at <target>/.security-council (orchestrator.py)
     state = DecisionStore(tmp_path / ".security-council").state_path
     assert not state.is_file() or json.loads(state.read_text()).get("armed_runs", 0) == 0
+
+
+def test_a_zero_arm_run_does_not_consume_a_shadow_run(tmp_path):
+    """R12 round 7: `any()` over an EMPTY results list is False, so a run with no
+    arms looked fully verified, kept its armed status, and burned a shadow run
+    on a scan that examined nothing."""
+    run = _run([], tmp_path, min_arms_ok=1, auto_suppress=True,
+               accept_suppression_risk=True)
+    assert run.exit_code == 3
+    state = DecisionStore(tmp_path / ".security-council").state_path
+    assert not state.is_file() or json.loads(state.read_text()).get("armed_runs", 0) == 0
+
+
+def test_manifest_records_the_policy_that_actually_ran(tmp_path):
+    """R12 round 7: the manifest logged the RAW config, claiming
+    `auto_suppress: true` on a run where G10 had disabled it."""
+    low = _finding(source_id="semgrep", kind="scanner", vendor="semgrep", sev="low")
+    arms = [FakeArm("semgrep", "scanner", "semgrep", [low],
+                    coverage={"completion": "partial"})]
+    run = _run(arms, tmp_path, min_arms_ok=1, auto_suppress=True,
+               accept_suppression_risk=True)
+    assert run.manifest["policy"]["auto_suppress"] is False

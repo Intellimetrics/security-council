@@ -147,6 +147,11 @@ def _partial_reason(r: ArmResult) -> str:
     declined = cov.get("declined_categories") or []
     if declined:
         return f"declined {len(declined)} categories: {', '.join(sorted(declined)[:6])}"
+    raw, norm = cov.get("raw_results"), cov.get("normalized")
+    if isinstance(raw, int) and isinstance(norm, int) and norm < raw:
+        return (f"reported {raw} results but only {norm} could be placed in the repo — "
+                f"{raw - norm} dropped (unresolvable location, or a path outside the "
+                f"scanned root); those findings are NOT in this report")
     return f"completion={cov.get('completion') or 'partial'} — scanned less than the full scope"
 
 
@@ -307,7 +312,11 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         # five such runs the first properly-verified one would suppress for real
         # with no shadow observation behind it — G4 defeated by degradation.
         cfg_for_policy = config
-        if any(coverage.coverage_verdict(r) != coverage.VERIFIED for r in results):
+        # `not results` matters: `any()` over an empty list is False, so a run
+        # with NO arms at all would have looked fully verified here and kept its
+        # armed status, burning a shadow run on a scan that examined nothing.
+        if not results or any(coverage.coverage_verdict(r) != coverage.VERIFIED
+                              for r in results):
             cfg_for_policy = {**config,
                               "policy": {**config.get("policy", {}), "auto_suppress": False}}
             if (config.get("policy") or {}).get("auto_suppress"):
@@ -320,7 +329,11 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             (config.get("score") or {}).get("calibration"), arm_results=results)
         decisions = policy_mod.apply_policy(
             merged, cfg_for_policy, now_iso=decided_at,
-            prior_runs=_shadow_runs_completed(store, config, out_dir, run_id) if armed else 0,
+            # cfg_for_policy, not config: the shadow counter is keyed on a policy
+            # fingerprint, and G10 changes the policy. Harmless today (a degraded
+            # run has armed=False so this is 0 anyway) but reading two different
+            # configs either side of one decision is the drift that keeps biting.
+            prior_runs=_shadow_runs_completed(store, cfg_for_policy, out_dir, run_id) if armed else 0,
             history=store.history_counts(), calibration=cal)
         if cal is not None:
             cal_meta["applied_findings"] = sum(
@@ -384,7 +397,10 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         _, finished_at = _utc_stamp()
         manifest = build_manifest(
             run_id=run_id, target=str(target), arm_results=results + analysis_results,
-            merged=merged, config=config,
+            # cfg_for_policy: record the policy that actually RAN. Logging the
+            # raw config would claim `auto_suppress: true` on a run where G10
+            # disabled it — an audit record contradicting the run's own behaviour.
+            merged=merged, config=cfg_for_policy,
             started_at=collected_at, finished_at=finished_at, git=ws.git_info(),
             degradations=degradations, exit_code=exit_code, scan_scope=scan_scope,
             disposition_actions=policy_mod.decisions_summary(decisions),
