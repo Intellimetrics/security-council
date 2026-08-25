@@ -113,27 +113,45 @@ def vendor_opinion(v: dict, prompt_sha256: str) -> PanelOpinion:
     """A vendor validate/triage verdict as a NON-INDEPENDENT, advisory panel
     opinion (weight 0, cannot decide the verdict)."""
     verdict = _VENDOR_VERDICT.get(str(v.get("verdict", "")).lower(), "uncertain")
+    # a voter that could not run is recorded as "absent": it is kept in the panel
+    # (so the report can say the vendor voter was unavailable) but is filtered out
+    # of `ok`, so it never counts toward evidence or the advisory disagreement flag
+    status = str(v.get("status") or "ok")
     return PanelOpinion(role="vendor", participant=v.get("participant", "vendor"),
                         family=v.get("family", "vendor"), prompt_sha256=prompt_sha256,
                         verdict=verdict, rationale=str(v.get("rationale", ""))[:300],
-                        model_id=v.get("model_id"), status="ok", independent=False, weight=0.0)
+                        model_id=v.get("model_id"), status=status, independent=False, weight=0.0)
 
 
-def make_vendor_runner(repo_root, *, family: str = "codex", proc_run=None):
+def make_vendor_runner(repo_root, *, family: str = "codex", proc_run=None,
+                       effort: str = "low"):
     """A runner(finding) -> [vendor opinion dict] that shells out to the vendor
     `validate` skill. `proc_run` is injectable for offline tests; the default is
-    the real subprocess runner (live invocation needs vendor spend)."""
+    the real subprocess runner (live invocation needs vendor spend).
+
+    Command contract verified live 2026-08-25 against codex-security 0.1.16/0.1.20:
+    `validate` takes finding text (or a file) positionally and **rejects
+    `--format json`** ("validate does not support noninteractive JSON output"),
+    so the verdict is read from prose. `--effort` defaults to `xhigh` upstream,
+    which is billed per finding — we pass `low` unless told otherwise.
+    """
     from .. import proc as _proc
     run = proc_run or _proc.run_command
 
     def _runner(finding: Finding) -> list[dict]:
         title = getattr(finding, "title", "") or ""
-        cmd = (["codex-security", "validate", title, "--format", "json"] if family == "codex"
+        cmd = (["codex-security", "validate", title, "--effort", effort] if family == "codex"
                else ["claude", "-p", f"/claude-security triage-finding: {title}",
                      "--output-format", "json"])
         r = run(cmd, timeout=600, cwd=str(repo_root))
         if not getattr(r, "ok", False):
-            return []
+            # never silently drop the voter: a vendor CLI that fails to run is
+            # recorded as absent (weight 0, filtered from the vote) so the run
+            # shows the opinion was sought and did not arrive
+            why = (getattr(r, "stderr", "") or getattr(r, "stdout", "") or "").strip()
+            return [{"participant": f"{family}-validate", "family": family,
+                     "verdict": "uncertain", "status": "absent",
+                     "rationale": f"vendor validate unavailable: {why[:200]}"}]
         return [{"participant": f"{family}-validate", "family": family,
                  "verdict": _scan_verdict(r.stdout), "rationale": (r.stdout or "")[:300]}]
     return _runner

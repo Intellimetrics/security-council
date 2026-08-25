@@ -89,13 +89,45 @@ def test_vendor_runner_parses_and_degrades(monkeypatch):
     class _R:
         def __init__(self, ok, out=""):
             self.ok, self.stdout, self.stderr = ok, out, ""
-    runner = panel.make_vendor_runner(".", family="codex",
-                                      proc_run=lambda cmd, **kw: _R(True, '{"verdict":"false_positive"}'))
+    seen = {}
+
+    def _ok(cmd, **kw):
+        seen["cmd"] = cmd
+        return _R(True, '{"verdict":"false_positive"}')
+
+    runner = panel.make_vendor_runner(".", family="codex", proc_run=_ok)
     out = runner(f)
     assert out and out[0]["family"] == "codex" and out[0]["verdict"] == "false_positive"
-    # a failed vendor call yields no opinion (degrades cleanly)
+    # live contract (2026-08-25): `codex-security validate` REJECTS --format json
+    # ("validate does not support noninteractive JSON output"), so asking for it
+    # made every real call fail. Never reintroduce it.
+    assert "--format" not in seen["cmd"] and "json" not in seen["cmd"]
+    assert seen["cmd"][:2] == ["codex-security", "validate"]
+    assert "--effort" in seen["cmd"]        # upstream default is xhigh, billed per finding
+
+    # a failed vendor call is RECORDED as absent, never silently dropped
     runner2 = panel.make_vendor_runner(".", proc_run=lambda cmd, **kw: _R(False))
-    assert runner2(f) == []
+    got = runner2(f)
+    assert len(got) == 1 and got[0]["status"] == "absent"
+    assert "unavailable" in got[0]["rationale"]
+
+
+def test_absent_vendor_voter_cannot_change_the_verdict():
+    """An unavailable vendor voter must be inert: same verdict, and it never
+    lands in the advisory block (which would imply an opinion we never got)."""
+    absent = [panel.vendor_opinion({"participant": "codex-validate", "family": "codex",
+                                    "verdict": "uncertain", "status": "absent",
+                                    "rationale": "vendor validate unavailable: boom"}, "p")]
+    base = panel.synthesize_validation(_finding(), _runner_reals()("q", cwd="."),
+                                       prompt_sha256="p")
+    with_absent = panel.synthesize_validation(_finding(), _runner_reals()("q", cwd="."),
+                                              prompt_sha256="p", extra_opinions=absent)
+    assert with_absent.verdict == base.verdict
+    assert with_absent.confidence == base.confidence
+    assert "vendor_advisory" not in with_absent.evidence_check
+    # ...but it IS retained in the panel, so the run can show the voter was sought
+    assert any(op.status == "absent" and op.participant == "codex-validate"
+               for op in with_absent.panel)
 
 
 def _runner_reals():
