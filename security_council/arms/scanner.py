@@ -122,8 +122,15 @@ class ScannerArm:
         error = "" if r.ok else (r.stderr or f"exit {r.exit_code}")[:500]
         raw_count = 0
         cov: dict = {}
-        blob = f"{r.stdout}\n{r.stderr}".lower()
-        not_applicable = any(m in blob for m in self.spec.not_applicable_markers)
+        # R12 round 11: this was a substring match over stdout+stderr COMBINED,
+        # so any failed run whose output happened to contain the marker — a
+        # scanned path, a longer error quoting it — was laundered into VERIFIED
+        # coverage and a clean gate. Match only whole stderr LINES that begin
+        # with the marker, which is how the tool actually emits it
+        # ("No package sources found, --help for usage information.").
+        _lines = [ln.strip().lower() for ln in (r.stderr or "").splitlines()]
+        not_applicable = any(ln.startswith(m) for ln in _lines
+                             for m in self.spec.not_applicable_markers)
         if not sarif_path.is_file():
             if not_applicable and not r.timed_out:
                 # nothing in scope for this tool — honest "clean" for its category.

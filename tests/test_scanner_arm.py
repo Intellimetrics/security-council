@@ -95,3 +95,25 @@ def test_not_applicable_marker_does_not_excuse_a_timeout(monkeypatch, tmp_path):
     res = _run(monkeypatch, tmp_path, "osv-scanner", r)
     assert res.ok is False
     assert not res.coverage.get("not_applicable")
+
+
+def test_a_failed_run_that_merely_mentions_the_marker_is_not_excused(monkeypatch, tmp_path):
+    """R12 round 11: the marker was matched as a substring of stdout+stderr
+    COMBINED, so a genuinely failed run whose output happened to contain the
+    text — a scanned path, a longer error quoting it — was laundered into
+    VERIFIED coverage and a clean gate."""
+    r = _R(ok=False, exit_code=128,
+           stdout="Scanned /repo/no package sources found/package-lock.json",
+           stderr="fatal: could not open database")
+    res = _run(monkeypatch, tmp_path, "osv-scanner", r)
+    assert res.ok is False
+    assert not res.coverage.get("not_applicable")
+
+
+def test_the_real_marker_line_is_still_recognised(monkeypatch, tmp_path):
+    """The genuine no-package-sources case must stay a clean not-applicable —
+    verified live: osv emits it as its own stderr line."""
+    r = _R(ok=False, exit_code=128,
+           stderr="Scanning dir /src\nNo package sources found, --help for usage information.")
+    res = _run(monkeypatch, tmp_path, "osv-scanner", r)
+    assert res.ok is True and res.coverage["not_applicable"] is True
