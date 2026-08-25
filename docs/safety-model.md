@@ -79,6 +79,15 @@ coverage `partial`, and the degradation names them. Likewise `osv-scanner`
 runs with `--recursive`: without it, manifests below the top level were never
 read and the "no package sources" case read as a verified clean.
 
+The rule that emerged, after four instances (`.semgrepignore`, `.gitignore`,
+`.gitleaks.toml`, `osv-scanner.toml`): **the scanned repository never decides
+what gets scanned.** gitleaks and osv-scanner run with a config this package
+ships, passed explicitly, so a repository's own config is never auto-loaded;
+`.gitignore` is disabled for both tools that read it (`--no-ignore`,
+`--no-git-ignore`); and the ignore-files the tools still honour make coverage
+`partial` and are named in the degradation. In every case the fix was verified
+by reproducing the clean-exit-0 first and re-running after.
+
 Plus the meta-rule: **demote, never auto-close.** A refuted finding leaves
 the CI gate but stays open, renders as SARIF `suppressions[underReview]`, and
 appears in the summary's appendix.

@@ -57,5 +57,15 @@ more — all in the default configuration, all reproduced before fixing:
   never decides what gets scanned.
 - A decision record with an unreadable `expires_at` crashed the scan instead
   of degrading.
+- gitleaks auto-loaded the repository's `.gitleaks.toml` (an allowlist of
+  every path produced a verified-clean exit 0), and osv-scanner read the
+  repository's `osv-scanner.toml`. Both now use a config this package ships,
+  passed explicitly; the repository's files are never consulted.
+
+The principle behind the last four of these: **the scanned repository never
+decides what gets scanned.** Ignore-files the tools still honour
+(`.semgrepignore`, `.gitleaksignore`) make coverage `partial` and are named in
+the report; scanner configs are pinned; `.gitignore` handling is disabled for
+the tools that read it.
 
 The word "calibrated" is not used anywhere unless a fitted record is in force.
