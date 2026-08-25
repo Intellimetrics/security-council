@@ -1,5 +1,6 @@
 """Orchestrator tests with injected fake arms (no docker)."""
 import hashlib
+import json
 
 from security_council import model as m
 from security_council.arms.base import ArmResult
@@ -189,3 +190,23 @@ def test_degraded_run_does_not_auto_suppress(tmp_path):
                accept_suppression_risk=True, shadow_runs=0)
     assert any(d["kind"] == "auto_suppress_withheld" for d in run.degradations)
     assert all(f.disposition.lifecycle == "open" for f in run.findings)
+
+
+def test_a_degraded_run_does_not_consume_a_shadow_run(tmp_path):
+    """G10/G4 (R12 round 6): `armed` was computed from the RAW config, before
+    the G10 copy, so a degraded run burned one of the five shadow runs it could
+    never use. After five, the first properly-verified run would suppress for
+    real with no shadow observation behind it."""
+    from security_council.decisions import DecisionStore
+    low = _finding(source_id="semgrep", kind="scanner", vendor="semgrep", sev="low")
+    arms = [FakeArm("semgrep", "scanner", "semgrep", [low],
+                    coverage={"completion": "partial"})]
+    run = _run(arms, tmp_path, min_arms_ok=1, auto_suppress=True,
+               accept_suppression_risk=True)
+    assert any(d["kind"] == "auto_suppress_withheld" for d in run.degradations)
+    # assert on the state FILE, not `armed_runs_completed(cfg)` — that is keyed
+    # on a policy fingerprint, so a mismatched cfg returns 0 and the test would
+    # pass whether or not the counter was bumped
+    # the run roots its store at <target>/.security-council (orchestrator.py)
+    state = DecisionStore(tmp_path / ".security-council").state_path
+    assert not state.is_file() or json.loads(state.read_text()).get("armed_runs", 0) == 0

@@ -43,6 +43,28 @@ ones:
 | G7 | Critical severity never auto-suppressed |
 | G8 | Context drift (the code around the finding changed) → the decision deactivates permanently and the finding reopens for re-validation |
 | G9 | Crypto and critical findings can never be taken out of the gate by **unsigned operator state**: a baseline never excuses them, and a stored suppression of one is re-affirmed every 30 days instead of 90 |
+| G10 | A run that did not verify its full coverage **cannot auto-suppress**. A partial run has fewer eligible corroborators, so p is lower and suppression is *more* likely — exactly when it is least justified — and the stored record would outlive the run that could not justify it. Reported as `auto_suppress_withheld`; human decisions are unaffected |
+
+### Coverage is a verdict, not a boolean
+
+`normalize/coverage.coverage_verdict()` answers one question for every arm:
+**what can this arm vouch for having examined?**
+
+| | |
+|---|---|
+| `none` | It failed, wrote no report, wrote an unreadable one, or declined everything. It does not count as coverage and gets no vote |
+| `partial` | It ran over less than its scope — a timeout, a cost stop, an incomplete vendor bundle, declined categories. The run is degraded; it is credited for what it *did* report but its **silence proves nothing** (`may_decline=False`), and it is scoped out of families it declined |
+| `verified` | It completed over the scope it was given. `not_applicable` lands here on purpose: nothing in scope (osv on a repo with no dependency manifests) is an honest clean for that arm's categories |
+
+Three consumers read that one function — the CI gate, the corroboration
+context, and the SARIF `invocations[].executionSuccessful` — so they cannot
+drift apart. Drift between exactly those three is what the 0.1.0 ship review
+kept finding: coverage used to be a per-arm boolean, and **six review rounds
+each turned up a fresh way for a scan that examined less than it claimed to
+report clean** (a missing report, an unreadable one, zero arms under
+`min_arms_ok: 0`, an arm that declined every category, a timed-out scanner
+resurrected by partial findings, a CI template capturing the wrong `$?`).
+Patching each instance produced the next one; the model is what stopped it.
 
 Plus the meta-rule: **demote, never auto-close.** A refuted finding leaves
 the CI gate but stays open, renders as SARIF `suppressions[underReview]`, and

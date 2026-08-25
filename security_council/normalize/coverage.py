@@ -90,14 +90,20 @@ def coverage_verdict(result) -> str:
     # not-applicable marker can never rescue an arm that vouches for nothing
     if cov.get("coverage_unverified"):
         return NONE
+    # every PARTIAL signal is checked BEFORE not_applicable: "nothing was in
+    # scope" is only an honest clean when the arm actually finished looking
+    if (cov.get("partial_scan") or cov.get("cost_stopped")
+            or cov.get("completion") in ("partial", "declined")
+            or cov.get("declined_categories")):
+        return PARTIAL
+    # R12: a scanner that reported N results but could only normalise fewer has
+    # silently dropped findings (an unresolvable location, a path outside the
+    # scanned root). The run covered less than the tool actually reported.
+    raw, norm = cov.get("raw_results"), cov.get("normalized")
+    if isinstance(raw, int) and isinstance(norm, int) and norm < raw:
+        return PARTIAL
     if cov.get("not_applicable"):
         return VERIFIED
-    if cov.get("partial_scan") or cov.get("cost_stopped"):
-        return PARTIAL
-    if cov.get("completion") in ("partial", "declined"):
-        return PARTIAL
-    if cov.get("declined_categories"):
-        return PARTIAL
     return VERIFIED
 
 

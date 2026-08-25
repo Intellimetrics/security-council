@@ -295,14 +295,17 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
 
         # score + disposition policy (mutates dispositions; must precede exports/gate)
         _, decided_at = _utc_stamp()
-        armed = policy_mod.is_armed(config)
-        cal, cal_meta = calibration_mod.resolve(
-            (config.get("score") or {}).get("calibration"), arm_results=results)
         # G10 (R12): a run that did not verify its full coverage may not create a
         # durable excuse. Auto-suppression on partial evidence is doubly wrong —
         # a partial run has fewer eligible corroborating sources, so p is lower
         # and suppression is MORE likely, and the record then outlives the run
         # that could not justify it. Human decisions are unaffected.
+        #
+        # This has to be decided BEFORE `armed`, because `armed` also drives the
+        # shadow counter: computing it from the raw config let a degraded run
+        # burn one of the five shadow runs it was never able to use, so after
+        # five such runs the first properly-verified one would suppress for real
+        # with no shadow observation behind it — G4 defeated by degradation.
         cfg_for_policy = config
         if any(coverage.coverage_verdict(r) != coverage.VERIFIED for r in results):
             cfg_for_policy = {**config,
@@ -310,7 +313,11 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             if (config.get("policy") or {}).get("auto_suppress"):
                 pre_degr.append({"kind": "auto_suppress_withheld",
                                  "detail": "coverage was not fully verified this run; "
-                                           "auto-suppression is disabled (G10)"})
+                                           "auto-suppression is disabled and this run does "
+                                           "not count as a shadow run (G10)"})
+        armed = policy_mod.is_armed(cfg_for_policy)
+        cal, cal_meta = calibration_mod.resolve(
+            (config.get("score") or {}).get("calibration"), arm_results=results)
         decisions = policy_mod.apply_policy(
             merged, cfg_for_policy, now_iso=decided_at,
             prior_runs=_shadow_runs_completed(store, config, out_dir, run_id) if armed else 0,
@@ -324,7 +331,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                 store.record_suppression(by_id[d.finding_id], now_iso=decided_at,
                                          shadow=d.action == "shadow_suppress")
         if armed:
-            store.bump_armed_runs(config, run_id=run_id, now_iso=decided_at)
+            store.bump_armed_runs(cfg_for_policy, run_id=run_id, now_iso=decided_at)
 
         baseline = store.load_baseline()
         if baseline and baseline.get("integrity") != "intact":

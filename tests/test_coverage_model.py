@@ -123,3 +123,22 @@ def test_partial_arm_silence_is_neither_credit_nor_penalty():
 def test_not_applicable_cannot_rescue_an_unverified_arm():
     """Ordering: `coverage_unverified` is the stronger signal."""
     assert cov.coverage_verdict(_r(not_applicable=True, coverage_unverified=True)) == cov.NONE
+
+
+# --------------------------------------------------------------------------- #
+# round 6
+# --------------------------------------------------------------------------- #
+
+
+def test_a_partial_signal_outranks_not_applicable():
+    """"Nothing was in scope" is only an honest clean when the arm finished
+    looking; a timeout that also set the marker is PARTIAL."""
+    assert cov.coverage_verdict(_r(not_applicable=True, partial_scan=True)) == cov.PARTIAL
+    assert cov.coverage_verdict(_r(not_applicable=True)) == cov.VERIFIED
+
+
+def test_dropped_findings_make_a_scan_partial():
+    """A scanner that reported N results but normalised fewer has silently lost
+    findings — an unresolvable location, a path outside the scanned root."""
+    assert cov.coverage_verdict(_r(raw_results=7, normalized=5)) == cov.PARTIAL
+    assert cov.coverage_verdict(_r(raw_results=5, normalized=5)) == cov.VERIFIED
