@@ -252,8 +252,15 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         mdv = int(config.get("defaults", {}).get("min_distinct_vendors", 2))
         all_findings = [f for r in results for f in r.findings]
         clusters = cluster_findings(all_findings, min_distinct_vendors=mdv)
+        # R12 round 4: `ran=r.ok` bypassed `_counts_as_coverage`, so an arm that
+        # verified nothing was still an ELIGIBLE source. Having reported nothing
+        # it then counted as *silent*, which applies `coverage_decline` — up to
+        # SILENT_CAP (-1.05) log-odds — and can push a real finding from another
+        # arm toward auto-suppression. An arm that scanned nothing must not get
+        # a vote on whether someone else's finding is real.
         run_ctx = coverage.RunContext(
-            sources=[coverage.SourceRun(r.name, r.kind, r.family, ran=r.ok) for r in results],
+            sources=[coverage.SourceRun(r.name, r.kind, r.family,
+                                        ran=_counts_as_coverage(r)) for r in results],
             min_distinct_vendors=mdv)
         merged = [coverage.apply(merge_cluster(c), run_ctx) for c in clusters]
         merged.sort(key=lambda f: (-_SEV_RANK[f.severity.label], f.taxonomy.cwe_family))

@@ -132,3 +132,20 @@ def test_coverage_unverified_arm_does_not_count_as_coverage(tmp_path):
     run = _run([arm], tmp_path, min_arms_ok=1)
     assert run.exit_code == 3
     assert any(d["kind"] == "coverage_unverified" for d in run.degradations)
+
+
+def test_unverified_arm_is_not_an_eligible_source(tmp_path):
+    """R12 round 4: `ran=r.ok` bypassed `_counts_as_coverage`, so an arm that
+    verified nothing stayed ELIGIBLE — and, reporting nothing, counted as
+    *silent*, applying `coverage_decline` (up to -1.05 log-odds) against a real
+    finding from another arm. An arm that scanned nothing gets no vote."""
+    real = _finding(source_id="semgrep", kind="scanner", vendor="semgrep")
+    arms = [
+        FakeArm("semgrep", "scanner", "semgrep", [real]),
+        FakeArm("claude", "agent_cli", "claude", [], ok=True,
+                coverage={"coverage_unverified": True}),
+    ]
+    run = _run(arms, tmp_path, min_arms_ok=1)
+    f = run.findings[0]
+    assert "claude" not in (f.corroboration.eligible_sources or [])
+    assert run.exit_code == 1          # the real finding still gates

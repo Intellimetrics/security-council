@@ -176,3 +176,50 @@ previous round's fix — including two defects I introduced while fixing. Do not
 read the fixes above as clearance to tag. Run a fourth round; the release is
 ready when a round comes back without a new silent-clean path, not when the
 last known one is closed.
+
+
+## Round 4 — 3/3 no-ship, and it caught the defect I introduced in round 3
+
+`.llm-council/runs/20260825_124202_766990_*`. I asked them to assume I had
+introduced a new defect while fixing. I had.
+
+`_counts_as_coverage` was applied to the gate but **not** to the corroboration
+context: `SourceRun(..., ran=r.ok)` still used raw `ok`. The consequence is
+worse than a missed check. An arm with `ok=True, coverage_unverified=True`
+stayed an *eligible* source; having reported nothing it then counted as
+**silent**, which applies `coverage_decline` — up to `SILENT_CAP` −1.05
+log-odds — pushing a real finding from another arm down, and `policy.py`
+suppresses on low p. An arm that scanned nothing got a vote on whether someone
+else's finding was real, in the suppressing direction. Fixed, with a test.
+
+### Found and NOT fixed — deliberately, and this is the ship-blocking list
+
+These are real, verified, and I stopped rather than make sweeping gate-semantic
+changes late in a review with no way to validate them against real runs:
+
+1. **`coverage_unverified` is masked whenever findings exist.** Both dedicated
+   arms compute it as `not findings and not verified`, so a *partial* scan that
+   produced some findings looks fully verified. A scan that examined half the
+   tree reports as complete.
+2. **A partial scan finding only low-severity issues exits 0.** `gating` is
+   empty, no arm is failed or unverified, so the run is "clean" — while
+   coverage was incomplete. This is the same class as everything above and is
+   the most likely remaining silent-clean path.
+3. **`partial_scan` is set on a timed-out scanner and never surfaced** in the
+   manifest, summary, or exit code.
+4. **Our SARIF omits `invocations[].executionSuccessful`**, so a downstream
+   consumer — GitHub code scanning included — cannot tell a degraded run from
+   a clean one. For a tool whose entire value is honest coverage reporting,
+   that is a significant interop gap.
+
+## Where this stands after four rounds
+
+Four rounds, four unanimous no-ship verdicts. Every round found a real defect
+in the previous round's fix; twice the defect was one I introduced while
+fixing. That is the honest signal, and it is worth more than the individual
+bugs: **this area is not converging under single-pass review.**
+
+The remaining four items share one root cause — *coverage is tracked per-arm as
+a boolean, when it is really a partial-order over what was examined.* Fixing
+them one at a time is what produced the last four rounds. The next change here
+should be a deliberate model for coverage, not another patch.
