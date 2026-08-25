@@ -475,3 +475,26 @@ def test_fixture_dirs_are_not_secret_bearing():
     for p in list(CS_DIR.iterdir()) + list(CX_DIR.iterdir()):
         if p.is_file():
             assert "wJa9Xr2LtDq7Fh0PkVbN3cMz8sQ1yUeR6gT4iOm" not in p.read_text(errors="replace"), p
+
+
+def test_a_stale_report_is_never_used_as_this_runs_output(monkeypatch, tmp_path):
+    """R12 round 9: report_dirs was `(after - before) or glob(ALL)`, so a run
+    that produced nothing fell back to any pre-existing CLAUDE-SECURITY-* dir.
+    The scan runs on a COPY of the user's tree, so a leftover report is copied
+    in — and a stale EMPTY report would then read as a clean scan."""
+    import subprocess
+    tgt = tmp_path / "repo"
+    (tgt / "app").mkdir(parents=True)
+    stale = tgt / "CLAUDE-SECURITY-20200101-000000"
+    stale.mkdir()
+    (stale / "CLAUDE-SECURITY-RESULTS.sarif").write_text(json.dumps(
+        {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "claude-security"}},
+                                       "results": []}]}))
+
+    monkeypatch.setattr(subprocess, "run",
+                        lambda cmd, **kw: _FakeProc(0, _claude_stdout()))  # writes nothing new
+    monkeypatch.setattr(ClaudeSecurityArm, "plugin_dirs", lambda self: ["/p/claude-security"])
+    res = ClaudeSecurityArm().run(tgt, tmp_path / "out", run_id="r", collected_at="t")
+    assert res.ok is False
+    assert "NOT used" in res.error
+    assert res.findings == []

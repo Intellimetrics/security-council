@@ -140,9 +140,15 @@ class ClaudeSecurityArm:
         subtype = outer.get("subtype") if outer else None
         is_error = bool(outer.get("is_error")) if outer else False
 
-        # move the plugin's report dir(s) out of the scanned tree into raw/
-        report_dirs = sorted(set(glob.glob(str(target / REPORT_GLOB))) - before) or \
-            sorted(glob.glob(str(target / REPORT_GLOB)))
+        # move the plugin's report dir(s) out of the scanned tree into raw/.
+        # R12 round 9: this used to fall back to ANY existing report dir when the
+        # run produced no new one — `(after - before) or glob(all)`. The scan
+        # runs on a COPY of the user's tree, so a leftover CLAUDE-SECURITY-*
+        # directory in their repo is copied in, and a failed run would ingest it
+        # as this run's findings: stale results presented as current, and a
+        # stale empty report presented as a clean scan. Only new dirs count.
+        report_dirs = sorted(set(glob.glob(str(target / REPORT_GLOB))) - before)
+        stale_present = bool(before) and not report_dirs
         moved: list[Path] = []
         for d in report_dirs:
             dest = raw_dir / Path(d).name
@@ -164,6 +170,9 @@ class ClaudeSecurityArm:
                               classifier_fallback=True, cov=base_cov)
         if sarif_path is None or not sarif_path.is_file():
             why = subtype or ("is_error" if is_error else f"exit {r.exit_code}")
+            if stale_present:
+                why += ("; a pre-existing CLAUDE-SECURITY-* report was present in the tree "
+                        "and was NOT used — it is not this run's output")
             salvaged = report is not None and (report / ".claude-security-run" / "findings.json").is_file()
             return self._fail(cmd, r, error=f"no report rendered ({why}; cost ${cost if cost is not None else '?'})"
                               + ("; raw unverified findings salvaged under raw/" if salvaged else ""),
