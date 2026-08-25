@@ -219,7 +219,13 @@ class DecisionStore:
                 d = f.disposition
                 try:
                     decided_by = DecidedBy(**sup["decided_by"])
-                except (TypeError, KeyError) as e:
+                    # read every required field inside the guard: R12 round 13
+                    # noted that `lifecycle` and `decision_ref` were accessed
+                    # BELOW it, so a record missing either raised a KeyError
+                    # that escaped the malformed-record handler and crashed the
+                    # scan — the very thing this handler exists to prevent.
+                    _lifecycle, _ref = sup["lifecycle"], sup["decision_ref"]
+                except (TypeError, KeyError, ValueError) as e:
                     # a malformed/hand-edited record must degrade, never crash the
                     # scan — and an unusable decision is simply not applied, which
                     # is the fail-safe direction (the finding stays open)
@@ -230,9 +236,9 @@ class DecisionStore:
                                     "ref": ref, "title": f.title,
                                     "severity": f.severity.label, "detail": str(e)[:200]})
                     continue
-                d.lifecycle = sup["lifecycle"]
+                d.lifecycle = _lifecycle
                 d.decided_by = decided_by
-                d.decision_ref = sup["decision_ref"]
+                d.decision_ref = _ref
                 d.expires_at = effective_expiry
                 d.sarif_suppression = sup.get("sarif_suppression")
                 d.vex_status = sup.get("vex_status")

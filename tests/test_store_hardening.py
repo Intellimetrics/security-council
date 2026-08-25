@@ -301,3 +301,29 @@ def test_baseline_provenance_is_rendered():
     assert "baseline provenance" in md and "alice" in md and "deadbeefcafe" in md
 
 
+
+
+def test_a_record_missing_lifecycle_degrades_instead_of_crashing(tmp_path):
+    """R12 round 13: `decided_by` was constructed inside a try/except but
+    `lifecycle` and `decision_ref` were read BELOW it, so a record missing
+    either raised a KeyError that escaped the malformed-record handler and
+    crashed the scan — the thing the handler exists to prevent."""
+    import json
+    from security_council.decisions import DecisionStore
+    f = _finding()
+    store = DecisionStore(tmp_path)
+    rc = f.fingerprints.root_cause
+    path = store._path(rc)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "schema_version": 1, "root_cause": rc, "history": [],
+        "context_hash": f.fingerprints.context_hash,     # no drift
+        "suppression": {                       # no "lifecycle", no "decision_ref"
+            "status": "active",
+            "decided_by": {"kind": "human", "operator": "someone",
+                           "decided_at": "2026-08-20T00:00:00Z"},
+            "expires_at": "2099-01-01T00:00:00Z"},
+    }))
+    actions = store.apply_prior_decisions([f], now_iso="2026-08-25T00:00:00Z")
+    assert any(a["action"] == "ignored_malformed" for a in actions)
+    assert f.disposition.lifecycle == "open"       # fail-safe: stays open

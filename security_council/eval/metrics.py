@@ -119,6 +119,14 @@ def compute(expected: dict, findings: list[Finding]) -> EvalReport:
         violations.append(
             f"not one of the {len(tps)} ground-truth true positives was detected — "
             "the suppression rates below are vacuous 0.0, not a clean result")
+    elif missed:
+        # R12 round 13: the empty-corpus guard covered 0 and all-missed but not
+        # PARTIAL recall, and `security-council eval` exits on `violations`
+        # alone — so losing half the corpus still exited 0. pytest pins recall
+        # 1.0, but the standalone command is what a user runs.
+        violations.append(
+            f"recall is not 1.0 — {len(missed)} of {len(tps)} ground-truth true "
+            f"positives were not detected: {', '.join(sorted(missed)[:8])}")
 
     # unhandled false positives = decoy/noise findings still standing open
     unhandled_fp = [f for f in [*decoy_findings.values(), *noise]

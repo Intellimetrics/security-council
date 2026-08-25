@@ -105,3 +105,18 @@ def test_an_empty_corpus_cannot_pass_the_gate():
     res = compute({"cases": [], "decoys": []}, [])
     assert res.violations, "an empty corpus passed the gate"
     assert "vacuous" in " ".join(res.violations)
+
+
+def test_partial_recall_fails_the_gate():
+    """R12 round 13: the empty-corpus guard covered 0 detections and all-missed
+    but not PARTIAL recall, and `security-council eval` exits on `violations`
+    alone — so losing half the corpus still exited 0. pytest pins recall 1.0,
+    but the standalone command is what a user actually runs."""
+    from security_council.eval.metrics import compute
+    expected = {"cases": [{"id": "TP-1", "path": "app/a.py", "cwe": "CWE-89"},
+                          {"id": "TP-2", "path": "app/b.py", "cwe": "CWE-79"}],
+                "decoys": []}
+    res = compute(expected, [])          # nothing detected at all
+    assert res.violations
+    res2 = compute({"cases": [], "decoys": []}, [])
+    assert any("vacuous" in v for v in res2.violations)
