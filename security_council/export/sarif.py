@@ -94,8 +94,25 @@ def _result(f: Finding, rule_index: int) -> dict:
     return r
 
 
+def _invocation(coverage_ok: bool, notes: list[str]) -> dict:
+    """SARIF `invocations[0]`.
+
+    R12: our SARIF carried no execution status at all, so a consumer — GitHub
+    code scanning included — could not tell a DEGRADED run from a clean one.
+    For a tool whose whole value is honest coverage reporting, silently
+    exporting a partial scan as if it were complete is the same defect as an
+    empty findings list from a scanner that never ran.
+    """
+    inv: dict = {"executionSuccessful": bool(coverage_ok)}
+    if notes:
+        inv["toolExecutionNotifications"] = [
+            {"level": "warning", "message": {"text": n}} for n in notes[:50]]
+    return inv
+
+
 def _run(findings: list[Finding], *, tool_name: str, tool_version: str,
-         automation_id: str | None = None) -> dict:
+         automation_id: str | None = None, coverage_ok: bool = True,
+         notes: list[str] | None = None) -> dict:
     rules: list[dict] = []
     index: dict[str, int] = {}
     for f in findings:
@@ -109,14 +126,25 @@ def _run(findings: list[Finding], *, tool_name: str, tool_version: str,
     }
     if automation_id:
         run["automationDetails"] = {"id": automation_id}
+    run["invocations"] = [_invocation(coverage_ok, list(notes or []))]
     return run
 
 
 def to_sarif(findings: list[Finding], *, tool_name: str = "security-council",
-             tool_version: str = "0.0.0", run_id: str | None = None) -> dict:
-    """One merged run carrying the adjudicated findings (the council verdict)."""
+             tool_version: str = "0.0.0", run_id: str | None = None,
+             degradations: list[dict] | None = None) -> dict:
+    """One merged run carrying the adjudicated findings (the council verdict).
+
+    `degradations` (the run's own list) drives `executionSuccessful`: any
+    degradation means this scan covered less than it set out to, and the SARIF
+    must say so rather than presenting a partial run as a complete one.
+    """
+    degr = list(degradations or [])
+    notes = [f"{d.get('kind')}: {d.get('arm') or ''} {d.get('detail') or ''}".strip()
+             for d in degr]
     run = _run(findings, tool_name=tool_name, tool_version=tool_version,
-               automation_id=f"security-council/{run_id}" if run_id else None)
+               automation_id=f"security-council/{run_id}" if run_id else None,
+               coverage_ok=not degr, notes=notes)
     return {"$schema": SARIF_SCHEMA, "version": SARIF_VERSION, "runs": [run]}
 
 

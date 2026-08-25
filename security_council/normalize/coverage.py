@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..model import Corroboration, Finding
+from ..model import CWE_FAMILIES, Corroboration, Finding
 
 # Per-source category stance. Keyed by source_id; "*" is the source default.
 # Derived from R2 (each producer's documented detection scope / exclusions);
@@ -49,6 +49,72 @@ class SourceRun:
     family: str                     # vendor family (independence unit)
     ran: bool = True
     supported_families: frozenset[str] | None = None   # None = all
+
+
+# --------------------------------------------------------------------------- #
+# Coverage verdict (R12) — what an arm actually examined, not merely whether it
+# exited 0.
+# --------------------------------------------------------------------------- #
+
+VERIFIED, PARTIAL, NONE = "verified", "partial", "none"
+
+
+def coverage_verdict(result) -> str:
+    """Tri-state: what this arm can vouch for having examined.
+
+    The 0.1.0 ship review spent four council rounds here. Coverage was a per-arm
+    BOOLEAN (`ArmResult.ok`, plus an easily-forgotten `coverage_unverified`),
+    and every round turned up a fresh way for a scan that examined less than it
+    claimed to report clean — a missing report, an unreadable report, zero arms
+    with `min_arms_ok: 0`, an arm that declined every category, a timed-out
+    scanner resurrected by partial findings. Patching each one produced the
+    next. This is the single place that answers the question.
+
+    - ``none``     the arm examined nothing it can vouch for: it failed, wrote
+                   no report, wrote an unreadable one, or declined everything.
+    - ``partial``  it ran, but over less than its full scope: a timeout, an
+                   incomplete vendor bundle, a cost stop, declined categories.
+    - ``verified`` it completed and can vouch for the scope it was given.
+                   ``not_applicable`` lands here on purpose: nothing was in
+                   scope (a repo with no dependency manifests, for osv), which
+                   is an honest clean for that arm's categories.
+    """
+    if not getattr(result, "ok", False):
+        return NONE
+    cov = getattr(result, "coverage", None) or {}
+    if cov.get("not_applicable"):
+        return VERIFIED
+    if cov.get("coverage_unverified"):
+        return NONE
+    if cov.get("partial_scan") or cov.get("cost_stopped"):
+        return PARTIAL
+    if cov.get("completion") in ("partial", "declined"):
+        return PARTIAL
+    if cov.get("declined_categories"):
+        return PARTIAL
+    return VERIFIED
+
+
+def declined_families(result) -> frozenset[str]:
+    """The families an arm explicitly reported it did not look at."""
+    cov = getattr(result, "coverage", None) or {}
+    return frozenset({str(x) for x in (cov.get("declined_categories") or [])} & CWE_FAMILIES)
+
+
+def source_run_for(result) -> "SourceRun":
+    """The corroboration source for an arm, honouring what it really covered.
+
+    A ``none`` arm never votes — it has no standing to agree with a finding or
+    to be counted as silently declining one. A ``partial`` arm votes only on the
+    families it did NOT decline, so it is neither credited for agreement nor
+    penalised as silent on ground it never covered. That distinction is the
+    whole point of the tri-state: silence only means something from a source
+    that was actually looking.
+    """
+    declined = declined_families(result)
+    return SourceRun(result.name, result.kind, result.family,
+                     ran=coverage_verdict(result) != NONE,
+                     supported_families=(frozenset(CWE_FAMILIES) - declined) if declined else None)
 
 
 @dataclass

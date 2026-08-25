@@ -310,6 +310,18 @@ def _method(findings: list[Finding], manifest: dict) -> list[str]:
             status += f" · completion {_cell(a['completion'])}"
         if a.get("cost_stopped"):
             status += " · ⚠ cost-stopped"
+        # R12: say what the arm can actually vouch for having examined. "ok"
+        # alone read as "this was scanned", which is how a partial scan passed
+        # for a clean one four review rounds running. Only annotate an arm that
+        # CLAIMS success — a FAILED arm already says so.
+        if a.get("ok"):
+            verdict = a.get("coverage_verdict")
+            if verdict == "none":
+                status += " · ⚠ **VERIFIED NOTHING** — does not count as coverage"
+            elif verdict == "partial":
+                status += " · ⚠ **PARTIAL COVERAGE** — scanned less than the full scope"
+            if a.get("declined_families"):
+                status += f" · declined {_cell(', '.join(a['declined_families'][:6]))}"
         if a.get("classifier_fallback"):
             status = f"**MODEL SUBSTITUTION** — {_cell(a.get('error') or '', 120)}"
             substituted.append(a.get("name", "?"))

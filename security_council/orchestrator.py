@@ -38,15 +38,13 @@ def _utc_stamp() -> tuple[str, str]:
 
 
 def _counts_as_coverage(r: ArmResult) -> bool:
-    """Whether an arm result may be counted as "this was actually scanned".
+    """Whether an arm may be counted as "this was actually scanned".
 
-    R12: the gate read `r.ok` alone, so every arm had to remember to set
-    `ok=False` when it set `coverage_unverified` — and two of the three did
-    not. Deciding it HERE, once, is what stops the next arm from forgetting:
-    an arm that produced no findings without a completed scan verified nothing,
-    whatever it reports about itself.
+    Delegates to the one coverage model (`normalize.coverage.coverage_verdict`)
+    so the gate, the corroboration context and the manifest cannot drift apart —
+    drift between exactly those three is what four review rounds kept finding.
     """
-    return bool(r.ok) and not (r.coverage or {}).get("coverage_unverified")
+    return coverage.coverage_verdict(r) != coverage.NONE
 
 
 def _unavailable(arm: Arm, detail: str) -> ArmResult:
@@ -108,14 +106,18 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
               and not (gate_baseline == "new"
                        and f.baseline_state in ("unchanged", "updated")
                        and not policy_mod.baseline_ineligible(f))]
-    ok = [r for r in results if _counts_as_coverage(r)]
+    verdicts = {r.name: coverage.coverage_verdict(r) for r in results}
+    ok = [r for r in results if verdicts[r.name] != coverage.NONE]
     failed = [r for r in results if not r.ok]
-    unverified = [r for r in results if r.ok and not _counts_as_coverage(r)]
+    unverified = [r for r in results if r.ok and verdicts[r.name] == coverage.NONE]
+    partial = [r for r in results if verdicts[r.name] == coverage.PARTIAL]
     degr = [{"kind": "arm_failed", "arm": r.name, "detail": r.error} for r in failed]
     degr += [{"kind": "coverage_unverified", "arm": r.name,
-              "detail": "arm reported no findings without a completed scan — "
-                        "it verified nothing, so it does not count as coverage"}
+              "detail": "arm verified nothing it can vouch for — "
+                        "it does not count as coverage"}
              for r in unverified]
+    degr += [{"kind": "partial_coverage", "arm": r.name,
+              "detail": _partial_reason(r)} for r in partial]
     # R12: structural floor, independent of min_arms_ok. With `min_arms_ok: 0`
     # (or `--min-arms 0`) and no arm succeeding, every later branch was skipped
     # and this returned 0 — a scan where NOTHING ran reported the repo clean.
@@ -128,9 +130,24 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
         return 3, degr
     if gating:
         return 1, degr
-    if failed or unverified:
+    # R12 round 4: a PARTIAL scan whose findings were all below the threshold
+    # used to exit 0 — "clean" from a run that examined less than it claimed.
+    # Incomplete coverage is a degraded run, never a clean one.
+    if failed or unverified or partial:
         return 3, degr
     return 0, degr
+
+
+def _partial_reason(r: ArmResult) -> str:
+    cov = r.coverage or {}
+    if cov.get("partial_scan"):
+        return "timed out mid-scan; its report covers only what was flushed"
+    if cov.get("cost_stopped"):
+        return "stopped on the cost fuse before finishing"
+    declined = cov.get("declined_categories") or []
+    if declined:
+        return f"declined {len(declined)} categories: {', '.join(sorted(declined)[:6])}"
+    return f"completion={cov.get('completion') or 'partial'} — scanned less than the full scope"
 
 
 def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: Path,
@@ -259,8 +276,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         # arm toward auto-suppression. An arm that scanned nothing must not get
         # a vote on whether someone else's finding is real.
         run_ctx = coverage.RunContext(
-            sources=[coverage.SourceRun(r.name, r.kind, r.family,
-                                        ran=_counts_as_coverage(r)) for r in results],
+            sources=[coverage.source_run_for(r) for r in results],
             min_distinct_vendors=mdv)
         merged = [coverage.apply(merge_cluster(c), run_ctx) for c in clusters]
         merged.sort(key=lambda f: (-_SEV_RANK[f.severity.label], f.taxonomy.cwe_family))
@@ -331,14 +347,17 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         policy_rows = policy_mod.decisions_to_json(decisions)
         (out_dir / "policy.json").write_text(dumps(policy_rows))
 
+        # degradations FIRST: the SARIF has to carry the run's execution status,
+        # so it cannot be written before we know whether coverage was complete.
+        exit_code, degradations = _exit_code(merged, results, config)
+        degradations = pre_degr + degradations
+
         (out_dir / "merged.sarif").write_text(dumps(sarif.to_sarif(
-            merged, tool_version=__version__, run_id=run_id)))
+            merged, tool_version=__version__, run_id=run_id,
+            degradations=degradations)))
         by_source = {r.name: r.findings for r in results if r.findings}
         (out_dir / "raw.sarif").write_text(dumps(sarif.raw_sarif(by_source, tool_version=__version__)))
         (out_dir / "findings.json").write_text(dumps([to_dict(f) for f in merged]))
-
-        exit_code, degradations = _exit_code(merged, results, config)
-        degradations = pre_degr + degradations
         _, finished_at = _utc_stamp()
         manifest = build_manifest(
             run_id=run_id, target=str(target), arm_results=results + analysis_results,

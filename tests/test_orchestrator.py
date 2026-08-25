@@ -149,3 +149,30 @@ def test_unverified_arm_is_not_an_eligible_source(tmp_path):
     f = run.findings[0]
     assert "claude" not in (f.corroboration.eligible_sources or [])
     assert run.exit_code == 1          # the real finding still gates
+
+
+def test_partial_coverage_never_exits_clean(tmp_path):
+    """R12 round 4's open item: a PARTIAL scan whose findings were all below the
+    gate threshold used to exit 0 — a clean bill from a run that examined less
+    than it claimed. Incomplete coverage is degraded, never clean."""
+    low = _finding(source_id="semgrep", kind="scanner", vendor="semgrep", sev="low")
+    arms = [FakeArm("semgrep", "scanner", "semgrep", [low],
+                    coverage={"completion": "partial"})]
+    run = _run(arms, tmp_path, min_arms_ok=1)
+    assert run.exit_code == 3                       # was 0
+    assert any(d["kind"] == "partial_coverage" for d in run.degradations)
+
+
+def test_partial_arm_is_not_silent_on_families_it_declined(tmp_path):
+    """A partial arm must not be counted as declining a finding in a category it
+    never looked at — that silence would push p down toward suppression."""
+    real = _finding(source_id="semgrep", kind="scanner", vendor="semgrep", family="crypto")
+    arms = [
+        FakeArm("semgrep", "scanner", "semgrep", [real]),
+        FakeArm("claude", "agent_cli", "claude", [],
+                coverage={"completion": "partial", "declined_categories": ["crypto"]}),
+    ]
+    run = _run(arms, tmp_path, min_arms_ok=1)
+    f = run.findings[0]
+    assert "claude" not in (f.corroboration.declined_sources or [])
+    assert "claude" not in (f.corroboration.eligible_sources or [])

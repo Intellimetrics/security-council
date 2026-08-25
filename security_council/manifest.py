@@ -6,6 +6,7 @@ from collections import Counter
 
 from . import __version__
 from .model import Finding
+from .normalize import coverage as _coverage
 
 SCHEMA_VERSION = 1
 
@@ -40,6 +41,12 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
             "cost_stopped": bool(r.coverage.get("cost_stopped")),
             "model_unattested": bool(r.coverage.get("model_unattested")),
             "coverage_unverified": bool(r.coverage.get("coverage_unverified")),
+            # R12: the tri-state answer to "what did this arm actually examine".
+            # `ok` alone could not distinguish a complete scan from one that
+            # covered half the tree, which is how four rounds of silent-clean
+            # results happened.
+            "coverage_verdict": _coverage.coverage_verdict(r),
+            "declined_families": sorted(_coverage.declined_families(r)),
             "classifier_fallback": bool(r.coverage.get("classifier_fallback")),   # D8
             "error": r.error or None,
         } for r in arm_results],
