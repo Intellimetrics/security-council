@@ -298,8 +298,21 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         armed = policy_mod.is_armed(config)
         cal, cal_meta = calibration_mod.resolve(
             (config.get("score") or {}).get("calibration"), arm_results=results)
+        # G10 (R12): a run that did not verify its full coverage may not create a
+        # durable excuse. Auto-suppression on partial evidence is doubly wrong —
+        # a partial run has fewer eligible corroborating sources, so p is lower
+        # and suppression is MORE likely, and the record then outlives the run
+        # that could not justify it. Human decisions are unaffected.
+        cfg_for_policy = config
+        if any(coverage.coverage_verdict(r) != coverage.VERIFIED for r in results):
+            cfg_for_policy = {**config,
+                              "policy": {**config.get("policy", {}), "auto_suppress": False}}
+            if (config.get("policy") or {}).get("auto_suppress"):
+                pre_degr.append({"kind": "auto_suppress_withheld",
+                                 "detail": "coverage was not fully verified this run; "
+                                           "auto-suppression is disabled (G10)"})
         decisions = policy_mod.apply_policy(
-            merged, config, now_iso=decided_at,
+            merged, cfg_for_policy, now_iso=decided_at,
             prior_runs=_shadow_runs_completed(store, config, out_dir, run_id) if armed else 0,
             history=store.history_counts(), calibration=cal)
         if cal is not None:
@@ -356,7 +369,10 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             merged, tool_version=__version__, run_id=run_id,
             degradations=degradations)))
         by_source = {r.name: r.findings for r in results if r.findings}
-        (out_dir / "raw.sarif").write_text(dumps(sarif.raw_sarif(by_source, tool_version=__version__)))
+        (out_dir / "raw.sarif").write_text(dumps(sarif.raw_sarif(
+            by_source, tool_version=__version__,
+            coverage_by_source={r.name: coverage.coverage_verdict(r) == coverage.VERIFIED
+                                for r in results})))
         (out_dir / "findings.json").write_text(dumps([to_dict(f) for f in merged]))
         _, finished_at = _utc_stamp()
         manifest = build_manifest(

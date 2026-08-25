@@ -148,9 +148,17 @@ def to_sarif(findings: list[Finding], *, tool_name: str = "security-council",
     return {"$schema": SARIF_SCHEMA, "version": SARIF_VERSION, "runs": [run]}
 
 
-def raw_sarif(findings_by_source: dict[str, list[Finding]], *, tool_version: str = "0.0.0") -> dict:
-    """One run per (source) carrying that producer's raw findings (immutable)."""
-    runs = [_run(fs, tool_name=src, tool_version=tool_version, automation_id=f"raw/{src}")
+def raw_sarif(findings_by_source: dict[str, list[Finding]], *, tool_version: str = "0.0.0",
+              coverage_by_source: dict[str, bool] | None = None) -> dict:
+    """One run per (source) carrying that producer's raw findings (immutable).
+
+    `coverage_by_source` maps source id -> whether that arm verified its scope;
+    without it raw.sarif claimed every producer succeeded, contradicting the
+    merged run.
+    """
+    cov = coverage_by_source or {}
+    runs = [_run(fs, tool_name=src, tool_version=tool_version, automation_id=f"raw/{src}",
+                 coverage_ok=cov.get(src, True))
             for src, fs in findings_by_source.items()]
     return {"$schema": SARIF_SCHEMA, "version": SARIF_VERSION, "runs": runs}
 

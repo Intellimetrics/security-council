@@ -150,9 +150,14 @@ def resolve(setting: str | None, *, arm_results: list) -> tuple[Calibration | No
     arm = next((r for r in arm_results if r.name == arm_name), None)
     pin = cal.scanner.get("tool_version")
     ruleset_pin = cal.scanner.get("ruleset")
-    if arm is None or not arm.ok:
-        # the fitted arm produced nothing this run: the record cannot apply anyway
-        return None, {"status": "arm_not_run", "record": cal.record_id, "arm": arm_name}
+    # R12: require VERIFIED coverage, not merely `ok`. The record's per-family
+    # P(TP | detection) was fitted over complete runs of this arm; applying it
+    # to a run that covered less than its scope would attach measured-looking
+    # numbers to an unmeasured scan.
+    from .normalize import coverage as _coverage
+    if arm is None or _coverage.coverage_verdict(arm) != _coverage.VERIFIED:
+        return None, {"status": "arm_not_run", "record": cal.record_id, "arm": arm_name,
+                      "coverage_verdict": (_coverage.coverage_verdict(arm) if arm else None)}
     from .arms.scanner import SEMGREP_RULESET
     mismatches = []
     if pin and arm.tool_version and arm.tool_version != pin:

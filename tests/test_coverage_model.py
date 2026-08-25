@@ -93,3 +93,33 @@ def test_sarif_reports_a_degraded_run_as_unsuccessful():
     inv = doc["runs"][0]["invocations"][0]
     assert inv["executionSuccessful"] is False
     assert "partial_coverage" in json.dumps(inv["toolExecutionNotifications"])
+
+
+# --------------------------------------------------------------------------- #
+# round 5: silence only counts from a source that covered the ground
+# --------------------------------------------------------------------------- #
+
+
+def test_a_partial_arm_may_not_decline():
+    """A timed-out arm has no `declined_categories`, so `supported_families`
+    cannot express its unknown scope. Without `may_decline` it stayed eligible
+    on EVERY family and counted as silent — the same suppression pressure the
+    tri-state was built to remove."""
+    assert cov.source_run_for(_r(partial_scan=True)).may_decline is False
+    assert cov.source_run_for(_r(completion="complete")).may_decline is True
+
+
+def test_partial_arm_silence_is_neither_credit_nor_penalty():
+    from security_council.model import Corroboration  # noqa: F401
+    from tests.test_validate import _finding
+    f = _finding()
+    partial = cov.SourceRun("codex", "agent_cli", "codex", ran=True, may_decline=False)
+    verified = cov.SourceRun("semgrep", "scanner", "semgrep", ran=True)
+    corr = cov.compute(f, cov.RunContext(sources=[partial, verified]))
+    assert "codex" not in corr.declined_sources     # silence proves nothing
+    assert "codex" not in corr.eligible_sources     # and does not dilute the denominator
+
+
+def test_not_applicable_cannot_rescue_an_unverified_arm():
+    """Ordering: `coverage_unverified` is the stronger signal."""
+    assert cov.coverage_verdict(_r(not_applicable=True, coverage_unverified=True)) == cov.NONE

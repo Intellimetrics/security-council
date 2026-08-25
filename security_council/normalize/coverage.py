@@ -49,6 +49,10 @@ class SourceRun:
     family: str                     # vendor family (independence unit)
     ran: bool = True
     supported_families: frozenset[str] | None = None   # None = all
+    # Whether this source's SILENCE is evidence. A partial run covered an
+    # unknown subset, so "it didn't report this" tells you nothing — but what it
+    # DID report still counts. Only a fully-verified source may decline.
+    may_decline: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -82,10 +86,12 @@ def coverage_verdict(result) -> str:
     if not getattr(result, "ok", False):
         return NONE
     cov = getattr(result, "coverage", None) or {}
-    if cov.get("not_applicable"):
-        return VERIFIED
+    # order matters: `coverage_unverified` is the stronger signal, so a
+    # not-applicable marker can never rescue an arm that vouches for nothing
     if cov.get("coverage_unverified"):
         return NONE
+    if cov.get("not_applicable"):
+        return VERIFIED
     if cov.get("partial_scan") or cov.get("cost_stopped"):
         return PARTIAL
     if cov.get("completion") in ("partial", "declined"):
@@ -111,10 +117,12 @@ def source_run_for(result) -> "SourceRun":
     whole point of the tri-state: silence only means something from a source
     that was actually looking.
     """
+    verdict = coverage_verdict(result)
     declined = declined_families(result)
     return SourceRun(result.name, result.kind, result.family,
-                     ran=coverage_verdict(result) != NONE,
-                     supported_families=(frozenset(CWE_FAMILIES) - declined) if declined else None)
+                     ran=verdict != NONE,
+                     supported_families=(frozenset(CWE_FAMILIES) - declined) if declined else None,
+                     may_decline=verdict == VERIFIED)
 
 
 @dataclass
@@ -159,11 +167,16 @@ def compute(finding: Finding, run_ctx: RunContext) -> Corroboration:
         is_eligible = s.ran and stance == "reports" and supported
         if not is_eligible:
             continue
+        is_reporting = s.source_id in reporting
+        if not is_reporting and not s.may_decline:
+            # partial scope: it may simply never have looked here. Neither
+            # credit nor penalty, and it does not dilute the denominator.
+            continue
         w = _weight(s, stance, family_seen)
         family_seen.add(s.family)
         denom += w
         eligible.append(s.source_id)
-        if s.source_id in reporting:
+        if is_reporting:
             score += w
         else:
             decline_w += w

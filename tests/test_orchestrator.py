@@ -176,3 +176,16 @@ def test_partial_arm_is_not_silent_on_families_it_declined(tmp_path):
     f = run.findings[0]
     assert "claude" not in (f.corroboration.declined_sources or [])
     assert "claude" not in (f.corroboration.eligible_sources or [])
+
+
+def test_degraded_run_does_not_auto_suppress(tmp_path):
+    """G10 (R12): a run that did not verify its coverage may not write a durable
+    excuse. A partial run has fewer eligible corroborators, so p is LOWER and
+    suppression more likely — exactly when it is least justified."""
+    low = _finding(source_id="semgrep", kind="scanner", vendor="semgrep", sev="low")
+    arms = [FakeArm("semgrep", "scanner", "semgrep", [low],
+                    coverage={"completion": "partial"})]
+    run = _run(arms, tmp_path, min_arms_ok=1, auto_suppress=True,
+               accept_suppression_risk=True, shadow_runs=0)
+    assert any(d["kind"] == "auto_suppress_withheld" for d in run.degradations)
+    assert all(f.disposition.lifecycle == "open" for f in run.findings)
