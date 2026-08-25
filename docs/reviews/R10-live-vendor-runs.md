@@ -248,10 +248,31 @@ the `refuted` transition rather than on scoring.
 
 ## Decisions taken
 
-Fixed and committed this session: the house prompt (defect 1) and the vendor
-runner (defect 2). Everything in §3 and in this section is **found and
-recorded, not yet fixed** — it is a guardrail change on the wrongful-
-suppression path, which is the one surface this project does not patch in a
-hurry. The eval gate must stay zero-tolerance-green across any change, and
-codex has now timed out in both council rounds, so a third opinion on the fix
-is still outstanding.
+Fixed and committed this session: the house prompt (defect 1), the vendor
+runner (defect 2), and — in `0a5abfe` — **every defect in §3 and in this
+section**.
+
+The evidence rules now gate refuting harder than confirming, on purpose,
+because refuting is the wrongful-suppression direction: a refutation must be
+**anchored** to the finding's own code (`locations` ∪ `data_flow`, ±25 lines,
+≤80-line span — the span cap exists because `verify_ref` bounds `start_line`
+but not `end_line`, so a 1..5000 citation would otherwise intersect anything),
+must come from a defender who actually voted `false_positive`, must be fully
+**evidenced** (`unevidenced`/`unreliable` opinions still count toward
+`true_positive`, the fail-safe direction, but never toward `false_positive`),
+and must span **≥2 distinct vendor families**. Any peer refuting off a
+fabricated citation forces `needs_human`. Malformed citations lower the pass
+rate instead of raising it. A blocked refutation is named in the report
+(`refutation_blocked`) rather than vanishing. `no_cross_file_navigation` is
+wired to a real signal.
+
+**Guarded against over-correction**, which was the live risk in tightening
+this: a legitimate anchored refutation still reaches `refuted` (unit test and
+live run), and the eval gate still demotes the `FP-MD5-CACHE` decoy —
+`validated_precision` 0.9524, `true_positive_suppression_rate` 0.0,
+`crypto_suppression_rate` 0.0, no violations. 11 of the 12 new tests in
+`tests/test_panel_evidence.py` fail without the change; the twelfth is the
+control asserting that a zero-citation opinion may still *confirm*.
+
+Codex timed out in both council rounds, so the third opinion on these rules is
+still outstanding — worth a re-run when the codex timeout is raised.
