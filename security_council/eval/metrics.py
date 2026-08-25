@@ -107,6 +107,19 @@ def compute(expected: dict, findings: list[Finding]) -> EvalReport:
                     f"state={f.disposition.state} lifecycle={f.disposition.lifecycle} "
                     f"(must end as one of {sorted(allowed)})")
 
+    # R12 round 12: the suppression rates read `0.0` when there is nothing to
+    # divide by, and `violations` is empty when there is nothing to violate — so
+    # a corpus that produced NO ground-truth true positives scored a perfect
+    # gate. A gate that cannot fail is not a gate; say so loudly.
+    if not tps:
+        violations.append(
+            "corpus has no ground-truth true positives — every rate below is vacuous "
+            "and this gate cannot fail")
+    elif not tp_findings:
+        violations.append(
+            f"not one of the {len(tps)} ground-truth true positives was detected — "
+            "the suppression rates below are vacuous 0.0, not a clean result")
+
     # unhandled false positives = decoy/noise findings still standing open
     unhandled_fp = [f for f in [*decoy_findings.values(), *noise]
                     if not is_demoted_or_hidden(f) and f.disposition.state != "disputed"]

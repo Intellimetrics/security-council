@@ -94,3 +94,14 @@ def test_cli_eval_subcommand(capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["violations"] == [] and out["metrics"]["recall"] == 1.0
     assert cli_main(["eval", "--fixtures", str(FIXTURES / "nope")]) == 2
+
+
+def test_an_empty_corpus_cannot_pass_the_gate():
+    """R12 round 12: the suppression rates read 0.0 when there is nothing to
+    divide by and `violations` is empty when there is nothing to violate, so a
+    corpus that produced NO ground-truth true positives scored a perfect gate.
+    A gate that cannot fail is not a gate."""
+    from security_council.eval.metrics import compute
+    res = compute({"cases": [], "decoys": []}, [])
+    assert res.violations, "an empty corpus passed the gate"
+    assert "vacuous" in " ".join(res.violations)
