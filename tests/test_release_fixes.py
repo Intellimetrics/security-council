@@ -9,7 +9,8 @@ import pytest
 
 from security_council import config as cfg
 from security_council import fence, model as m
-from security_council.arms.scanner import SCANNER_SPECS
+from security_council.arms import scanner as sc
+from security_council.arms.scanner import SCANNER_SPECS, ScannerArm
 from security_council.decisions import DecisionStore
 from security_council.normalize import coverage as cov
 from security_council.workspace import prepare_workspace
