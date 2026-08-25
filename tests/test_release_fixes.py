@@ -291,3 +291,26 @@ def test_every_ci_template_ignores_the_repo_config():
         while block[-1].rstrip().endswith("\\"):        # the command's continuation lines
             block.append(lines[start + len(block)])
         assert any("--ignore-repo-config" in ln for ln in block), (path, block)
+
+
+def test_ci_scan_commands_shell_parse_cleanly():
+    """R12 round 22 (claude): the round-21 edit appended ` \\` to a scan line
+    that already ended in ` \\`, leaving `... "$path" \\ \\` — bash reads
+    `\\ ` as an escaped-space ARGUMENT, argparse exits 2, and every CI scan
+    failed. Fail-closed, but the shipped templates were broken. Assemble each
+    scan command the way bash would and check the tokens."""
+    import shlex
+    from pathlib import Path
+    for path in ("action.yml", "templates/security-council.yml",
+                 "templates/security-council.gitlab-ci.yml"):
+        lines = Path(path).read_text().splitlines()
+        start = next(i for i, ln in enumerate(lines) if "-P -m security_council.cli scan" in ln)
+        block = [lines[start]]
+        while block[-1].rstrip().endswith("\\"):
+            block.append(lines[start + len(block)])
+        joined = " ".join(ln.rstrip().rstrip("\\") for ln in block)
+        tokens = shlex.split(joined)
+        assert all(t.strip() for t in tokens), (path, tokens)       # no whitespace-only args
+        assert "\\" not in tokens, (path, tokens)                      # no stray backslash arg
+        assert tokens[:4] == tokens[0:1] + ["-P", "-m", "security_council.cli"], (path, tokens)
+        assert "--ignore-repo-config" in tokens, path

@@ -71,7 +71,7 @@ runs:
       shell: bash
       run: |
         set +e
-        python3 -P -m security_council.cli scan "${{ inputs.path }}" \ \
+        python3 -P -m security_council.cli scan "${{ inputs.path }}" \
           --ignore-repo-config \
           --arms "${{ inputs.arms }}" \
           --fail-on-severity "${{ inputs.fail-on-severity }}" \

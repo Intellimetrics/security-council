@@ -45,7 +45,7 @@ parameters:
 steps:
   - bash: |
       set +e
-      python3 -P -m security_council.cli scan "${{ parameters.scanPath }}" \ \
+      python3 -P -m security_council.cli scan "${{ parameters.scanPath }}" \
           --ignore-repo-config \
         --arms "${{ parameters.arms }}" \
         --fail-on-severity "${{ parameters.failOnSeverity }}" \
