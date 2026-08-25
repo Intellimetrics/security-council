@@ -117,3 +117,25 @@ def test_the_real_marker_line_is_still_recognised(monkeypatch, tmp_path):
            stderr="Scanning dir /src\nNo package sources found, --help for usage information.")
     res = _run(monkeypatch, tmp_path, "osv-scanner", r)
     assert res.ok is True and res.coverage["not_applicable"] is True
+
+
+def test_sarif_result_inherits_the_rules_default_level(tmp_path):
+    """SARIF 2.1.0 §3.27.10: a result without `level` inherits
+    `rule.defaultConfiguration.level`. R12 round 15: we read only the result's
+    own level, so a scanner declaring severity once on the RULE — compliant and
+    common — had every finding under-severitised and dropped below the gate."""
+    from security_council.normalize import registry
+    from security_council.normalize.base import ParseContext
+    (tmp_path / "a.py").write_text("x = 1\n")
+    doc = {"version": "2.1.0", "runs": [{
+        "tool": {"driver": {"name": "t", "rules": [
+            {"id": "R1", "defaultConfiguration": {"level": "error"},
+             "properties": {"tags": ["CWE-89"]}}]}},
+        "results": [{"ruleId": "R1", "message": {"text": "m"},   # no level here
+                     "locations": [{"physicalLocation": {
+                         "artifactLocation": {"uri": "a.py"},
+                         "region": {"startLine": 1}}}]}]}]}
+    ctx = ParseContext(repo_root=tmp_path, source_id="semgrep", source_kind="scanner",
+                       family="semgrep", run_id="r", collected_at="t", tool_version="1")
+    findings = registry.normalize_sarif(doc, "semgrep", ctx)
+    assert [f.severity.label for f in findings] == ["high"]   # gates at the default

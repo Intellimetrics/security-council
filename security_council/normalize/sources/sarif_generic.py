@@ -76,7 +76,14 @@ def parse_sarif(sarif: dict, *, source_id: str, redact: bool = False,
                 path=uri, start_line=start, end_line=end, title=title,
                 description=(res.get("message") or {}).get("text", ""),
                 rule_id=rid, declared_cwe=declared, category=category,
-                severity_label=res.get("level"), numeric_severity=numeric,
+                # SARIF 2.1.0 §3.27.10: a result without `level` INHERITS
+                # `rule.defaultConfiguration.level`. R12 round 15: we read only
+                # the result's own level, so a scanner that declares severity
+                # once on the rule — compliant and common — had every finding
+                # under-severitised and dropped below the default `high` gate.
+                severity_label=(res.get("level")
+                                or (rule.get("defaultConfiguration") or {}).get("level")),
+                numeric_severity=numeric,
                 start_column=region.get("startColumn"), end_column=region.get("endColumn"),
                 snippet=(region.get("snippet") or {}).get("text"),
                 source_fingerprints=res.get("partialFingerprints", {}) or {},

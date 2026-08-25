@@ -534,9 +534,18 @@ def validate_finding(f: "Finding") -> list[str]:
             errs.append(f"I6: {f.disposition.lifecycle} missing decision_ref")
         if not _valid_rfc3339(f.disposition.expires_at):
             errs.append(f"I6: {f.disposition.lifecycle} needs RFC3339 expires_at")
-    # never auto-close: auto 'fixed' requires baseline evidence the finding is gone
-    if f.disposition.lifecycle == "fixed" and db.kind != "human" and f.baseline_state != "absent":
-        errs.append("I6: auto 'fixed' requires baseline_state == 'absent' (never auto-close)")
+    # never close what is still there: 'fixed' requires baseline evidence the
+    # finding is GONE — from anyone. R12 round 15: this exempted `kind ==
+    # "human"`, and a stored decision record simply claims its own kind, so a
+    # record asserting human + lifecycle "fixed" took a CRITICAL finding off the
+    # gate with every invariant silent (reproduced: exit 0). "fixed" is not an
+    # opinion, it is a claim about the code — and the scanner just found it.
+    # A human may still `suppress` or `accept_risk`, which are attributed,
+    # expiring and visible; they may not declare a live finding fixed.
+    if f.disposition.lifecycle == "fixed" and f.baseline_state != "absent":
+        who = "auto" if db.kind != "human" else "human"
+        errs.append(f"I6: {who} 'fixed' requires baseline_state == 'absent' "
+                    f"(a finding detected in this scan is not fixed)")
 
     # I13 - the lifecycle must be one the model knows. Every hiding invariant
     # (I6/I7/I7b/I11) and the CI gate key on SET MEMBERSHIP — HIDDEN_LIFECYCLES,

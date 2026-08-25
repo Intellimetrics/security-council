@@ -313,3 +313,23 @@ def test_I7b_a_critical_finding_cannot_be_machine_hidden():
         raise AssertionError("a machine-hidden critical finding was constructible")
     except m.FindingInvariantError as e:
         assert "I7b" in str(e)
+
+
+def test_a_live_finding_cannot_be_declared_fixed_by_anyone():
+    """R12 round 15: the 'never close what is still there' rule exempted
+    `kind == "human"`, and a stored decision record simply CLAIMS its own kind —
+    so a record asserting human + lifecycle "fixed" took a CRITICAL finding off
+    the gate with every invariant silent (reproduced: exit 0). "fixed" is a
+    claim about the code, not an opinion, and the scanner just found it."""
+    f = _refuted(sev="critical")
+    f.disposition.lifecycle = "fixed"
+    f.disposition.decided_by = m.DecidedBy(kind="human", operator="someone", decided_at=NOW)
+    f.disposition.decision_ref = "ref"
+    try:
+        m.assert_invariants(f)
+        raise AssertionError("a live critical finding was declared fixed")
+    except m.FindingInvariantError as e:
+        assert "'fixed' requires baseline_state == 'absent'" in str(e)
+
+    f.baseline_state = "absent"          # the legitimate case still works
+    m.assert_invariants(f)
