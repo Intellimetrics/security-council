@@ -246,3 +246,48 @@ def test_verdict_partial_when_ignore_file_present_is_reported_by_name(monkeypatc
     res = _run(monkeypatch, tmp_path, "gitleaks", _R(ok=True, exit_code=0), write_sarif=empty)
     assert cov.coverage_verdict(res) == cov.PARTIAL
     assert res.coverage["ignore_files"] == [".gitleaksignore"]
+
+
+# ------------------------------------------------------ repo config trust ----
+
+
+def test_repo_config_is_honoured_locally_but_recorded_as_repository_sourced(tmp_path):
+    """R12 round 21 (claude): the scanned repository's own .security-council.yaml
+    chooses the arms and the gate, so a branch can configure its own scan.
+    Locally that is the normal workflow — but the source must be recorded."""
+    (tmp_path / ".security-council.yaml").write_text("arms:\n  enabled: [osv-scanner]\n")
+    c = cfg.load_config(tmp_path)
+    assert c["arms"]["enabled"] == ["osv-scanner"]
+    assert c["_source"]["kind"] == "repository"
+
+
+def test_ignore_repo_config_uses_defaults(tmp_path):
+    (tmp_path / ".security-council.yaml").write_text("arms:\n  enabled: [osv-scanner]\n")
+    c = cfg.load_config(tmp_path, ignore_repo=True)
+    assert c["arms"]["enabled"] == cfg.DEFAULT_CONFIG["arms"]["enabled"]
+    assert c["_source"]["kind"] == "defaults" and "ignored" in c["_source"]["note"]
+
+
+def test_explicit_config_does_not_walk_the_target(tmp_path):
+    (tmp_path / ".security-council.yaml").write_text("arms:\n  enabled: [osv-scanner]\n")
+    op = tmp_path.parent / f"{tmp_path.name}-operator.yaml"
+    op.write_text("policy:\n  fail_on_severity: medium\n")
+    c = cfg.load_config(tmp_path, explicit=op)
+    assert c["arms"]["enabled"] == cfg.DEFAULT_CONFIG["arms"]["enabled"]   # repo file unused
+    assert c["policy"]["fail_on_severity"] == "medium"
+    assert c["_source"]["kind"] == "explicit"
+    with pytest.raises(ValueError, match="not a file"):
+        cfg.load_config(tmp_path, explicit=tmp_path / "missing.yaml")
+
+
+def test_every_ci_template_ignores_the_repo_config():
+    """The branch under test must never configure its own gate."""
+    from pathlib import Path
+    for path in ("action.yml", "templates/security-council.yml",
+                 "templates/security-council.gitlab-ci.yml"):
+        lines = Path(path).read_text().splitlines()
+        start = next(i for i, ln in enumerate(lines) if "-P -m security_council.cli scan" in ln)
+        block = [lines[start]]
+        while block[-1].rstrip().endswith("\\"):        # the command's continuation lines
+            block.append(lines[start + len(block)])
+        assert any("--ignore-repo-config" in ln for ln in block), (path, block)

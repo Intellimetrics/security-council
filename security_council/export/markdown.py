@@ -170,6 +170,16 @@ def _header(manifest: dict, findings: list[Finding]) -> list[str]:
     exit_code = manifest.get("exit_code")
     out = [f"# security-council report — run {_code(manifest.get('run_id', '?'))}", ""]
     out.append(f"- **Target:** {_code(tgt.get('root', '?'))}")
+    src = manifest.get("config_source") or {}
+    if src.get("kind") == "repository":
+        out.append(f"- **Config:** {_code(src.get('path', '?'))} — ⚠ **loaded from the "
+                   f"scanned repository**: the tree under test chose its own arms and gate. "
+                   f"In CI, pass `--ignore-repo-config` or `--config <operator file>`.")
+    elif src.get("kind") == "explicit":
+        out.append(f"- **Config:** {_code(src.get('path', '?'))} (operator-supplied)")
+    else:
+        out.append("- **Config:** defaults" + (" — repository config ignored"
+                                               if src.get("note") else ""))
     git_bits = []
     if tgt.get("git_commit"):
         git_bits.append(f"commit {_code(str(tgt['git_commit'])[:12])}")

@@ -30,6 +30,9 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
         "finished_at": finished_at,
         "tool": {"security_council": __version__},
         "target": {"root": target, **git},
+        # R12 round 21: who configured this scan. "repository" means the scanned
+        # tree's own .security-council.yaml chose the arms and the gate.
+        "config_source": config.get("_source") or {"kind": "defaults", "path": None},
         "scan_scope": scan_scope or {"kind": "full"},
         "arms": [{
             "name": r.name, "kind": r.kind, "family": r.family, "ok": r.ok,

@@ -62,7 +62,13 @@ more — all in the default configuration, all reproduced before fixing:
   repository's `osv-scanner.toml`. Both now use a config this package ships,
   passed explicitly; the repository's files are never consulted.
 
-The principle behind the last four of these: **the scanned repository never
+- The scanned repository's own `.security-council.yaml` chose the arms and
+  the gate, so a branch could configure its own scan. Not a bug locally, but
+  wrong for CI: every run now records and reports `config_source`, the CI
+  templates pass `--ignore-repo-config`, and `--config PATH` names an
+  operator-controlled file instead.
+
+The principle behind the last five of these: **the scanned repository never
 decides what gets scanned.** Ignore-files the tools still honour
 (`.semgrepignore`, `.gitleaksignore`) make coverage `partial` and are named in
 the report; scanner configs are pinned; `.gitignore` handling is disabled for

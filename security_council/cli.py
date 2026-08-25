@@ -28,10 +28,20 @@ def cmd_scan(args) -> int:
         print(f"error: {target} is not a directory", file=sys.stderr)
         return EXIT_USAGE
     try:
-        config = load_config(target)
-    except ValueError as e:                    # unknown profile in the config file
+        config = load_config(target,
+                             explicit=Path(args.config) if getattr(args, "config", None) else None,
+                             ignore_repo=bool(getattr(args, "ignore_repo_config", False)))
+    except ValueError as e:                    # unknown profile / invalid value / bad path
         print(f"error: {e}", file=sys.stderr)
         return EXIT_USAGE
+    if (config.get("_source") or {}).get("kind") == "repository":
+        # not an error: a repo's own config is the normal local workflow. But a
+        # CI gate on an untrusted branch must not let that branch configure the
+        # scanner, so say where the config came from every time.
+        print(f"note: config loaded from the scanned repository: "
+              f"{config['_source']['path']} — in CI pass --ignore-repo-config or "
+              f"--config <operator file> so the branch under test cannot configure "
+              f"its own scan", file=sys.stderr)
     if getattr(args, "profile", None):
         from .config import PROFILES, deep_merge
         if args.profile not in PROFILES:
@@ -574,6 +584,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="apply a preset for this run (quick=$0 scanners, ci=baseline "
                         "gating, deep=+AI reviewers+panel [costs money], gov=compliance "
                         "posture); overrides the config file's presets")
+    s.add_argument("--config", metavar="PATH",
+                   help="load THIS config file (no directory walk) — the operator's file, "
+                        "not the scanned repository's")
+    s.add_argument("--ignore-repo-config", action="store_true",
+                   help="ignore any .security-council.yaml in the scanned repository and "
+                        "use the defaults plus CLI flags; use in CI so the branch under "
+                        "test cannot configure its own scan")
     s.add_argument("--arms", help="comma-separated arm names (default: config)")
     s.add_argument("--fail-on-severity", choices=["critical", "high", "medium", "low", "info"])
     s.add_argument("--gate-baseline", choices=["all", "new"],

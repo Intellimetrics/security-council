@@ -44,7 +44,8 @@ security_council:
     # Capturing in one entry is what makes the gate real.
     - |
       set +e
-      python -P -m security_council.cli scan "$CI_PROJECT_DIR" \
+      python -P -m security_council.cli scan "$CI_PROJECT_DIR" \ \
+          --ignore-repo-config \
         --arms "$SECURITY_COUNCIL_ARMS" \
         --fail-on-severity "$SECURITY_COUNCIL_FAIL_ON" \
         --gate-baseline "$SECURITY_COUNCIL_GATE_BASELINE"

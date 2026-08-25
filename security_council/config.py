@@ -98,10 +98,36 @@ def find_config(start: Path) -> Path | None:
     return None
 
 
-def load_config(start: Path) -> dict:
-    p = find_config(start)
-    if p is None:
-        return copy.deepcopy(DEFAULT_CONFIG)
+def load_config(start: Path, *, explicit: Path | None = None,
+                ignore_repo: bool = False) -> dict:
+    """Load the effective config and record WHERE it came from.
+
+    R12 round 21: `.security-council.yaml` is found by walking the scan target
+    and its parents — i.e. it is normally the scanned repository's own file.
+    That file chooses the arms, the gate severity, the baseline mode and the
+    suppression policy, so a branch that commits one can decide how it is
+    scanned. Two operator-side controls: `explicit` loads a file the OPERATOR
+    names (no directory walk), and `ignore_repo` uses the defaults and ignores
+    any file in the target. Every config carries `_source`, which the manifest
+    and summary surface, so a run configured by the repository says so.
+    """
+    if explicit is not None:
+        p = Path(explicit)
+        if not p.is_file():
+            raise ValueError(f"--config {p}: not a file")
+        source = {"kind": "explicit", "path": str(p.resolve())}
+    elif ignore_repo:
+        cfg = copy.deepcopy(DEFAULT_CONFIG)
+        cfg["_source"] = {"kind": "defaults", "path": None,
+                          "note": "repository config ignored (--ignore-repo-config)"}
+        return cfg
+    else:
+        p = find_config(start)
+        if p is None:
+            cfg = copy.deepcopy(DEFAULT_CONFIG)
+            cfg["_source"] = {"kind": "defaults", "path": None}
+            return cfg
+        source = {"kind": "repository", "path": str(p)}
     with open(p) as fh:
         data = yaml.safe_load(fh) or {}
     profile = data.pop("profile", None)
@@ -121,6 +147,7 @@ def load_config(start: Path) -> dict:
     merged = deep_merge(base, data)
     if profile:
         merged["profile"] = profile
+    merged["_source"] = source
     return merged
 
 

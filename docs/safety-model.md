@@ -88,6 +88,16 @@ ships, passed explicitly, so a repository's own config is never auto-loaded;
 `partial` and are named in the degradation. In every case the fix was verified
 by reproducing the clean-exit-0 first and re-running after.
 
+The same principle has one more instance that is a **trust decision rather
+than a bug**: `.security-council.yaml` is normally the scanned repository's
+own file, and it chooses the arms, the gate severity, the baseline mode and
+the suppression policy. That is the right local workflow and the wrong CI
+one — a branch under test must not configure its own gate. So every run
+records `config_source` in the manifest and the summary (with a warning when
+it came from the repository), the shipped CI templates pass
+`--ignore-repo-config`, and operators who want a file use `--config <path>`
+to name one the branch cannot edit.
+
 Plus the meta-rule: **demote, never auto-close.** A refuted finding leaves
 the CI gate but stays open, renders as SARIF `suppressions[underReview]`, and
 appears in the summary's appendix.
