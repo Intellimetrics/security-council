@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import proc
@@ -30,6 +30,10 @@ class Workspace:
     original: Path          # the real target (source of git provenance)
     mode: str               # copy | inplace
     _tmp: Path | None = None
+    # R12: what the scratch copy LEFT OUT. Excludes are deliberate (runtime dirs,
+    # VCS internals) but a scan that never saw `.git/hooks` or a vendored tree
+    # must say so in its scope, not present itself as "the whole repository".
+    excluded: list[str] = field(default_factory=list)
 
     def git_info(self) -> dict:
         r = proc.run_command(["git", "-C", str(self.original), "rev-parse", "HEAD"], timeout=15)
@@ -60,6 +64,17 @@ def prepare_workspace(target: str | Path, *, mode: str = "copy",
     excludes = DEFAULT_EXCLUDES | set(extra_excludes)
     tmp = Path(tempfile.mkdtemp(prefix="sc-ws-"))
     dst = tmp / target.name
-    shutil.copytree(target, dst, ignore=shutil.ignore_patterns(*excludes),
-                    symlinks=False, ignore_dangling_symlinks=True)
-    return Workspace(root=dst, original=target, mode="copy", _tmp=tmp)
+    skipped: set[str] = set()
+    base_ignore = shutil.ignore_patterns(*excludes)
+
+    def _ignore(d, names):
+        hit = base_ignore(d, names)
+        for n in hit:
+            try:
+                skipped.add(str((Path(d) / n).relative_to(target)))
+            except ValueError:
+                skipped.add(n)
+        return hit
+
+    shutil.copytree(target, dst, ignore=_ignore, symlinks=False, ignore_dangling_symlinks=True)
+    return Workspace(root=dst, original=target, mode="copy", _tmp=tmp, excluded=sorted(skipped))

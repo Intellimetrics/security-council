@@ -98,10 +98,43 @@ class FenceCertificate:
         return (now or time.time()) - self.minted_at <= FENCE_TTL_SECONDS
 
 
-def _config_hash(argv_template: list[str]) -> str:
-    # hash the fence shape (flags + bind structure), not the ephemeral paths
-    shape = [a for a in argv_template if not a.startswith("/tmp/") and "sc-ws" not in a]
+def _config_hash(argv_template: list[str], *, ephemeral: tuple[str, ...] = ()) -> str:
+    """Hash the fence SHAPE — flags and bind structure — not the ephemeral paths.
+
+    R11 recorded two defects here: the ephemeral filter was `startswith("/tmp/")`,
+    so it was TMPDIR-dependent, and it stripped any path arg, so different bind
+    scopes could hash identically. The caller now names exactly which values are
+    ephemeral (its work dir and home); everything else — including every bind
+    target — is part of the shape.
+    """
+    eph = set(ephemeral)
+    shape = [a for a in argv_template if a not in eph]
     return hashlib.sha256("\x00".join(shape).encode()).hexdigest()[:16]
+
+
+def config_hash_for(*, work_dir: Path, home: Path, allow_network: bool = False) -> str:
+    """The hash a run's fence WILL have — compare it to the certificate's."""
+    argv = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network)
+    return _config_hash(argv, ephemeral=(str(work_dir), str(home)))
+
+
+def verify_certificate(cert: "FenceCertificate | None", *, work_dir: Path, home: Path,
+                       allow_network: bool = False, now: float | None = None) -> str | None:
+    """None if `cert` covers exactly this fence; otherwise why it does not.
+
+    R11: `fix.py` checked only `cert is None` — `cert.live()` and
+    `cert.config_hash` were never consulted, contradicting the guarantee in the
+    dataclass docstring. This is the check that makes the certificate mean
+    something.
+    """
+    if cert is None:
+        return "no certificate"
+    if not cert.live(now=now):
+        return "certificate expired"
+    want = config_hash_for(work_dir=work_dir, home=home, allow_network=allow_network)
+    if cert.config_hash != want:
+        return f"certificate is for a different fence (hash {cert.config_hash} != {want})"
+    return None
 
 
 def run_in_fence(cmd: list[str], *, work_dir: Path, home: Path, timeout: int = 3600,
@@ -112,42 +145,71 @@ def run_in_fence(cmd: list[str], *, work_dir: Path, home: Path, timeout: int = 3
                             success_exit_codes=tuple(range(0, 256)))
 
 
-def certify(*, work_dir: Path, original: Path, now: float | None = None) -> tuple[FenceCertificate | None, dict]:
-    """Run the canary inside the real fence config; mint a certificate only if
-    every escape is provably blocked. Returns (cert|None, canary_report)."""
+def certify(*, work_dir: Path, original: Path, home: Path | None = None,
+            allow_network: bool = False,
+            now: float | None = None) -> tuple[FenceCertificate | None, dict]:
+    """Run the canary inside THE fence config the run will use; mint a
+    certificate only if every escape is provably blocked AND every positive
+    control fired. Returns (cert|None, canary_report).
+
+    R11 recorded that the canary was built with the DEFAULT posture and its own
+    home, so it never tested what the run would do — `home` and `allow_network`
+    are now the run's own. It also recorded that the probes had no positive
+    control: reading `~/.ssh/id_rsa` and `getent hosts` both fail benignly on a
+    host lacking either, so the canary could "pass" without proving anything.
+    Each escape probe is now paired with a control that must SUCCEED.
+    """
     ok_bw, ver = bwrap_available()
-    home = work_dir.parent / "sc-fence-home"
-    argv_template = bwrap_argv(work_dir=work_dir, home=home)
-    report: dict = {"bwrap": ver, "bwrap_ok": ok_bw}
+    own_home = home is None
+    home = home or (work_dir.parent / "sc-fence-home")
+    argv_template = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network)
+    report: dict = {"bwrap": ver, "bwrap_ok": ok_bw, "allow_network": allow_network}
     if not ok_bw:
         report["refused"] = "bwrap unavailable"
         return None, report
 
     canary_target = original / ".sc-canary"
-    # a single probe: try to (1) write outside the work copy, (2) read $HOME real
-    # files, (3) reach the network. All must fail.
-    probe = (f"(touch {canary_target!s} 2>/dev/null && echo WROTE_ORIGINAL); "
-             f"(cat {str(Path.home() / '.ssh' / 'id_rsa')!s} 2>/dev/null && echo READ_HOME); "
-             "(getent hosts example.com 2>/dev/null && echo RESOLVED_NET); "
-             "echo CANARY_DONE")
+    real_home = str(Path.home())
+    probe = (
+        # positive controls — these MUST print, or the probe did not really run
+        "( [ -d /usr ] && echo USR_OK ); "
+        f"( touch {str(work_dir)!s}/.sc-work-write 2>/dev/null && echo WORK_WRITE_OK ); "
+        # escapes — these must NOT print
+        f"( touch {canary_target!s} 2>/dev/null && echo WROTE_ORIGINAL ); "
+        # the real home must not merely be unreadable, it must not EXIST in the namespace
+        f"( [ -e {real_home!s} ] && echo HOME_VISIBLE ); "
+        # with the network unshared only `lo` exists; any other interface is a breach
+        "( awk -F: 'NR>2{print $1}' /proc/net/dev 2>/dev/null | tr -d ' ' "
+        "| grep -qv '^lo$' && echo NET_VISIBLE ); "
+        "echo CANARY_DONE")
     home.mkdir(parents=True, exist_ok=True)
     try:
-        r = run_in_fence(["/bin/sh", "-c", probe], work_dir=work_dir, home=home, timeout=60)
+        r = run_in_fence(["/bin/sh", "-c", probe], work_dir=work_dir, home=home,
+                         allow_network=allow_network, timeout=60)
     finally:
-        shutil.rmtree(home, ignore_errors=True)
+        if own_home:
+            shutil.rmtree(home, ignore_errors=True)
+        (work_dir / ".sc-work-write").unlink(missing_ok=True)
     out = (r.stdout or "") + (r.stderr or "")
-    breaches = [tag for tag in ("WROTE_ORIGINAL", "READ_HOME", "RESOLVED_NET") if tag in out]
-    escaped_canary = canary_target.exists()
-    if escaped_canary:
+    breaches = [tag for tag in ("WROTE_ORIGINAL", "HOME_VISIBLE") if tag in out]
+    if not allow_network and "NET_VISIBLE" in out:
+        breaches.append("NET_VISIBLE")
+    controls_missing = [tag for tag in ("USR_OK", "WORK_WRITE_OK") if tag not in out]
+    if canary_target.exists():
         canary_target.unlink(missing_ok=True)      # never leave the marker behind
         breaches.append("WROTE_ORIGINAL_CONFIRMED")
-    report.update({"ran": not r.timed_out, "breaches": breaches, "canary_done": "CANARY_DONE" in out})
-    if breaches or r.timed_out or "CANARY_DONE" not in out:
-        report["refused"] = f"fence canary failed: {breaches or 'did not complete'}"
+    report.update({"ran": not r.timed_out, "breaches": breaches,
+                   "controls_missing": controls_missing,
+                   "canary_done": "CANARY_DONE" in out})
+    if breaches or controls_missing or r.timed_out or "CANARY_DONE" not in out:
+        report["refused"] = (f"fence canary failed: breaches={breaches} "
+                             f"controls_missing={controls_missing}"
+                             if (breaches or controls_missing) else "did not complete")
         return None, report
-    cert = FenceCertificate(config_hash=_config_hash(argv_template), bwrap_version=ver,
-                            host=os.uname().nodename if hasattr(os, "uname") else "?",
-                            minted_at=now or time.time(), canary=dict(report))
+    cert = FenceCertificate(
+        config_hash=_config_hash(argv_template, ephemeral=(str(work_dir), str(home))),
+        bwrap_version=ver, host=os.uname().nodename if hasattr(os, "uname") else "?",
+        minted_at=now or time.time(), canary=dict(report))
     return cert, report
 
 

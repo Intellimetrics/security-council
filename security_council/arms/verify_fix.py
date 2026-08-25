@@ -105,14 +105,19 @@ class VerifyFixArm:
             if not self._apply_patch(work):
                 return self._evidence("unproven", cov, run_id, collected_at,
                                       note="patch did not apply cleanly", ok=True)
-            cert, report = _fence.certify(work_dir=work, original=target)
-            cov["fence"] = {k: report.get(k) for k in ("bwrap", "breaches", "canary_done")}
-            if cert is None:
-                return self._evidence("unproven", cov, run_id, collected_at,
-                                      note="fence_unverified: " + str(report.get("refused")),
-                                      ok=False)
+            # the home is created BEFORE certifying so the canary runs against
+            # the exact fence the verifier will use (R11: it used its own)
             home = tmp_root / "home"
             home.mkdir()
+            cert, report = _fence.certify(work_dir=work, original=target, home=home,
+                                          allow_network=False)
+            cov["fence"] = {k: report.get(k) for k in ("bwrap", "breaches",
+                                                       "controls_missing", "canary_done")}
+            why = _fence.verify_certificate(cert, work_dir=work, home=home, allow_network=False)
+            if why is not None:
+                return self._evidence("unproven", cov, run_id, collected_at,
+                                      note=f"fence_unverified: {report.get('refused') or why}",
+                                      ok=False)
             env = _fence.allowlisted_env(home=str(home))
             fcmd = _fence.bwrap_argv(work_dir=work, home=home, allow_network=False) + ["--", *self._cmd()]
             r = proc.run_command(fcmd, timeout=self.timeout, cwd=str(work), env=env,

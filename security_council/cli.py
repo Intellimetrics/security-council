@@ -590,20 +590,22 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tier", help="route same-vendor arms to a gated model tier "
                                   "(mythos, daybreak-blue); must be declared in entitlements")
     s.add_argument("--analyze", metavar="JOBS",
-                   help="comma-separated vendor analysis workflows to attach as artifacts "
-                        "(threat-model, attack-path, hardening, policy, writeup); "
-                        "dual-use ones (attack-path, writeup) are export-excluded")
+                   help="[NOT FUNCTIONAL IN 0.1.0 — refuses honestly] vendor analysis "
+                        "workflows (threat-model, attack-path, hardening, policy, writeup); "
+                        "the vendor's skills are internal to its own scan and not a public "
+                        "surface, see docs/reviews/R10-live-vendor-runs.md")
     s.add_argument("--sbom", action="store_true",
                    help="also generate a CycloneDX SBOM artifact (syft, $0, no network; "
                         "`report --format cyclonedx` then merges findings into it)")
     s.add_argument("--fix", metavar="IDS",
-                   help="generate reviewed .patch artifacts (NEVER applied) for these finding "
-                        "ids, or 'gating'/'all' for all open findings; runs fenced (needs bwrap)")
+                   help="[NOT FUNCTIONAL IN 0.1.0 — refuses honestly] generate reviewed .patch "
+                        "artifacts (NEVER applied); the no-network fence cannot reach a vendor "
+                        "CLI, see docs/reviews/R11-fix-lane-and-fence.md")
     s.add_argument("--fix-job", choices=["suggest-patches", "fix-finding"],
                    default="suggest-patches", help="which vendor fix workflow (default: claude)")
     s.add_argument("--verify-fix", action="store_true",
-                   help="after producing a patch, run verify-fix on it as machine evidence "
-                        "(fenced, read-only; never closes a finding)")
+                   help="[NOT FUNCTIONAL IN 0.1.0 — refuses honestly] verify a produced patch "
+                        "as machine evidence (never closes a finding); depends on --fix")
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")

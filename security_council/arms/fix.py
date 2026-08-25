@@ -129,11 +129,16 @@ class FixArm:
             work, pristine = prepare_fix_copies(target, tmp_root)
             home = tmp_root / "home"
             home.mkdir()
-            # M1: fail closed unless the fence canary certifies against THIS work dir
-            cert, report = _fence.certify(work_dir=work, original=target)
-            cov["fence"] = {k: report.get(k) for k in ("bwrap", "breaches", "canary_done")}
-            if cert is None:
-                return self._fail("fence_unverified: " + str(report.get("refused")), cov)
+            # M1: fail closed unless the fence canary certifies against THIS work
+            # dir, THIS home and THIS network posture — and the certificate is
+            # live and matches the fence we are about to run (R11).
+            cert, report = _fence.certify(work_dir=work, original=target, home=home,
+                                          allow_network=False)
+            cov["fence"] = {k: report.get(k) for k in ("bwrap", "breaches",
+                                                       "controls_missing", "canary_done")}
+            why = _fence.verify_certificate(cert, work_dir=work, home=home, allow_network=False)
+            if why is not None:
+                return self._fail(f"fence_unverified: {report.get('refused') or why}", cov)
             env = _fence.allowlisted_env(home=str(home))
             cmd = self._cmd(home)
             fcmd = _fence.bwrap_argv(work_dir=work, home=home, allow_network=False) + ["--", *cmd]

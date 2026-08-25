@@ -39,11 +39,16 @@ def test_fix_fails_closed_without_fence(tmp_path, monkeypatch):
 
 def _fake_cert(monkeypatch):
     from security_council import fence
-    cert = fence.FenceCertificate(config_hash="h", bwrap_version="bwrap 0.11.0", host="t",
-                                  minted_at=9e18)
-    monkeypatch.setattr(fixmod._fence, "certify",
-                        lambda **kw: (cert, {"bwrap": "bwrap 0.11.0", "breaches": [],
-                                             "canary_done": True}))
+    # the fake mints a certificate for the fence it is ASKED about, so
+    # `verify_certificate` (hash + liveness) is still genuinely exercised
+    def _certify(**kw):
+        h = fence.config_hash_for(work_dir=kw["work_dir"], home=kw["home"],
+                                  allow_network=kw.get("allow_network", False))
+        cert = fence.FenceCertificate(config_hash=h, bwrap_version="bwrap 0.11.0", host="t",
+                                      minted_at=9e18)
+        return cert, {"bwrap": "bwrap 0.11.0", "breaches": [], "controls_missing": [],
+                      "canary_done": True}
+    monkeypatch.setattr(fixmod._fence, "certify", _certify)
 
 
 def test_fix_produces_validated_patch_artifact(tmp_path, monkeypatch):

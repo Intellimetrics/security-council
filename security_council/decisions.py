@@ -49,7 +49,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import policy
-from .model import DecidedBy, Finding, assert_invariants
+from .model import FindingInvariantError, DecidedBy, Finding, assert_invariants
 
 SCHEMA_VERSION = 1
 # R9/G9: high-assurance (crypto / critical) suppressions are re-affirmed on a
@@ -236,6 +236,14 @@ class DecisionStore:
                                     "ref": ref, "title": f.title,
                                     "severity": f.severity.label, "detail": str(e)[:200]})
                     continue
+                # R12 round 15 follow-up: apply the record, then run the
+                # invariants INSIDE a guard. I13 (unknown lifecycle) and the
+                # widened I6 (nobody may declare a live finding fixed) now reject
+                # states a hand-edited record can carry — and an invariant error
+                # here used to escape and crash the scan. A record the model
+                # rejects is malformed by definition: revert it and degrade.
+                snapshot = (d.lifecycle, d.decided_by, d.decision_ref, d.expires_at,
+                            d.sarif_suppression, d.vex_status, d.vex_justification)
                 d.lifecycle = _lifecycle
                 d.decided_by = decided_by
                 d.decision_ref = _ref
@@ -243,7 +251,18 @@ class DecisionStore:
                 d.sarif_suppression = sup.get("sarif_suppression")
                 d.vex_status = sup.get("vex_status")
                 d.vex_justification = sup.get("vex_justification")
-                assert_invariants(f)
+                try:
+                    assert_invariants(f)
+                except FindingInvariantError as e:
+                    (d.lifecycle, d.decided_by, d.decision_ref, d.expires_at,
+                     d.sarif_suppression, d.vex_status, d.vex_justification) = snapshot
+                    rec["history"].append({"at": now_iso, "kind": "malformed",
+                                           "finding_id": f.id, "detail": str(e)[:200]})
+                    _atomic_write(self._path(rc), rec)
+                    actions.append({"finding_id": f.id, "action": "ignored_malformed",
+                                    "ref": ref, "title": f.title,
+                                    "severity": f.severity.label, "detail": str(e)[:200]})
+                    continue
                 # "stale by repetition": a decision nobody has re-touched across
                 # many scans is a set-and-forget risk, so the count is surfaced.
                 reapplied = int(sup.get("reapplied_count", 0)) + 1

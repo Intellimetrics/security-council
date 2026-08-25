@@ -37,6 +37,9 @@ class ScannerSpec:
     # dependency manifests, which is not-applicable, not a failure — without
     # this every dependency-free repo scans "degraded" (exit 3) instead of clean.
     not_applicable_markers: tuple[str, ...] = ()
+    # The exit code(s) the tool uses for "nothing in scope". A marker line alone
+    # was not enough (R12 round 16): gate on both.
+    not_applicable_exit_codes: tuple[int, ...] = ()
     # Files IN THE SCANNED REPO that tell this tool to skip things. They are
     # honoured (a repo may legitimately ignore vendored code) but they mean
     # coverage is REDUCED, and a reduced scan must never report as verified.
@@ -67,11 +70,19 @@ SCANNER_SPECS: dict[str, ScannerSpec] = {
         ignore_files=(".gitleaksignore",)),
     "osv-scanner": ScannerSpec(
         name="osv-scanner", family="osv", bin="osv-scanner", image="ghcr.io/google/osv-scanner:latest",
-        local_args=("scan", "source", "--format=sarif", "--output={out}/osv.sarif", "{target}"),
-        docker_args=("scan", "source", "--format=sarif", "--output=/out/osv.sarif", _MOUNT),
+        # --recursive is NOT the default (R12 round 16, verified live): without it
+        # osv-scanner only reads manifests in the top-level directory, printed
+        # "No package sources found" for a repo whose requirements.txt sat one
+        # directory down, and that marker then read as a VERIFIED clean scan.
+        # Any monorepo with nested manifests got a silent osv pass.
+        local_args=("scan", "source", "--recursive", "--format=sarif",
+                    "--output={out}/osv.sarif", "{target}"),
+        docker_args=("scan", "source", "--recursive", "--format=sarif",
+                     "--output=/out/osv.sarif", _MOUNT),
         sarif_name="osv.sarif", success_exit_codes=(0, 1),
         version_args=("--version",), docker_version_args=("--version",), network=True,
         not_applicable_markers=("no package sources found",),
+        not_applicable_exit_codes=(128,),           # verified live
         ignore_files=("osv-scanner.toml",)),
 }
 
@@ -146,8 +157,13 @@ class ScannerArm:
         # with the marker, which is how the tool actually emits it
         # ("No package sources found, --help for usage information.").
         _lines = [ln.strip().lower() for ln in (r.stderr or "").splitlines()]
-        not_applicable = any(ln.startswith(m) for ln in _lines
-                             for m in self.spec.not_applicable_markers)
+        marker_seen = any(ln.startswith(m) for ln in _lines
+                          for m in self.spec.not_applicable_markers)
+        # both the line AND the tool's own exit code for that case, so a
+        # different failure that also prints the phrase is not excused
+        not_applicable = marker_seen and (
+            not self.spec.not_applicable_exit_codes
+            or r.exit_code in self.spec.not_applicable_exit_codes)
         if not sarif_path.is_file():
             if not_applicable and not r.timed_out:
                 # nothing in scope for this tool — honest "clean" for its category.

@@ -169,7 +169,10 @@ def synthesize_validation(finding: Finding, cr: CouncilResult, *, prompt_sha256:
     # files, which is the published 96% -> 44% triage-accuracy failure mode.
     finding_files = {loc.uri for loc in finding.locations} | {
         st.location.uri for st in finding.data_flow}
-    max_files_cited = max((len({c.path for c in op.citations}) for op in ok), default=0)
+    # only VERIFIED citations count as "the panel looked there" — an unverified
+    # path is a claim, not navigation (R12 round 8)
+    max_files_cited = max((len({c.path for c in op.citations if c.verified is True})
+                           for op in ok), default=0)
     no_xfile = len(finding_files) > 1 and max_files_cited <= 1
 
     return Validation(verdict=verdict, confidence=round(conf, 3), panel=panel,

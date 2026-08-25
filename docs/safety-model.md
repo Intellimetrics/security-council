@@ -27,7 +27,10 @@ ones:
 | I4 | Crypto is *sticky*: any crypto CWE anywhere in the taxonomy forces the crypto family — a crypto finding can't be re-filed under "injection" to dodge crypto rules |
 | **I6** | A suppressed/accepted-risk finding **must** carry full attribution — auto: model id + prompt hash + panel hash; human: operator — plus decision ref and expiry. An unattributed hidden finding *cannot be constructed* |
 | **I7** | A crypto finding with `kind != human` on a hidden lifecycle is invalid — crypto is never machine-hidden, period |
+| I7b | The same for a **critical** finding. G7 forbade auto-suppressing critical in the policy layer, but only crypto had the structural twin — a hidden critical finding could be *constructed* where a hidden crypto one could not |
 | I9 | Finding ids are derived from fingerprints and verifiable — an id can't be forged to collide a decision onto a different finding |
+| I13 | The lifecycle must be one the model knows. Every hiding invariant and the CI gate key on set membership, so an *invented* value (`wontfix`) was in no set: no invariant fired and the gate dropped the finding. Reproduced on a critical finding — exit 0, no complaint |
+| I6 (widened) | `fixed` requires baseline evidence the finding is **gone — from anyone**. It exempted `kind: human`, and a stored record simply claims its own kind, so a record asserting human + `fixed` closed a live critical finding. "Fixed" is a claim about the code, not an opinion; the scanner just found it |
 | I11 | SARIF suppressions / VEX `not_affected` may only appear on closed lifecycles — no export can *show* suppressed what the model holds open |
 
 ## Guardrails G1–G8 (`policy.py`)
@@ -43,6 +46,7 @@ ones:
 | G7 | Critical severity never auto-suppressed |
 | G8 | Context drift (the code around the finding changed) → the decision deactivates permanently and the finding reopens for re-validation |
 | G9 | Crypto and critical findings can never be taken out of the gate by **unsigned operator state**: a baseline never excuses them, and a stored suppression of one is re-affirmed every 30 days instead of 90 |
+| G11 | A crypto or critical finding may leave the gate only on a refutation an **actual panel** produced (≥2 independent, evidenced, distinct-family refuters). Demotion removes a finding from the build just as suppression does, and nothing else checked that a high-assurance `refuted` state had evidence behind it |
 | G10 | A run that did not verify its full coverage **cannot auto-suppress**. A partial run has fewer eligible corroborators, so p is lower and suppression is *more* likely — exactly when it is least justified — and the stored record would outlive the run that could not justify it. Reported as `auto_suppress_withheld`; human decisions are unaffected |
 
 ### Coverage is a verdict, not a boolean
@@ -65,6 +69,15 @@ report clean** (a missing report, an unreadable one, zero arms under
 `min_arms_ok: 0`, an arm that declined every category, a timed-out scanner
 resurrected by partial findings, a CI template capturing the wrong `$?`).
 Patching each instance produced the next one; the model is what stopped it.
+
+The simplest exploit of the whole review was found at round sixteen, in the
+default configuration: `printf '*' > .semgrepignore` turned the vulnerable
+fixture into a clean, `verified`, exit-0 scan. A repository's own scanner
+ignore-files (`.semgrepignore`, `.gitleaksignore`, `osv-scanner.toml`) are
+still honoured — ignoring vendored code is legitimate — but they now make
+coverage `partial`, and the degradation names them. Likewise `osv-scanner`
+runs with `--recursive`: without it, manifests below the top level were never
+read and the "no package sources" case read as a verified clean.
 
 Plus the meta-rule: **demote, never auto-close.** A refuted finding leaves
 the CI gate but stays open, renders as SARIF `suppressions[underReview]`, and

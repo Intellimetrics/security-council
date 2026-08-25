@@ -25,6 +25,10 @@ DEFAULT_CONFIG: dict = {
     # operator's explicit acknowledgement) and runs shadow for the first
     # policy.shadow_runs runs; crypto and critical findings are never
     # auto-suppressed regardless (guardrails G1/G7, structural via I6/I7).
+    # min_arms_ok is a FLOOR on successful arms, not a tolerance for failed ones:
+    # any arm that fails, verifies nothing, or covers only part of its scope
+    # still degrades the run to exit 3 (a partial scan is never "clean"). With
+    # zero successful arms the run is degraded regardless of this value.
     # gate_baseline "new" gates only findings absent from the operator-set
     # baseline (`security-council baseline set`); "all" (default) gates
     # everything. With no baseline set, everything gates either way.
@@ -105,8 +109,64 @@ def load_config(start: Path) -> dict:
         # fail-closed: a typo'd profile silently scanning with defaults is a
         # misconfiguration hazard, not a fallback
         raise ValueError(f"unknown profile {profile!r} in {p}; known: {sorted(PROFILES)}")
+    problems = validate_config(data)
+    if problems:
+        # fail-closed, same reasoning as an unknown profile: a config the tool
+        # silently misreads is a misconfiguration hazard. A typo'd key is
+        # ignored today (defaults are safe), but a WRONG VALUE for a right key
+        # — `fail_on_severity: hgh`, `gate_baseline: New` — must not be
+        # quietly coerced to something the operator did not choose.
+        raise ValueError(f"invalid {p}: " + "; ".join(problems))
     base = deep_merge(DEFAULT_CONFIG, PROFILES[profile]) if profile else DEFAULT_CONFIG
     merged = deep_merge(base, data)
     if profile:
         merged["profile"] = profile
     return merged
+
+
+_POLICY_ENUMS = {"fail_on_severity": {"critical", "high", "medium", "low", "info"},
+                 "gate_baseline": {"all", "new"}}
+_POLICY_BOOLS = ("auto_suppress", "accept_suppression_risk")
+_POLICY_INTS = ("min_arms_ok", "shadow_runs", "suppression_expiry_days")
+
+
+def validate_config(data: dict) -> list[str]:
+    """Problems with a raw config file, or [] (R12: `.security-council.yaml`
+    had no validation at all). Unknown keys are reported as warnings-by-name
+    so a typo is visible; wrong-typed or out-of-range values are errors."""
+    out: list[str] = []
+    if not isinstance(data, dict):
+        return ["top level must be a mapping"]
+    known_top = set(DEFAULT_CONFIG) | {"profile"}
+    for k in data:
+        if k not in known_top:
+            out.append(f"unknown top-level key {k!r} (known: {sorted(known_top)})")
+    pol = data.get("policy")
+    if pol is not None:
+        if not isinstance(pol, dict):
+            return out + ["policy must be a mapping"]
+        for k in pol:
+            if k not in DEFAULT_CONFIG["policy"]:
+                out.append(f"unknown policy key {k!r}")
+        for k, allowed in _POLICY_ENUMS.items():
+            if k in pol and pol[k] not in allowed:
+                out.append(f"policy.{k} must be one of {sorted(allowed)}, got {pol[k]!r}")
+        for k in _POLICY_BOOLS:
+            if k in pol and not isinstance(pol[k], bool):
+                out.append(f"policy.{k} must be true/false, got {pol[k]!r}")
+        for k in _POLICY_INTS:
+            if k in pol and (isinstance(pol[k], bool) or not isinstance(pol[k], int)
+                             or pol[k] < 0):
+                out.append(f"policy.{k} must be a non-negative integer, got {pol[k]!r}")
+        if "suppress_below" in pol:
+            v = pol["suppress_below"]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1:
+                out.append(f"policy.suppress_below must be a number in [0, 1], got {v!r}")
+    arms = data.get("arms")
+    if arms is not None:
+        if not isinstance(arms, dict):
+            return out + ["arms must be a mapping"]
+        en = arms.get("enabled")
+        if en is not None and (not isinstance(en, list) or not all(isinstance(x, str) for x in en)):
+            out.append("arms.enabled must be a list of arm names")
+    return out

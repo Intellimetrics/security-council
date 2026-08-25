@@ -260,6 +260,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         run_arms = list(arms)
 
     ws = prepare_workspace(target, mode="copy" if isolate else "inplace")
+    if ws.excluded:
+        scan_scope = {**scan_scope, "excluded": ws.excluded}    # what the copy left out
     try:
         maxc = int(config.get("defaults", {}).get("max_concurrency", 4))
         with ThreadPoolExecutor(max_workers=max(1, maxc)) as ex:

@@ -131,11 +131,19 @@ def _term_adjudicator(panel: list[PanelOpinion]) -> float:
     return 0.0
 
 
-def _term_evidence(panel: list[PanelOpinion]) -> float:
-    up = sum(1 for op in panel if op.role == "prosecutor"
-             for c in op.citations if c.verified is True)
-    down = sum(1 for op in panel if op.role == "defender"
-               for c in op.citations if c.verified is True)
+def _term_evidence(panel: list[PanelOpinion], finding: Finding) -> float:
+    """Citations move p only when they are from an INDEPENDENT, `ok` opinion and
+    ANCHORED to the finding's own code (R11): a verified reference to README.md
+    line 1 is not evidence about a SQL sink in reports.py, and this term used to
+    count it at full weight in either direction."""
+    anchors = _anchor_ranges(finding)
+
+    def _n(role: str) -> int:
+        return sum(1 for op in panel
+                   if op.role == role and op.independent and op.status == "ok"
+                   for c in op.citations if _is_anchored(c, anchors))
+
+    up, down = _n("prosecutor"), _n("defender")
     return min(up * W_CITATION, CITATION_CAP) - min(down * W_CITATION, CITATION_CAP)
 
 
@@ -170,7 +178,7 @@ def score_finding(f: Finding, *, history: dict | None = None,
         r = W_REACHABILITY.get(f.validation.reachability.verdict, 0.0)
         if r:
             terms["reachability"] = r
-    if (ev := _term_evidence(panel)):
+    if (ev := _term_evidence(panel, f)):
         terms["evidence"] = ev
 
     reporting = set(corr.agent_sources) | set(corr.deterministic_sources)
