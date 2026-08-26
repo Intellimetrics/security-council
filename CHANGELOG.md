@@ -42,6 +42,14 @@
   the line; a missing `namespaces=` only warns); a run that replays unsigned machine
   suppressions under `enforce` reports `machine_decisions_replayed`; the
   baseline's age is printed with its provenance.
+- History-term hardening (R13 round 2): a forged clone carrying a real mark's
+  signature can no longer shadow the real mark (dedupe happens after
+  verification, on signature + signed payload); a record file not named by
+  its root cause is ignored (a rogue file could override a root cause's
+  history); the governing decision is the verifying event with the latest
+  *signed* timestamp, not the last one in the array; `decisions verify`
+  applies the same checks as the scan; refused marks and a poisoned roster
+  are scan degradations.
 
 ### Changed
 

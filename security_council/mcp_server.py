@@ -94,7 +94,9 @@ def sc_scan(arguments: dict) -> dict:
         if arguments.get(k):
             config["policy"][k] = arguments[k]
     if arguments.get("require_signatures"):
-        config.setdefault("decisions", {})["require_signatures"] = arguments["require_signatures"]
+        if not isinstance(config.get("decisions"), dict):
+            config["decisions"] = {}
+        config["decisions"]["require_signatures"] = arguments["require_signatures"]
     raw = arguments.get("arms")
     names = ([n.strip() for n in raw.split(",")] if isinstance(raw, str)
              else list(raw) if raw else config["arms"]["enabled"])

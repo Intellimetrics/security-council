@@ -92,7 +92,7 @@ def canonical(payload: dict) -> bytes:
 def valid_principal(principal: str | None) -> bool:
     """A principal is one token in the ``allowed_signers`` line format: no
     whitespace, no quotes. It is also the ``decided_by.operator`` string."""
-    return bool(principal) and bool(_PRINCIPAL_RE.match(principal))
+    return bool(principal) and bool(_PRINCIPAL_RE.fullmatch(principal))
 
 
 _verifier_cache: dict[str, str | None] = {}

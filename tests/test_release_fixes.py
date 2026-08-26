@@ -314,9 +314,9 @@ def test_ci_scan_commands_shell_parse_cleanly():
         assert "\\" not in tokens, (path, tokens)                      # no stray backslash arg
         assert tokens[:4] == tokens[0:1] + ["-P", "-m", "security_council.cli"], (path, tokens)
         assert "--ignore-repo-config" in tokens, path
-        # R13: `--ignore-repo-config` alone resolves decision signing to `auto`,
-        # which is `warn` for a committed pre-existing store — so every template
-        # names the level explicitly, and its default is enforce.
+        # R13: every template names the signature level explicitly (default
+        # enforce) instead of inheriting it — CI is the trust boundary, and a
+        # future default change must not silently change what CI enforces.
         assert "--require-signatures" in tokens, path
         assert tokens[tokens.index("--require-signatures") + 1].startswith("$"), path
 

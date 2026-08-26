@@ -180,7 +180,11 @@ def _normalize_yaml_booleans(data: dict) -> None:
     """YAML 1.1 reads a bare `off` as the boolean False — so
     `require_signatures: off` arrived as `False` and was rejected as not one
     of the four levels. Accept the operator's evident meaning (R13)."""
-    dec = data.get("decisions") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return
+    if "decisions" in data and data["decisions"] is None:
+        data["decisions"] = {}          # a bare `decisions:` key (R13 round 2, N2)
+    dec = data.get("decisions")
     if isinstance(dec, dict) and dec.get("require_signatures") is False:
         dec["require_signatures"] = "off"
 

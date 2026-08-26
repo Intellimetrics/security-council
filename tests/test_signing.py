@@ -834,3 +834,157 @@ def test_signed_baseline_reports_its_age(tmp_path, keys):
     bd = run.manifest["baseline_delta"]
     assert bd["signature"] == "verified" and isinstance(bd["age_days"], int) and bd["age_days"] >= 20
     assert "days ago" in (run.out_dir / "summary.md").read_text()
+
+
+
+# --------------------------------------------------------------------- #
+# R13 council round 2 (claude D1-D3/R1/N1/N2, codex): tamper on the history
+# term, audit/scan parity, canonical files, signed-time selection
+# --------------------------------------------------------------------- #
+
+def _mark(store, keys, f, verdict, now):
+    store.mark_outcome(root_cause=f.fingerprints.root_cause, finding_id=f.id, verdict=verdict,
+                       operator=ALICE, now_iso=now, signer=dec.Signer(key_path=str(keys[ALICE][0])))
+
+
+def test_forged_clone_before_a_real_mark_cannot_shadow_it(tmp_path, keys):
+    """D1: a clone carrying the real mark's signature bytes but a changed
+    verdict, placed BEFORE the real mark, used to reserve the signature, fail
+    verification, and get the real mark dropped as a duplicate."""
+    store = _store(tmp_path, keys, ALICE)
+    f = _finding()
+    rc = f.fingerprints.root_cause
+    _mark(store, keys, f, "true_positive", NOW)
+    path = store._path(rc)
+    rec = json.loads(path.read_text())
+    real = rec["history"][-1]
+    rec["history"] = [dict(real, verdict="false_positive"), real]
+    path.write_text(json.dumps(rec))
+    audit: list = []
+    assert store.history_counts(signature_policy="enforce", audit=audit)[rc] == \
+        {"confirmed_tp": 1, "confirmed_fp": 0}
+    assert [a["signature"] for a in audit] == ["invalid"]           # the clone, not the real
+    rows = [r for r in store.verify_store()["rows"] if r["kind"] == "outcome_mark"]
+    assert [(r["verdict"], r["signature"]) for r in rows] == \
+        [("false_positive", "invalid"), ("true_positive", "verified")]
+    # control: under off the clone is simply another (unverified) mark
+    assert store.history_counts()[rc] == {"confirmed_tp": 1, "confirmed_fp": 1}
+
+
+def test_audit_agrees_with_scan_on_pasted_and_duplicate_marks(tmp_path, keys):
+    """D2: `decisions verify` used to show a pasted or duplicated mark as
+    verified while the scan refused it."""
+    from tests.test_cluster import mk
+    store = _store(tmp_path, keys, ALICE)
+    a = _finding()
+    _mark(store, keys, a, "false_positive", NOW)
+    mark = json.loads(store._path(a.fingerprints.root_cause).read_text())["history"][-1]
+    b = mk(path="app/other.py", cwe="CWE-79", family="xss", source_id="semgrep",
+           source_kind="scanner", vendor="semgrep")
+    store._path(b.fingerprints.root_cause).write_text(json.dumps(
+        {"schema_version": 1, "root_cause": b.fingerprints.root_cause, "finding_id": b.id,
+         "title": b.title, "context_hash": b.fingerprints.context_hash,
+         "history": [mark, dict(mark)]}))
+    rows = [r for r in store.verify_store()["rows"] if r["kind"] == "outcome_mark"]
+    by_rec = {}
+    for r in rows:
+        by_rec.setdefault(r["record"], []).append((r["signature"], r["applies"]))
+    assert by_rec[store._path(a.fingerprints.root_cause).name] == [("verified", True)]
+    assert by_rec[store._path(b.fingerprints.root_cause).name] == \
+        [("invalid", False), ("invalid", False)]
+    assert b.fingerprints.root_cause not in store.history_counts(signature_policy="enforce")
+    # and a genuine duplicate in the right record shows as such in the audit
+    rec = json.loads(store._path(a.fingerprints.root_cause).read_text())
+    rec["history"].append(dict(mark))
+    store._path(a.fingerprints.root_cause).write_text(json.dumps(rec))
+    rows = [r for r in store.verify_store()["rows"]
+            if r["kind"] == "outcome_mark" and r["record"] == store._path(a.fingerprints.root_cause).name]
+    assert [(r["signature"], r["applies"]) for r in rows] == [("verified", True), ("duplicate", False)]
+
+
+def test_noncanonical_record_file_cannot_override_a_root_cause(tmp_path, keys):
+    """D3: a second file claiming an existing root cause used to REPLACE that
+    root cause's counts (assignment, sorted-last wins)."""
+    store = _store(tmp_path, keys, ALICE)
+    f = _finding()
+    rc = f.fingerprints.root_cause
+    _mark(store, keys, f, "true_positive", NOW)
+    _mark(store, keys, f, "true_positive", LATER)
+    rec = json.loads(store._path(rc).read_text())
+    rogue = dict(rec, history=[rec["history"][0]])              # a subset, in a rogue file
+    (store.dir / ("f" * 32 + ".json")).write_text(json.dumps(rogue))
+    audit: list = []
+    assert store.history_counts(signature_policy="enforce", audit=audit)[rc]["confirmed_tp"] == 2
+    assert any(a["signature"] == "noncanonical_record" for a in audit)
+    assert store.history_counts()[rc]["confirmed_tp"] == 2           # off too: file-level rule
+    rows = store.verify_store()["rows"]
+    assert any(r["signature"] == "noncanonical_record" and r["record"].startswith("f" * 32)
+               for r in rows)
+    # replay ignores the rogue file as well: it is looked up by slug, never globbed
+    f2 = _finding()
+    assert _replay(store, f2, "enforce") == []                      # no suppression exists
+
+
+def test_reordering_signed_events_does_not_pick_the_older_one(tmp_path, keys):
+    """R1: array position is as writable as the block pointer. The event
+    with the greatest SIGNED `at` among verifying events governs."""
+    store = _store(tmp_path, keys, ALICE)
+    _signed_suppress(store, keys, _finding(), days=90, now=NOW)
+    _signed_suppress(store, keys, _finding(), days=1, now="2026-08-23T00:00:00Z")
+    path = store._path(_finding().fingerprints.root_cause)
+    rec = json.loads(path.read_text())
+    rec["history"].reverse()                                       # 1-day event now first
+    rec["suppression"]["expires_at"] = rec["history"][-1]["expires_at"]   # block says 90d
+    path.write_text(json.dumps(rec))
+    f = _finding()
+    assert _replay(store, f, "off")[0]["action"] == "reapplied_suppressed"    # control
+    f = _finding()
+    [a] = _replay(store, f, "enforce")
+    assert a["action"] == "reopened_expired" and a["signature"] == "verified"
+    # and an unsigned event with a far-future `at` appended last is ignored in
+    # favour of the verifying ones (fail-safe either way)
+    rec = json.loads(path.read_text())
+    rec["suppression"]["status"] = "active"
+    rec["history"].append({**rec["history"][0], "at": "2099-01-01T00:00:00Z",
+                           "expires_at": "2099-06-01T00:00:00Z", "signature": None})
+    path.write_text(json.dumps(rec))
+    f = _finding()
+    [a] = _replay(store, f, "enforce")
+    assert a["action"] == "reopened_expired" and a["signature"] == "verified"
+
+
+def test_principal_trailing_newline_and_bare_decisions_key(tmp_path, monkeypatch):
+    assert not signing.valid_principal("alice@example\n")           # N1: fullmatch
+    (tmp_path / "op.yaml").write_text("decisions:\n")                 # N2: bare key -> None
+    cfg = load_config(tmp_path, explicit=tmp_path / "op.yaml")
+    assert cfg["decisions"]["require_signatures"] == "enforce"
+    from types import SimpleNamespace
+
+    from security_council import cli
+    seen = {}
+    monkeypatch.setattr(cli, "run_scan", lambda t, a, c, **kw: (
+        seen.__setitem__("cfg", c) or SimpleNamespace(run_id="r", out_dir=tmp_path, exit_code=0,
+                                                       manifest={"counts": {}}, degradations=[])))
+    monkeypatch.setattr(cli, "_build_arms", lambda names, config=None, diff=None: [])
+    assert cli.main(["scan", str(tmp_path), "--arms", "semgrep", "--json", "--config",
+                     str(tmp_path / "op.yaml"), "--require-signatures", "warn"]) == 0
+    assert seen["cfg"]["decisions"]["require_signatures"] == "warn"
+
+
+def test_refused_marks_and_rosters_are_scan_degradations(tmp_path, keys):
+    target = tmp_path / "repo"
+    (target / "app").mkdir(parents=True)
+    (target / "app" / "x.py").write_text("q = 1\n")
+    finding = orch_finding(source_id="semgrep", kind="scanner", vendor="semgrep", rc="deg")
+    store = _store(target, keys, ALICE)
+    store.mark_outcome(root_cause=finding.fingerprints.root_cause, finding_id=finding.id,
+                       verdict="false_positive", operator=ALICE, now_iso=NOW)   # unsigned
+    arms = [FakeArm("semgrep", "scanner", "semgrep", [finding])]
+    run = run_scan(target, arms, _cfg("enforce"), isolate=False)
+    assert any(d["kind"] == "outcome_marks_refused" for d in run.degradations)
+    assert run.manifest["history_audit"][0]["signature"] == "unsigned"
+    pub = keys[BOB][1].read_text().split()
+    with open(store.allowed_signers_path, "a") as fh:
+        fh.write(f"* {pub[0]} {pub[1]}\n")
+    run = run_scan(target, arms, _cfg("enforce"), isolate=False)
+    assert any(d["kind"] == "roster_refused" for d in run.degradations)

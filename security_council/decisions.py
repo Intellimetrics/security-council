@@ -256,16 +256,52 @@ class DecisionStore:
         return status, detail
 
     @staticmethod
-    def _human_event_for(rec: dict) -> dict | None:
-        """The LATEST human decision event in the record. Signatures live on
-        events (Q6), so this is what gets verified — and it is chosen by
-        position, not by whatever the record's mutable `suppression` block
-        points at (R13: pointing the block at an older, longer-lived signed
-        event was otherwise a way to pick which of two real decisions applied)."""
-        for ev in reversed(rec.get("history") or []):
-            if isinstance(ev, dict) and str(ev.get("kind", "")).startswith("human_"):
-                return ev
-        return None
+    def _human_events(rec: dict) -> list[dict]:
+        return [ev for ev in (rec.get("history") or [])
+                if isinstance(ev, dict) and str(ev.get("kind", "")).startswith("human_")]
+
+    def _authoritative_human_event(self, rec: dict, *, root_cause: str,
+                                   verify: bool) -> tuple[dict | None, str, str]:
+        """(event, status, detail): the human decision that governs this record.
+
+        Signatures live on events (Q6), so the event — not the record's
+        mutable `suppression` block — is what gets verified. R13 round 1:
+        choosing the event by the block's pointer let an attacker pick which of
+        two real decisions applied. R13 round 2: choosing by array POSITION was
+        no better (the array is as writable as the pointer). So: among the
+        events that VERIFY for this root cause, the one with the greatest
+        SIGNED `at` wins. Reordering or pointer-editing changes nothing;
+        deleting the newer decision does — that is the documented
+        replay-inside-the-window residual (R9 Q3), bounded by expiry.
+        Without verification (`off`) the last event by position is used."""
+        events = self._human_events(rec)
+        if not events:
+            return None, signing.UNSIGNED, "no human decision event"
+        if not verify:
+            return events[-1], signing.UNCHECKED, ""
+        best: tuple[str, dict] | None = None
+        last_status, last_detail = signing.UNSIGNED, ""
+        for ev in events:
+            status, detail = self.verify_event(ev, expect={"root_cause": root_cause})
+            last_status, last_detail = status, detail
+            if status == signing.VERIFIED:
+                at = str(ev.get("at") or "")
+                if best is None or at > best[0]:
+                    best = (at, ev)
+        if best is not None:
+            return best[1], signing.VERIFIED, ""
+        return events[-1], last_status, last_detail
+
+    @staticmethod
+    def _canonical_file(path: Path, rec: dict) -> bool:
+        """A record file must be named by the root cause it claims (R13 round
+        2, D3): a second file claiming an existing root cause would otherwise
+        override that root cause's history — a deletion-equivalent tampering
+        that nothing else would notice."""
+        try:
+            return path.stem == _slug(str(rec.get("root_cause") or ""))
+        except ValueError:
+            return False
 
     # ------------------------------------------------------------------ #
     # records
@@ -393,11 +429,9 @@ class DecisionStore:
                                               "config; a machine decision is not replayed"})
                     continue
             elif signature_policy != "off":
-                ev = self._human_event_for(rec)
-                if ev is None:
-                    sig_status, sig_detail = signing.UNSIGNED, "no human decision event"
-                else:
-                    sig_status, sig_detail = self.verify_event(ev, expect={"root_cause": rc})
+                ev, sig_status, sig_detail = self._authoritative_human_event(
+                    rec, root_cause=rc, verify=True)
+                if ev is not None:
                     principal = (ev.get("signature") or {}).get("principal")
                 if sig_status == signing.VERIFIED:
                     just = ev.get("justification") or ""
@@ -571,50 +605,72 @@ class DecisionStore:
                 rec = json.loads(p.read_text())
             except (OSError, json.JSONDecodeError):
                 continue
+            if not isinstance(rec, dict):
+                continue
+            if not self._canonical_file(p, rec):
+                if audit is not None:
+                    audit.append({"root_cause": rec.get("root_cause", ""), "file": p.name,
+                                  "signature": "noncanonical_record", "applied": False,
+                                  "detail": "record file is not named by its root cause; "
+                                            "ignored"})
+                continue
+            rc = rec.get("root_cause", "")
             counts = {"confirmed_tp": 0, "confirmed_fp": 0}
-            seen_sigs: set[str] = set()
-            for ev in rec.get("history") or []:
-                # L1 anti-poisoning: ONLY human outcome_mark events count — a
-                # machine event (verify-fix evidence) is ignored even if it
-                # carries kind==outcome_mark and a copied operator field.
-                if not (ev.get("kind") == "outcome_mark" and ev.get("operator")
-                        and ev.get("decided_by") != "machine"):
-                    continue
-                # R13: one signed mark pasted N times is ONE mark. A real mark
-                # by a trusted signer must not be replayable into a bigger
-                # history term than the signer produced.
-                sig_bytes = ((ev.get("signature") or {}).get("sig") if isinstance(
-                    ev.get("signature"), dict) else None)
-                if sig_bytes:
-                    if sig_bytes in seen_sigs:
-                        if audit is not None:
-                            audit.append({"root_cause": rec.get("root_cause", ""),
-                                          "finding_id": ev.get("finding_id"),
-                                          "operator": ev.get("operator"),
-                                          "verdict": ev.get("verdict"),
-                                          "signature": "duplicate", "applied": False,
-                                          "detail": "same signature already counted"})
+            for ev, status, detail in self._outcome_marks(rec, signature_policy):
+                if status == "duplicate" or status in (
+                        signing.UNSIGNED, signing.INVALID, signing.FOREIGN, signing.UNVERIFIABLE):
+                    if audit is not None:
+                        audit.append({"root_cause": rc, "finding_id": ev.get("finding_id"),
+                                      "operator": ev.get("operator"),
+                                      "verdict": ev.get("verdict"), "signature": status,
+                                      "detail": detail[:200],
+                                      "applied": status != "duplicate"
+                                      and signature_policy != "enforce"})
+                    if status == "duplicate" or signature_policy == "enforce":
                         continue
-                    seen_sigs.add(sig_bytes)
-                if signature_policy != "off":
-                    status, detail = self.verify_event(
-                        ev, expect={"root_cause": rec.get("root_cause", "")})
-                    if status != signing.VERIFIED:
-                        if audit is not None:
-                            audit.append({"root_cause": rec.get("root_cause", ""),
-                                          "finding_id": ev.get("finding_id"),
-                                          "operator": ev.get("operator"),
-                                          "verdict": ev.get("verdict"),
-                                          "signature": status, "detail": detail[:200],
-                                          "applied": signature_policy != "enforce"})
-                        if signature_policy == "enforce":
-                            continue
                 if ev.get("verdict") == "true_positive":
                     counts["confirmed_tp"] += 1
                 elif ev.get("verdict") == "false_positive":
                     counts["confirmed_fp"] += 1
             if counts["confirmed_tp"] or counts["confirmed_fp"]:
-                out[rec.get("root_cause", "")] = counts
+                out[rc] = counts
+        return out
+
+    def _outcome_marks(self, rec: dict, signature_policy: str) -> list[tuple[dict, str, str]]:
+        """Every human outcome_mark event with its status, deduplicated.
+
+        R13 round 2 (D1): dedupe used to run BEFORE verification, so a forged
+        clone carrying a real mark's signature bytes could reserve them, fail
+        verification, and get the real mark skipped as a duplicate — a
+        deletion-equivalent tamper on the history term. Now a mark is deduped
+        on (signature bytes, signed payload) and only AFTER it verified; an
+        invalid event reserves nothing."""
+        out: list[tuple[dict, str, str]] = []
+        seen: set[tuple[str, bytes]] = set()
+        for ev in rec.get("history") or []:
+            # L1 anti-poisoning: ONLY human outcome_mark events count — a
+            # machine event (verify-fix evidence) is ignored even if it
+            # carries kind==outcome_mark and a copied operator field.
+            if not (isinstance(ev, dict) and ev.get("kind") == "outcome_mark"
+                    and ev.get("operator") and ev.get("decided_by") != "machine"):
+                continue
+            if signature_policy == "off":
+                status, detail = signing.UNCHECKED, ""
+            else:
+                status, detail = self.verify_event(
+                    ev, expect={"root_cause": rec.get("root_cause", "")})
+            sig_bytes = ((ev.get("signature") or {}).get("sig") if isinstance(
+                ev.get("signature"), dict) else None)
+            if sig_bytes and status in (signing.VERIFIED, signing.UNCHECKED):
+                try:
+                    key = (str(sig_bytes), signed_payload(ev))
+                except (KeyError, TypeError):
+                    key = (str(sig_bytes), b"")
+                if key in seen:
+                    status, detail = "duplicate", "same signed mark already counted"
+                else:
+                    seen.add(key)
+            out.append((ev, status, detail))
         return out
 
     # ------------------------------------------------------------------ #
@@ -759,29 +815,37 @@ class DecisionStore:
                     rows.append({"record": p.name, "kind": "record", "signature": signing.INVALID,
                                  "detail": "unreadable JSON", "applies": False})
                     continue
+                if not isinstance(rec, dict) or not self._canonical_file(p, rec):
+                    rows.append({"record": p.name, "kind": "record",
+                                 "signature": "noncanonical_record",
+                                 "detail": "file is not named by the root cause it claims; "
+                                           "the scan ignores it", "applies": False})
+                    continue
                 sup = rec.get("suppression")
                 if sup and sup.get("status") == "active" and not sup.get("shadow"):
+                    operator = (sup.get("decided_by") or {}).get("operator")
+                    lifecycle = sup.get("lifecycle")
                     if (sup.get("decided_by") or {}).get("kind") == "human":
-                        ev = self._human_event_for(rec)
-                        status, detail = ((signing.UNSIGNED, "no human decision event")
-                                          if ev is None else self.verify_event(
-                                              ev, expect={"root_cause": rec.get("root_cause", "")}))
+                        ev, status, detail = self._authoritative_human_event(
+                            rec, root_cause=rec.get("root_cause", ""), verify=True)
+                        if ev is not None and status == signing.VERIFIED:
+                            # the audit shows SIGNED attribution, as the scan applies it
+                            operator, lifecycle = ev.get("operator"), ev.get("lifecycle")
                     else:
                         status, detail = signing.MACHINE, "auto-suppression (never signed)"
                     rows.append({"record": p.name, "kind": "suppression",
-                                 "lifecycle": sup.get("lifecycle"),
-                                 "operator": (sup.get("decided_by") or {}).get("operator"),
+                                 "lifecycle": lifecycle, "operator": operator,
                                  "finding_id": rec.get("finding_id"), "title": rec.get("title"),
                                  "signature": status, "detail": detail[:200],
                                  "applies": _applies(status, signature_policy)})
-                for ev in rec.get("history") or []:
-                    if ev.get("kind") == "outcome_mark" and ev.get("decided_by") != "machine":
-                        status, detail = self.verify_event(ev)
-                        rows.append({"record": p.name, "kind": "outcome_mark",
-                                     "verdict": ev.get("verdict"), "operator": ev.get("operator"),
-                                     "finding_id": ev.get("finding_id"), "at": ev.get("at"),
-                                     "signature": status, "detail": detail[:200],
-                                     "applies": _applies(status, signature_policy)})
+                # the same verification + dedupe the scan's history term uses (D2)
+                for ev, status, detail in self._outcome_marks(rec, "enforce"):
+                    rows.append({"record": p.name, "kind": "outcome_mark",
+                                 "verdict": ev.get("verdict"), "operator": ev.get("operator"),
+                                 "finding_id": ev.get("finding_id"), "at": ev.get("at"),
+                                 "signature": status, "detail": detail[:200],
+                                 "applies": status != "duplicate"
+                                 and _applies(status, signature_policy)})
         bl = self.load_baseline(signature_policy="enforce")
         if bl is not None:
             status = bl.get("signature_status")

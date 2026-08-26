@@ -59,10 +59,12 @@ def cmd_scan(args) -> int:
     if getattr(args, "gate_baseline", None):
         config["policy"]["gate_baseline"] = args.gate_baseline
     if getattr(args, "require_signatures", None):
-        # R13: CI is the operator-side trust boundary, so the templates pass
-        # `enforce` explicitly — `--ignore-repo-config` alone resolves to the
-        # `auto` default, which is `warn` for a pre-existing unsigned store.
-        config.setdefault("decisions", {})["require_signatures"] = args.require_signatures
+        # R13: CI is the operator-side trust boundary, so the templates name
+        # the level explicitly (`enforce`) rather than inherit whatever the
+        # defaults or an operator file say. Last, so the flag wins.
+        if not isinstance(config.get("decisions"), dict):
+            config["decisions"] = {}
+        config["decisions"]["require_signatures"] = args.require_signatures
     names = [n.strip() for n in args.arms.split(",")] if args.arms else config["arms"]["enabled"]
     unknown = [n for n in names if n not in known_arms()]
     if unknown:

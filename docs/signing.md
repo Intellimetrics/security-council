@@ -127,11 +127,14 @@ council review that designed this said so.
 
 Residuals, stated plainly:
 
-- **Replay inside the window.** A genuinely signed suppression that has not
-  expired can be restored from git history after it was removed. Expiry
-  (90 days; 30 for crypto/critical) bounds this; a signed sequence counter
-  was considered and dropped as a hot, merge-conflicting file that is itself
-  rollback-able.
+- **Replay inside the window.** Among a record's signed decisions the one
+  with the latest *signed* timestamp governs, so reordering events or editing
+  the record's summary block changes nothing — but a genuinely signed
+  suppression that has not expired can be restored from git history after
+  it was removed, or a newer re-decision deleted so an older one applies.
+  Expiry (90 days; 30 for crypto/critical) bounds this; a signed sequence
+  counter was considered and dropped as a hot, merge-conflicting file that
+  is itself rollback-able.
 - **`auto` is attacker-influenced.** Under the opt-in `auto` level, deleting
   `store.json` — or committing a first unsigned record without one — resolves
   the store to `warn` until the sunset date, always visibly (the reason is
