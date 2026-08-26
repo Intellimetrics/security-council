@@ -37,8 +37,9 @@
   is accepted as `off`.
 - One signed outcome mark pasted N times counts once (dedupe on signature
   bytes); `trust` refuses pattern principals (`*`, `?`, `!`, `,`) and
-  `decisions verify` flags hand-edited roster lines (patterns, missing
-  `namespaces=`, `cert-authority`); a run that replays unsigned machine
+  a roster containing a pattern principal or `cert-authority` line
+  refuses every verification until it is removed (`decisions verify` names
+  the line; a missing `namespaces=` only warns); a run that replays unsigned machine
   suppressions under `enforce` reports `machine_decisions_replayed`; the
   baseline's age is printed with its provenance.
 

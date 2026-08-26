@@ -142,9 +142,12 @@ Residuals, stated plainly:
   the operator's double opt-in; the run reports it as
   `machine_decisions_replayed`. The shipped CI templates are unarmed.
 - **The roster is the trust root.** `trust` refuses pattern principals
-  (`*`, `?`, `!`, `,`) and always writes a `namespaces=` line; a hand-edited
-  roster line that vouches for any name, any namespace, or a whole CA is
-  flagged by `decisions verify`, not refused.
+  (`*`, `?`, `!`, `,`) and always writes a `namespaces=` line. A hand-edited
+  roster line with a pattern principal or `cert-authority` would make
+  ssh-keygen accept a signature for *any* operator name, so with such a line
+  present **every** verification is refused until it is removed
+  (`decisions verify` names the line); a line merely missing `namespaces=`
+  is only warned about.
 - **No verifier, no verification.** If `ssh-keygen -Y` is missing on the
   scanning machine, signed decisions are *unverifiable* and `enforce`
   refuses them (fail-closed). `security-council doctor` shows the verifier.

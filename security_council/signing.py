@@ -165,6 +165,11 @@ def verify(payload: bytes, signature: str, *, allowed_signers: str | Path,
         return INVALID, f"principal {principal!r} is not a valid roster token"
     if not signature or "BEGIN SSH SIGNATURE" not in signature:
         return INVALID, "malformed signature block"
+    refusals = [m for s, m in roster_problems(roster) if s == "refuse"]
+    if refusals:
+        # R13: a roster that vouches for "anyone" cannot vouch for someone.
+        # Fail closed for every signature until the line is removed.
+        return INVALID, f"roster refused: {refusals[0]}"[:200]
     exe = shutil.which("ssh-keygen")
     with tempfile.TemporaryDirectory(prefix="sc-sig-") as td:
         sig_path = Path(td) / "event.sig"
@@ -213,30 +218,44 @@ def roster_principals(allowed_signers: str | Path) -> list[str]:
     return out
 
 
-def roster_warnings(allowed_signers: str | Path) -> list[str]:
+def roster_problems(allowed_signers: str | Path) -> list[tuple[str, str]]:
     """Hand-edited roster lines that weaken attribution without breaking
-    verification (R13): pattern principals, lines valid for EVERY namespace,
-    and certificate-authority lines that trust a whole CA. `trust` never
-    writes these; `decisions verify` surfaces them."""
+    ssh-keygen's verification (R13). `trust` never writes these.
+
+    ``("refuse", msg)`` — a pattern principal (`*`, `?`, `!`, `,`) or a
+    ``cert-authority`` line: ssh-keygen would then accept a signature for ANY
+    operator name (or any cert the CA issues), so "principal = operator"
+    (R9 Q1) no longer holds and nothing in the roster can be trusted;
+    ``verify()`` refuses against such a roster.
+    ``("warn", msg)`` — a line without ``namespaces=``: the key still binds
+    to one person, it is just also trusted for other signature namespaces."""
     try:
         text = Path(allowed_signers).read_text()
     except OSError:
         return []
-    out = []
+    out: list[tuple[str, str]] = []
     for n, ln in enumerate(text.splitlines(), 1):
         ln = ln.strip()
         if not ln or ln.startswith("#"):
             continue
         principal = ln.split()[0]
         if not valid_principal(principal):
-            out.append(f"line {n}: principal {principal!r} is a pattern — it vouches for any "
-                       "matching operator name")
-        if f'namespaces="{NAMESPACE}"' not in ln and "namespaces=" not in ln:
-            out.append(f"line {n}: no namespaces= option — this key is trusted for every "
-                       "signature namespace, not just decisions")
+            out.append(("refuse", f"line {n}: principal {principal!r} is a pattern — it would "
+                                  "vouch for any matching operator name"))
         if "cert-authority" in ln:
-            out.append(f"line {n}: cert-authority — every certificate this CA issues is trusted")
+            out.append(("refuse", f"line {n}: cert-authority — every certificate this CA "
+                                  "issues would be trusted"))
+        if "namespaces=" not in ln:
+            out.append(("warn", f"line {n}: no namespaces= option — this key is trusted for "
+                                "every signature namespace, not just decisions"))
     return out
+
+
+def roster_warnings(allowed_signers: str | Path) -> list[str]:
+    """Every roster problem as text, refusals first (for `decisions verify`)."""
+    probs = roster_problems(allowed_signers)
+    return ([f"REFUSED: {m}" for s, m in probs if s == "refuse"]
+            + [m for s, m in probs if s == "warn"])
 
 
 def resolve_policy(config: dict, *, store_initialised: bool, store_has_decisions: bool,

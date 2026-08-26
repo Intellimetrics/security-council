@@ -760,21 +760,35 @@ def test_pattern_principals_are_rejected_and_hand_edits_are_flagged(tmp_path, ke
             store.add_trusted_signer(principal=bad, pubkey_text=keys[ALICE][1].read_text(),
                                      now_iso=NOW)
         assert not signing.valid_principal(bad)
-    # a hand-edited roster: wildcard principal, no namespaces=, cert-authority
+    clean_roster = store.allowed_signers_path.read_text()
+    assert signing.roster_warnings(store.allowed_signers_path) == []
+    f = _finding()
+    _signed_suppress(store, keys, f)
+    ev = json.loads(store._path(f.fingerprints.root_cause).read_text())["history"][-1]
+    assert store.verify_event(ev)[0] == "verified"
+
+    # a hand-edited roster that vouches for anyone vouches for no one: alice's
+    # REAL signature is refused until the pattern / CA lines are removed
     pub = keys[BOB][1].read_text().split()
     with open(store.allowed_signers_path, "a") as fh:
         fh.write(f"* {pub[0]} {pub[1]}\n")
         fh.write(f"ca@example cert-authority,namespaces=\"{signing.NAMESPACE}\" {pub[0]} {pub[1]}\n")
     warns = signing.roster_warnings(store.allowed_signers_path)
-    assert any("pattern" in w for w in warns) and any("namespaces=" in w for w in warns)
-    assert any("cert-authority" in w for w in warns)
+    assert any("pattern" in w for w in warns) and any("cert-authority" in w for w in warns)
+    assert any("namespaces=" in w for w in warns)                 # the `*` line has none
+    status, detail = store.verify_event(ev)
+    assert status == "invalid" and "roster refused" in detail
+    assert _replay(store, _finding(), "enforce")[0]["action"] == "refused_signature"
     audit = store.verify_store(signature_policy="enforce")
-    assert audit["roster_warnings"] == warns
+    assert audit["roster_warnings"] == warns and audit["summary"]["would_refuse"] == 1
+    assert cli_main(["decisions", "verify", "--target", str(tmp_path)]) == 1
+    assert "⚠ roster REFUSED" in capsys.readouterr().out
+
+    # a line WITHOUT namespaces= only warns; verification still works
+    store.allowed_signers_path.write_text(clean_roster + f"{BOB} {pub[0]} {pub[1]}\n")
+    assert store.verify_event(ev)[0] == "verified"
+    assert all("namespaces=" in w for w in signing.roster_warnings(store.allowed_signers_path))
     assert cli_main(["decisions", "verify", "--target", str(tmp_path)]) == 0
-    assert "⚠ roster" in capsys.readouterr().out
-    # the trusted line `trust` writes raises none of these
-    clean = _store(tmp_path / "clean", keys, ALICE)
-    assert signing.roster_warnings(clean.allowed_signers_path) == []
 
 
 def test_machine_replay_under_enforce_is_a_visible_degradation(tmp_path):
