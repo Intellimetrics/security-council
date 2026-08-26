@@ -208,8 +208,33 @@ semgrep pinned `--no-git-ignore`); gitleaks auto-loading the repo's
 repo's own `.security-council.yaml` choosing the arms/gate (`--config PATH`,
 `--ignore-repo-config`, `config_source` in manifest + summary, CI templates
 pass the flag). Rule: **the scanned repository never decides what gets
-scanned.** codex times out or votes "no" with no evidence in most rounds;
-antigravity often returns empty — plan for 1–2 usable peers.
+scanned.** Rounds 22–24: my round-21 edit had doubled a line continuation in
+all three CI templates (every CI scan failed with argparse exit 2 — caught by
+council, now shell-parsed in a test); the run dir is taken from `scan --json`'s
+record instead of globbing the repo's `runs/`. **Round 24 was the first in
+which the substantive peer named no defect.** codex voted "no" with empty
+evidence for its last seven rounds (abstentions); antigravity mostly returned
+empty — plan for 1–2 usable peers.
+
+**STATE AT HANDOFF (2026-08-26): 0.1.0 is READY TO TAG at `3cf80d4`, not
+tagged.** 490 tests, ruff clean, eval gate recall 1.0 / suppression 0.0.
+`live-verify` green on real GitHub runners against the final templates
+(clean-pass exit 0 + SARIF upload; detects-and-gates exit 1). `uv build`
+produces a wheel that installs clean in a fresh venv and ships `data/*.toml`.
+To cut the release (the user's call):
+
+    git tag -a v0.1.0 3cf80d4 -m "security-council 0.1.0"
+    git push origin v0.1.0
+    gh release create v0.1.0 --notes-file CHANGELOG.md --title "security-council 0.1.0"
+
+Verification discipline that this review proved necessary: reproduce every
+claimed defect live BEFORE fixing; revert the fix and re-run the regression to
+prove the test is not vacuous (three of mine were); gate commits on pytest's
+own exit code written to a file — `pytest | tail` under `set -e`/`pipefail`
+pushed red twice. Next lanes after 0.1.0, in order: decision-store signing
+(R9 design), deterministic verify-fix (re-run scanners on the patched tree),
+M-V3 reframe-or-drop, ADO/GitLab on real infrastructure, `codex-security
+login` (operator-interactive).
 
 **Not functional in 0.1.0, labelled so in `--help`:** `--fix`, `--verify-fix`,
 `--analyze`. Deterministic verify-fix (re-run scanners on the patched tree) is
