@@ -89,28 +89,80 @@ Availability probing never reads your API keys: it checks local model catalogs
 (zero network) and, where a deeper probe is wired, uses the CLI's own
 credentials — it never copies them.
 
-## Analysis workflows (artifacts, not findings)
+## Analysis jobs (documents, not findings)
 
-The vendors also ship analysis workflows that produce *documents* rather than
-gate-able findings — a repository threat model, attack-path analysis, hardening
-proposals, a security-policy proposal, vulnerability write-ups:
+Besides findings, security-council can write you a *document* about the
+repository — a threat model, an attack-path analysis, hardening proposals, a
+draft security policy, or defender-facing write-ups of the run's findings:
 
 ```bash
 security-council scan . --analyze threat-model,hardening
+security-council scan . --arms semgrep --analyze writeup --analyze-with codex
 ```
 
-These attach to the run as **artifacts** (listed in the manifest and the
-summary's "Analysis artifacts" appendix, written under `raw/`); they never
-enter `findings.json` and never affect the gate. A failed analysis is an
-informational note, not a build failure.
+**Who writes it.** These are security-council's **own prompts**
+(`prompts/house-analysis-<job>.md`, plus a shared preamble), run through one
+of the three house CLIs — `claude` (default), `codex`, or `agy` — with
+exactly the read-only contract the house scan arms use (`--permission-mode
+plan --tools Read,Grep,Glob,LS` / `-s read-only` / `--mode plan --sandbox`).
+The vendors' own "analysis skills" are *not* used: they are internal phases
+of the vendor's scan, not a public surface
+(`docs/reviews/R10-live-vendor-runs.md` §4). The report therefore names the
+producer `house:<cli>`, never a vendor skill.
 
-Two of them — `attack-path` and `writeup` — are **dual-use** (attacker-facing
-narratives): they are marked export-excluded and kept `raw/`-only, never inlined
-into a shareable report unless you opt in. They also respect the tier knob, so a
-write-up produced on a relaxed-safeguard tier is labeled as such.
+**What each job produces** (all Markdown, under `raw/<cli>-analysis_<job>/`):
 
-*Status: the analysis runner is built and tested offline; live invocation drives
-the vendor plugin session (real token cost) and has not yet been run here.*
+| Job | Document | Dual-use? | Gets the run's findings as context? |
+|---|---|---|---|
+| `threat-model` | System overview, assets, actors, STRIDE-style threat table with code citations, existing controls, gaps | no | no |
+| `attack-path` | The three-to-six most significant chains of weaknesses, each with entry point, preconditions, impact, the cheapest defensive change, and detection | **yes** | yes |
+| `hardening` | Prioritized hardening changes (P1–P3) with the defensive code/config to apply | no | no |
+| `policy` | A draft security policy for the team, grounded in the code, with "(gap)" marks where the code does not meet it | no | no |
+| `writeup` | One defender-facing write-up per finding: affected code, root cause, impact, remediation, how to verify the fix | **yes** | yes |
+
+**What it costs.** Each job is one model call over your tree — the same order
+of cost as one house scan arm. claude runs under a hard fuse
+(`--max-budget-usd`, default $5; set `arms.options."analysis:<job>":
+{max_cost_usd: 2}`), and reports the spend in the manifest. codex and agy
+have no budget flag and report no cost, so those columns read "—". If the
+fuse trips, the job fails (see below); you never get a half-document
+presented as whole.
+
+**Provenance on every document.** The manifest's `artifacts` index and the
+document's own header carry: producer (`house:<cli>`), the served model
+(attested from the CLI's output on claude/agy; codex never reports it, so it
+is marked *not attested*), entitlement tier and safeguard posture (a document
+written on a relaxed-safeguard tier says so), a hash of the exact prompt, the
+files the model says it read, completion (`complete` / `partial`), and how
+many redactions were applied.
+
+**Never a finding, never the gate.** Documents attach to the run as
+**artifacts** (manifest `artifacts` + the summary's "Analysis artifacts"
+appendix). They never enter `findings.json`, coverage, or the exit code. A job
+that fails — CLI error, timeout, budget stop, a substituted model, a document
+that does not validate, or a model that declines — is recorded as an
+`analysis_failed` note in the report and changes nothing else.
+
+**Dual-use handling.** `attack-path` and `writeup` describe how the code is
+attacked. They are marked **export-excluded** and kept `raw/`-only — no
+report bundle inlines them. The prompts forbid exploit code, payloads and
+attack one-liners (Blue scope; this tool never generates proofs of concept),
+and a **post-check** redacts, in place and visibly, any shell-tagged code
+block in a dual-use document and any known payload signature (reverse
+shells, exploit tooling names, canonical injection strings) in *every*
+document. That check is deliberately simple and **best-effort**: a prose
+description of an attack, an untagged code block, or a payload the list does
+not know will pass through. Treat the raw directory of a dual-use job as
+sensitive.
+
+**Data boundary.** This lane sends your source to the chosen vendor — see
+[data-boundaries.md](data-boundaries.md).
+
+*Status: built and tested offline (fake CLIs) on all three CLIs against the
+same flag contract the house scan arms have already run live. A real
+`--analyze` run has not yet completed here, so expect the first live run to
+tell you something the fakes could not — most likely about the document the
+model returns, not about the invocation.*
 
 ## Fix workflows (reviewed patches, never applied)
 

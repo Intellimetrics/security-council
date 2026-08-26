@@ -239,16 +239,49 @@ Verification discipline that this review proved necessary: reproduce every
 claimed defect live BEFORE fixing; revert the fix and re-run the regression to
 prove the test is not vacuous (three of mine were); gate commits on pytest's
 own exit code written to a file — `pytest | tail` under `set -e`/`pipefail`
-pushed red twice. Next lanes after 0.1.0, in order: decision-store signing
-(R9 design), deterministic verify-fix (re-run scanners on the patched tree),
-M-V3 reframe-or-drop, ADO/GitLab on real infrastructure, `codex-security
-login` (operator-interactive).
+pushed red twice. Next lanes after 0.1.0, in order: ~~decision-store signing
+(R9 design)~~ (done, §7.8), deterministic verify-fix (re-run scanners on the
+patched tree), ~~M-V3 reframe-or-drop~~ (reframed, below), ADO/GitLab on real
+infrastructure, `codex-security login` (operator-interactive).
 
 **Not functional in 0.1.0, labelled so in `--help`:** `--fix`, `--verify-fix`,
-`--analyze`. Deterministic verify-fix (re-run scanners on the patched tree) is
+~~`--analyze`~~. Deterministic verify-fix (re-run scanners on the patched tree) is
 the agreed redesign, not built. `codex-security` dedicated arm needs an
 interactive `codex-security login`. The four R11 fence defects are fixed and
 live-verified even though the lane is disabled.
+
+**M-V3 reframe — DONE 2026-08-26 (offline-verified).** `--analyze` no longer
+refuses: the five jobs (threat-model, attack-path[dual], hardening, policy,
+writeup[dual]) are now OUR prompts (`prompts/house-analysis-<job>.md` + a
+shared preamble, R10-lesson wording: read-only by flag, not prose) driven
+through the SAME `llm_cli.LLM_CLI_SPECS` builders/parsers the house scan
+arms ran live in R10 — claude `--permission-mode plan --tools
+Read,Grep,Glob,LS` (+ `--max-budget-usd` fuse, default 5), codex `-s
+read-only` (prompt on stdin), agy `--mode plan --sandbox`; pick with
+`--analyze-with claude|codex|agy` (default claude) or
+`arms.options."analysis:<job>".cli`. Producer is `house:<cli>`, never a
+vendor skill. Document envelope `sc-analysis-doc/1`
+(`schemas/analysis_document.v1.json`, validated by
+`artifacts.validate_document`; `inputs_read` must be repo-relative); D8
+attestation, cost/`cost_stopped` (claude only — codex/agy report neither),
+timeout, decline, invalid document and soft-deny are all failed arms →
+`analysis_failed` informational degradation; findings.json / coverage / gate
+provably untouched (tests are differential: same run with and without the
+lane). Blue-scope post-check `redact_exploit_content` (shell fences on
+dual-use jobs, payload markers everywhere; visible in place; documented as
+best-effort). writeup/attack-path get `findings_digest` of the scan arms'
+raw findings as context. 35 tests in `tests/test_artifacts.py` (558 total);
+vacuity-checked: neutering the redaction fails 4, letting `_exit_code` see
+analysis results fails the gate-unchanged test. **Live status: NOT
+live-verified.** One capped live run was started here (`scan <seedrepo copy>
+--arms semgrep --analyze threat-model --analyze-with claude --config
+{max_cost_usd: 2}`); semgrep finished, the claude analysis call was alive at
+~2 min with no artifact yet, and the run was killed on the coordinator's
+instruction before the CLI's 900 s timeout — no CLI error, no cost stop, just
+not allowed to finish. Re-run it (same command, budget $2, expect a few
+minutes) to move this to live-verified; the flag contract is the one R10
+proved live for the scan arms, so the expected failure surface is the
+document envelope, not the invocation.
 
 **Known residuals, documented:** decision store is tamper-evident not
 tamper-proof (signing lane designed in R9, not built); ADO/GitLab templates
@@ -318,9 +351,9 @@ before the decision store — never wire the history feedback loop onto an unmea
      `test_artifacts.py`, `scan --analyze`): Artifact model + manifest `artifacts` index +
      summary appendix; ANALYSIS_JOBS (threat-model, attack-path[dual], hardening, policy,
      writeup[dual]) attach as artifacts, never findings; dual-use → export-excluded, `raw/`-only;
-     analysis arms kept out of coverage/gate (failure = informational degradation). Runner drives
-     the verified `$skill` Codex trigger — **built offline (fake-proc), live invocation pending
-     codex+plugin session spend** (same status the dedicated arms had pre-live).
+     analysis arms kept out of coverage/gate (failure = informational degradation). ~~Runner drives
+     the verified `$skill` Codex trigger~~ — R10 proved those skills unreachable; **reframed
+     2026-08-26 onto house prompts** (see §7.9), same trust-boundary design.
    - **M-V4 Fix lane (gated)** — council-reviewed twice (R6, both degraded/single-peer, both
      go-with-conditions). **M-V4a DONE 2026-08-23** (`fence.py`, `patches.py`, `arms/fix.py`,
      `tests/test_{fence,patches,fix_lane}.py`, `scan --fix <ids> [--fix-job]`): orchestrator-owned

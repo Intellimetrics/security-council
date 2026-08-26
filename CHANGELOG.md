@@ -77,6 +77,35 @@
   they are re-made signed; set `decisions.require_signatures: warn` to keep
   applying unsigned decisions meanwhile.
 
+### Changed — analysis lane reframed onto house prompts (M-V3)
+
+- `scan --analyze threat-model,attack-path,hardening,policy,writeup` works
+  again. 0.1.0 refused it honestly because the vendors' analysis skills are
+  internal to their own scan and not a public surface (R10). The lane now
+  runs security-council's **own** prompts (`prompts/house-analysis-*.md`)
+  through the same read-only CLI contract the house scan arms already ran
+  live on claude, codex and agy; pick the CLI with `--analyze-with` (default
+  claude) or `arms.options."analysis:<job>".cli`. The producer is recorded
+  as `house:<cli>` — never a vendor skill name.
+- Each document is a validated envelope (`sc-analysis-doc/1`: title, kind,
+  scope, files read, completion, notes + Markdown body) and carries
+  provenance: served model (attested where the CLI reports it; codex never
+  does), entitlement tier and safeguard posture, prompt hash, cost (claude
+  reports it; codex/agy do not). claude runs under a `--max-budget-usd` fuse
+  (`max_cost_usd`, default 5); a budget stop, a declined or invalid
+  document, a timeout or a substituted model is a failed analysis — an
+  informational note in the report, never a build failure.
+- Unchanged trust boundary, now tested end to end: artifacts never enter
+  `findings.json`, coverage or the gate; `attack-path` and `writeup` remain
+  dual-use — `raw/`-only and export-excluded.
+- Blue scope: the prompts refuse exploit steps, and a best-effort post-check
+  redacts shell blocks (dual-use jobs) and known payload signatures (all
+  jobs) from the returned document, marking each redaction in place. It is
+  a filter for obvious runbooks, not a certification.
+- The findings-scoped jobs (`writeup`, `attack-path`) receive a digest of
+  what the scan arms found in the same run (ids, titles, locations, sources;
+  no snippets, no dispositions) as context.
+
 
 ## 0.1.0 — 2026-08-25
 
