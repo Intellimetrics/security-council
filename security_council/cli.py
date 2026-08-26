@@ -135,6 +135,23 @@ def cmd_scan(args) -> int:
             fix_model = _ent.tier_model(args.tier)
         fix_spec = {"jobs": [args.fix_job], "finding_ids": ids, "model": fix_model,
                     "verify": bool(getattr(args, "verify_fix", False))}
+    verify_patch = None
+    if getattr(args, "verify_patch", None):
+        patch_file = Path(args.verify_patch).resolve()
+        if not patch_file.is_file():
+            print(f"error: --verify-patch {patch_file} is not a file", file=sys.stderr)
+            return EXIT_USAGE
+        if args.inplace:
+            print("error: --verify-patch applies the patch to a scratch copy only; it is "
+                  "refused with --inplace", file=sys.stderr)
+            return EXIT_USAGE
+        ids = [i.strip() for i in (getattr(args, "verify_for", None) or "").split(",")
+               if i.strip()]
+        verify_patch = {"patch": str(patch_file), "finding_ids": ids or None}
+    elif getattr(args, "verify_for", None):
+        print("error: --for names the finding(s) for --verify-patch; pass a patch file",
+              file=sys.stderr)
+        return EXIT_USAGE
     run = run_scan(target, _build_arms(names, config, diff=diff), config,
                    # R12: must be ABSOLUTE — the scanner arms hand this path to
                    # `docker -v`, and a relative one is read as a volume NAME
@@ -145,11 +162,13 @@ def cmd_scan(args) -> int:
                    validate_max_findings=args.validate_max,
                    validate_budget_usd=args.validate_budget, diff=diff,
                    analysis_arms=analysis_arms, fix_spec=fix_spec,
-                   vendor_validate=bool(getattr(args, "vendor_validate", False)))
+                   vendor_validate=bool(getattr(args, "vendor_validate", False)),
+                   verify_patch=verify_patch)
     if args.json:
         print(json.dumps({"run_id": run.run_id, "out_dir": str(run.out_dir),
                           "exit_code": run.exit_code, "counts": run.manifest["counts"],
-                          "degradations": run.degradations}, indent=2))
+                          "degradations": run.degradations,
+                          "verify_fix": run.manifest.get("verify_fix")}, indent=2))
     else:
         _print_summary(run)
     return run.exit_code
@@ -164,6 +183,14 @@ def _print_summary(run) -> None:
               f"normalized={a['normalized']} {a['elapsed_seconds']}s")
     c = m["counts"]
     print(f"findings: {c['total']} clusters  severity={c['by_severity']}")
+    for pv in ((m.get("verify_fix") or {}).get("patches") or []):
+        cnt = pv.get("counts") or {}
+        print(f"patch verification {pv.get('patch')}: {cnt.get('fixed', 0)} fixed, "
+              f"{cnt.get('not_fixed', 0)} not fixed, {cnt.get('unproven', 0)} unproven "
+              f"— machine evidence, requires human review (never closes a finding)")
+        for r in pv.get("results") or []:
+            print(f"  {r.get('finding_id')}  {r.get('verdict'):<10} {r.get('uri')}  "
+                  f"{'; '.join(r.get('reasons') or [])[:160]}")
     if run.degradations:
         print(f"degradations: {run.degradations}")
     print(f"reports: {run.out_dir}  (summary.md, merged.sarif, findings.json, manifest.json)")
@@ -790,8 +817,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fix-job", choices=["suggest-patches", "fix-finding"],
                    default="suggest-patches", help="which vendor fix workflow (default: claude)")
     s.add_argument("--verify-fix", action="store_true",
-                   help="[NOT FUNCTIONAL IN 0.1.0 — refuses honestly] verify a produced patch "
-                        "as machine evidence (never closes a finding); depends on --fix")
+                   help="verify each patch --fix produces DETERMINISTICALLY: apply it to a "
+                        "scratch copy and re-run the scanners that reported the finding "
+                        "(fixed | not_fixed | unproven, machine evidence, never closes a "
+                        "finding). Depends on --fix, which is not functional in 0.1.0 — to "
+                        "verify your OWN patch use --verify-patch")
+    s.add_argument("--verify-patch", metavar="FILE",
+                   help="verify YOUR patch, $0 and offline: apply FILE to a scratch copy "
+                        "(never your tree), re-run the deterministic scanners that reported "
+                        "each finding, and record fixed | not_fixed | unproven as machine "
+                        "evidence in the manifest, summary and decision store — a human "
+                        "still decides; nothing is closed. Without --for, every open finding "
+                        "in the files the patch touches is checked (docs/verify-fix.md)")
+    s.add_argument("--for", dest="verify_for", metavar="IDS",
+                   help="finding id(s) to check with --verify-patch (comma-separated, from "
+                        "the summary; a unique prefix of 6+ characters is accepted)")
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")

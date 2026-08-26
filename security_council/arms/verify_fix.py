@@ -1,4 +1,12 @@
-"""Verify-fix arm (M-V4b): does a produced patch actually remediate the finding?
+"""Vendor verify-fix arm (M-V4b, legacy): a model's opinion of a patch.
+
+**Secondary and not wired into the scan path.** R11 Q4 settled that asking a
+vendor model whether its own vendor's patch worked is worth little; the
+verification that costs nothing and proves something is deterministic —
+`security_council.verify_patch` applies the patch to a scratch copy and
+re-runs the scanners that reported the finding. That lane is what
+`--verify-fix` and `--verify-patch` run. This arm is kept only as a possible
+future *explainer* of a deterministic result; it never decides one.
 
 Produces machine EVIDENCE, never a disposition change (R6 go-with-conditions):
 - runs the vendor `verify-fix` skill READ-ONLY, but since it executes the test
@@ -65,16 +73,9 @@ class VerifyFixArm:
 
     def _apply_patch(self, work: Path) -> bool:
         """The ORCHESTRATOR applies the patch to a fresh copy — never the agent."""
-        git = shutil.which("git") or "git"
-        env = {**__import__("os").environ, "GIT_CONFIG_NOSYSTEM": "1",
-               "GIT_CONFIG_GLOBAL": "/dev/null"}
-        r = proc.run_command([git, "-C", str(work), "apply", "--recount", self.patch_path],
-                             timeout=120, env=env, success_exit_codes=(0,))
-        if r.ok:
-            return True
-        r2 = proc.run_command(["patch", "-p1", "-d", str(work), "-i", self.patch_path],
-                              timeout=120, success_exit_codes=(0,))
-        return r2.ok
+        from .. import patches as _patches
+        ok, _ = _patches.apply_patch(work, Path(self.patch_path))
+        return ok
 
     def _cmd(self) -> list[str]:
         prompt = (f"{self.skill}: assess whether the applied patch remediates the finding at "

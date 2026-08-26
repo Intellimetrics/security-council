@@ -39,6 +39,8 @@ python3 -m security_council.cli outcome mark <finding_id> --verdict tp|fp --targ
 # signing lane (R9, built 2026-08-26): store identity + SSH-key roster; --signing-key on the three writes
 python3 -m security_council.cli decisions init --operator you@x; decisions trust --principal you@x --key ~/.ssh/id_ed25519.pub
 python3 -m security_council.cli decisions verify [--json] [--policy enforce]   # exit 1 if any decision would be refused
+# deterministic verify-fix (R11 Q4, built 2026-08-26): your patch vs the scanners, $0, evidence only
+python3 -m security_council.cli scan <path> --arms semgrep --verify-patch fix.patch --for <finding_id>
 ```
 
 Proven live twice: the claude house arm found the cross-file **IDOR (CWE-639)** that deterministic
@@ -178,7 +180,9 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
    `$fix-finding`/`suggest-patches` invocation is best-effort and needs spend to verify (degrades
    to `no_patch`). Also verify: whether `codex-security patch` honours the passed `--sandbox` vs
    spawning its own `codex exec`; whether suggest-patches' verifier needs network (→ `tests_ran:
-   false`, never open egress). **M-V4b (verify-fix evidence) not built.** The CLI/MCP nesting
+   false`, never open egress). **M-V4b verify-fix evidence: BUILT as the deterministic lane
+   (2026-08-26, see §7.9)** — `--verify-fix` and `--verify-patch` re-run the scanners on a
+   patched scratch copy; the vendor verify arm is unwired. The CLI/MCP nesting
    guards are cooperative (the real boundary is the fence's write-denial on the original tree).
 7. **No Red-tier / PoC** (deferred by design; needs the authorization block + sandbox). The
    entitlement layer (M-V2) *knows* Daybreak Red and **positively refuses** it (exit 5) for every
@@ -240,15 +244,46 @@ claimed defect live BEFORE fixing; revert the fix and re-run the regression to
 prove the test is not vacuous (three of mine were); gate commits on pytest's
 own exit code written to a file — `pytest | tail` under `set -e`/`pipefail`
 pushed red twice. Next lanes after 0.1.0, in order: ~~decision-store signing
-(R9 design)~~ (done, §7.8), deterministic verify-fix (re-run scanners on the
-patched tree), ~~M-V3 reframe-or-drop~~ (reframed, below), ADO/GitLab on real
-infrastructure, `codex-security login` (operator-interactive).
+(R9 design)~~ DONE (§7 item 8), ~~deterministic verify-fix (re-run scanners on the
+patched tree)~~ DONE (below), ~~M-V3 reframe-or-drop~~ DONE (reframed, below),
+ADO/GitLab on real infrastructure, `codex-security login` (operator-interactive).
 
-**Not functional in 0.1.0, labelled so in `--help`:** `--fix`, `--verify-fix`,
-~~`--analyze`~~. Deterministic verify-fix (re-run scanners on the patched tree) is
-the agreed redesign, not built. `codex-security` dedicated arm needs an
-interactive `codex-security login`. The four R11 fence defects are fixed and
-live-verified even though the lane is disabled.
+**Deterministic verify-fix — DONE 2026-08-26 (R11 Q4 design, not re-litigated).**
+`security_council/verify_patch.py` + `scan --verify-patch FILE [--for IDS]`
+(operator's own patch, the useful path today) and `--fix … --verify-fix` (same
+lane; the vendor `arms/verify_fix.py` is unwired, kept as a possible explainer).
+The orchestrator applies the patch to a `prepare_workspace` scratch copy with
+`patches.apply_patch` (git config neutralised, atomic, no `--unsafe-paths`),
+re-runs the run's scanner arms named in `corroboration.deterministic_sources`
+against it, and matches by `decisions.MATCH_TIERS` (root_cause → context_hash →
+path_cwe_sink, now shared with `annotate_baseline`). `fixed` requires absence
+from EVERY vouching scanner AND `coverage_verdict == verified` for each
+(partial/none can never yield fixed); `not_fixed` on presence OR a same-rule/
+same-family finding in the same file that the original run did not have (a
+moved sink); else `unproven` with the reason (no deterministic source, arm
+unavailable/failed, coverage, patch refused/not applied). Evidence only:
+manifest `verify_fix` block + `verify-fix` artifacts (`method: deterministic`,
+bound to patch sha256 + base commit), summary "Patch verification" section
+("requires human review"), `scan --json`, raw patched-copy output under
+`<run>/verify-patch/raw/`, store event `deterministic_verify_fix` (L1:
+`history_counts` ignores it; evidence-only records do not count as decisions
+for `require_signatures: auto`). Never a disposition, never the gate, never a
+panel vote; `--inplace` refused. Defect found and reproduced first: the fix
+lane's `.patch` carried absolute scratch paths (unapplicable by `git apply`/
+`patch -p1`); `extract_patch` now emits `-p1` paths. 19 tests in
+`tests/test_verify_patch.py` + 4 in `test_patches.py` (559 total), ten paths
+vacuity-checked by neutering. **Live-verified** on a seedrepo copy with docker
+semgrep 1.173.0: hand-written parameterised-query patch → `fixed`; comment-only
+patch → `not_fixed (matched by root_cause)`; tree untouched. Not built: verify
+against an OLD run dir (the current scan is the pre-patch picture at the same
+commit, which the moved-sink check needs), MCP exposure, a model explainer.
+
+**Not functional in 0.1.0, labelled so in `--help`:** `--fix`. `--verify-fix` is
+functional but depends on `--fix`; use `--verify-patch`. `--analyze` is functional
+again (M-V3 reframe, below; offline-verified). `codex-security` dedicated arm needs
+an interactive `codex-security login`. The four R11 fence defects are fixed and
+live-verified even though the fix lane is disabled.
+
 
 **M-V3 reframe — DONE 2026-08-26 (offline-verified).** `--analyze` no longer
 refuses: the five jobs (threat-model, attack-path[dual], hardening, policy,
@@ -372,7 +407,8 @@ before the decision store — never wire the history feedback loop onto an unmea
      auto-closes (finding stays open; summary renders "requires human review"). Also fixed a real
      bug: `extract_patch` now snapshots content with `.git` stripped so the work copy's git can't
      pollute a patch. **M-V4 (a+b) complete.** Offline/fake-proc; live vendor run needs spend
-     (degrades to no_patch/unproven).
+     (degrades to no_patch/unproven). **Superseded 2026-08-26:** R11 Q4 replaced the vendor
+     verifier with the deterministic lane (`verify_patch.py`, §7.9); the vendor arm is unwired.
    - ~~**M-V5 (optional)**~~ — **DONE 2026-08-23** (`validate/panel.py`, `scan --validate
      --vendor-validate`, `test_vendor_validate.py`): vendor validate/triage join the panel as
      `role=vendor`, `independent=False`, weight 0 — the verdict tally and the ≥2-voice quorum

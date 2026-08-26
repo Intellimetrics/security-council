@@ -196,6 +196,7 @@ Plain-language version with code pointers:
 | [docs/arms.md](docs/arms.md) | every scanner/AI arm: cost, setup, options |
 | [docs/data-boundaries.md](docs/data-boundaries.md) | know exactly what data leaves your machine (gov/regulated: start here) |
 | [docs/triage.md](docs/triage.md) | operate it day to day: baselines, suppressing, recording ground truth |
+| [docs/verify-fix.md](docs/verify-fix.md) | check whether your patch makes a finding go away (`--verify-patch`, $0, offline) |
 | [docs/ci/](docs/ci/) | wire up GitHub / Azure DevOps / GitLab |
 | [docs/compliance/emass.md](docs/compliance/emass.md) | DoD: export findings to eMASS |
 | [docs/safety-model.md](docs/safety-model.md) · [docs/architecture.md](docs/architecture.md) | audit the design: invariants, guardrails, pipeline |

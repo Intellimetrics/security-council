@@ -106,3 +106,16 @@ every scan against the committed `allowed_signers` roster; under
 tampered decision is not applied and the finding gates. Setup is three
 commands: [signing.md](signing.md). Put the store paths behind CODEOWNERS +
 required review — that is what makes the signatures load-bearing.
+
+## Checking a fix before you open the PR
+
+```bash
+git diff > fix.patch
+security-council scan . --verify-patch fix.patch --for <finding_id>
+```
+
+The patch is applied to a scratch copy, the scanners that reported the
+finding are re-run there, and the summary says **fixed**, **not fixed** or
+**unproven** with the reason. It is evidence for the reviewer, not a
+decision: the finding stays open until a scan of the merged code no longer
+sees it. Details and limits: [verify-fix.md](verify-fix.md).

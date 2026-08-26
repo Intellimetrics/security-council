@@ -635,7 +635,8 @@ def _analysis_artifacts(manifest: dict) -> list[str]:
         if a.get("kind") == "verify-fix":
             # a verify verdict is machine evidence, never a green check — the
             # human decides. crypto gets an explicit cryptographic-review call.
-            note.append(f"vendor verdict: {_esc(str(a.get('verdict', '?')))} — "
+            who = "deterministic" if a.get("method") == "deterministic" else "vendor"
+            note.append(f"{who} verdict: {_esc(str(a.get('verdict', '?')))} — "
                         "requires human review (evidence only, never auto-closes)")
         if a.get("kind") == "fix" and a.get("patch", {}).get("review_required"):
             note.append("review_required: " + _esc(", ".join(a["patch"]["review_required"])[:80]))
@@ -645,6 +646,68 @@ def _analysis_artifacts(manifest: dict) -> list[str]:
                    f"{_cell(a.get('model_id') or '—', 60)} | {_code(a.get('path'), 200)} | "
                    f"{_esc('; '.join(note)) or '—'} |")
     out.append("")
+    return out
+
+
+_VERDICT_WORD = {"fixed": "fixed", "not_fixed": "NOT fixed", "unproven": "unproven"}
+
+
+def _patch_verification(manifest: dict) -> list[str]:
+    """Deterministic verify-fix results. Provenance, never assurance: every
+    verdict says what was checked and by which scanner, and the section says
+    in its first line that a human still decides."""
+    block = manifest.get("verify_fix") or {}
+    pvs = block.get("patches") or []
+    if not pvs:
+        return []
+    out = ["## Patch verification", "",
+           "_Machine evidence, not a decision — **requires human review**._ Each patch below "
+           "was applied to a **scratch copy** of the repository (your tree is never modified) "
+           "and the deterministic scanners that had reported each finding were re-run on that "
+           "copy. **fixed** means every one of those scanners completed a *verified* scan of "
+           "the patched copy and no longer reports the finding; **NOT fixed** means one still "
+           "does, or the same rule fired at a new place in the same file; **unproven** means "
+           "nothing could vouch either way. A verdict never closes a finding, changes a "
+           "disposition, or feeds scoring — it tells a reviewer where to look.", ""]
+    for pv in pvs:
+        counts = pv.get("counts") or {}
+        sha = str(pv.get("patch_sha256") or "")
+        applied = ("applied to the scratch copy" if pv.get("applied")
+                   else f"NOT applied — {_esc(pv.get('apply_error') or 'unknown error', limit=200)}")
+        out.append(f"**Patch** {_code(pv.get('patch'), 120)} · sha256 {_code(sha[:16] + '…')} · "
+                   f"base commit {_code((pv.get('base_commit') or 'unknown')[:12])} · {applied}.")
+        files = pv.get("files") or []
+        if files:
+            out.append(f"Touches {len(files)} file(s): "
+                       + ", ".join(_code(f, 80) for f in files[:8])
+                       + (" …" if len(files) > 8 else "") + ".")
+        checked = ", ".join(
+            f"{_code(a.get('name'))} {_esc(a.get('tool_version') or '', limit=40)} "
+            f"(coverage {_enum(a.get('coverage_verdict'))})".replace("  ", " ")
+            for a in (pv.get("arms") or []))
+        if checked:
+            out.append(f"Checked by: {checked}.")
+        if pv.get("review_required"):
+            out.append("Review flags on the patch: "
+                       + _esc(", ".join(pv["review_required"]), limit=300) + ".")
+        if pv.get("new_findings"):
+            out.append(f"**{pv['new_findings']} finding(s) appeared on the patched copy that "
+                       "were not in this run** — the patch may have introduced or moved "
+                       "something; see the per-finding detail and `verify-patch/raw/`.")
+        out.append(f"Verdicts: {counts.get('fixed', 0)} fixed · {counts.get('not_fixed', 0)} "
+                   f"not fixed · {counts.get('unproven', 0)} unproven.")
+        out.append("")
+        results = pv.get("results") or []
+        if results:
+            out += ["| Finding | Severity | Verdict | Why |", "|---|---|---|---|"]
+            for r in results:
+                v = str(r.get("verdict") or "unproven")
+                out.append(f"| {_code(r.get('finding_id'), 20, cell=True)} "
+                           f"{_cell(r.get('title'), 60)} in {_code(r.get('uri'), 80, cell=True)} | "
+                           f"{_sev_badge(str(r.get('severity') or 'info'))} | "
+                           f"**{_VERDICT_WORD.get(v, v)}** | "
+                           f"{_cell('; '.join(r.get('reasons') or []), 400)} |")
+            out.append("")
     return out
 
 
@@ -698,6 +761,7 @@ def to_markdown(findings: list[Finding], manifest: dict, *, detail_limit: int | 
                        "and carried in full in `findings.json` / `merged.sarif`._")
             out.append("")
     out += _appendix(ordered)
+    out += _patch_verification(manifest)
     out += _analysis_artifacts(manifest)
     out += _footer(manifest)
     return "\n".join(out)

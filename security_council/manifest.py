@@ -22,7 +22,8 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
                    artifacts: list[dict] | None = None,
                    calibration: dict | None = None,
                    signature_policy: dict | None = None,
-                   history_audit: list[dict] | None = None) -> dict:
+                   history_audit: list[dict] | None = None,
+                   verify_fix: dict | None = None) -> dict:
     by_sev = Counter(f.severity.label for f in merged)
     by_state = Counter(f.disposition.state for f in merged)
     return {
@@ -66,6 +67,9 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
         "signature_policy": signature_policy or {"configured": "off", "effective": "off"},
         "history_audit": history_audit or [],
         "artifacts": artifacts or [],
+        # Deterministic verify-fix (R11 Q4): per-patch verdicts bound to the
+        # patch sha + base commit. Machine evidence — a human still decides.
+        "verify_fix": verify_fix,
         "degradations": degradations,
         "exit_code": exit_code,
         "reports": reports,

@@ -70,7 +70,14 @@ def extract_patch(pristine: Path, work: Path, *, ceiling: Path) -> str:
     """`git diff --no-index` between CONTENT snapshots of the two trees (VCS
     metadata dirs stripped), run from a non-repo cwd with git config neutralized.
     Snapshotting excludes `.git` etc. so a repo the fix agent created/planted can
-    never appear in the patch or execute config during extraction (MV4-10)."""
+    never appear in the patch or execute config during extraction (MV4-10).
+
+    The diff is taken with RELATIVE arguments and the snapshot prefixes are
+    stripped, so the result is an ordinary `-p1` patch (`a/app/x.py`) that
+    `git apply` / `patch -p1` accept against a copy of the repository. It used
+    to carry the absolute scratch paths, which nothing could apply — the
+    deterministic verify lane is the first consumer that actually applies it.
+    """
     import tempfile
     snap = Path(tempfile.mkdtemp(prefix="sc-diff-", dir=str(ceiling)))
     try:
@@ -83,13 +90,58 @@ def extract_patch(pristine: Path, work: Path, *, ceiling: Path) -> str:
         git = shutil.which("git") or "git"
         r = subprocess.run([git, "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
                             "diff", "--no-index", "--no-ext-diff", "--no-color",
-                            str(snap / "pristine"), str(snap / "work")],
-                           capture_output=True, text=True, cwd=str(ceiling), env=env,
+                            "pristine", "work"],
+                           capture_output=True, text=True, cwd=str(snap), env=env,
                            timeout=120, check=False)
         # git diff --no-index exits 1 when there are differences — that's success here
-        return r.stdout
+        return _strip_snapshot_prefixes(r.stdout)
     finally:
         shutil.rmtree(snap, ignore_errors=True)
+
+
+# `git diff --no-index pristine work` names paths a/pristine/X and b/work/X
+# (for an added or deleted file BOTH sides carry the surviving tree's prefix);
+# these turn the header lines into the plain a/X b/X form of a -p1 patch.
+_SNAP = r"(?:pristine|work)/"
+_SNAPSHOT_HEADER_RES: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r'^(diff --git "?a/)' + _SNAP), r"\1"),
+    (re.compile(r'^(diff --git "?a/[^\n]*? "?b/)' + _SNAP), r"\1"),
+    (re.compile(r'^(--- "?a/)' + _SNAP), r"\1"),
+    (re.compile(r'^(\+\+\+ "?b/)' + _SNAP), r"\1"),
+    (re.compile(r"^((?:rename|copy) (?:from|to) )" + _SNAP), r"\1"),
+    (re.compile(r"^(Binary files )" + _SNAP + r"(.*) and " + _SNAP + r"(.*)( differ)$"),
+     r"\1\2 and \3\4"),
+)
+
+
+def _strip_snapshot_prefixes(diff: str) -> str:
+    out = []
+    for line in diff.splitlines(keepends=True):
+        for rx, repl in _SNAPSHOT_HEADER_RES:
+            line = rx.sub(repl, line, count=1)
+        out.append(line)
+    return "".join(out)
+
+
+def apply_patch(work: Path, patch_path: Path, *, timeout: int = 120) -> tuple[bool, str]:
+    """Apply a unified diff to a SCRATCH tree — never the user's — with git
+    config neutralized. `git apply` is atomic (no file is touched unless every
+    hunk applies) and refuses paths that escape the tree (no `--unsafe-paths`).
+    `-p1` (the `a/ b/` form every git-produced patch has) is tried first, then
+    `-p0` for a plain `diff -u` without prefixes. Returns (applied, error)."""
+    git = shutil.which("git") or "git"
+    work = Path(work)
+    env = {**os.environ, **_GIT_NEUTRAL_ENV, "GIT_CEILING_DIRECTORIES": str(work.parent)}
+    err = ""
+    for strip in ("-p1", "-p0"):
+        r = subprocess.run([git, "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
+                            "apply", strip, "--recount", "--whitespace=nowarn", str(patch_path)],
+                           capture_output=True, text=True, cwd=str(work), env=env,
+                           timeout=timeout, check=False)
+        if r.returncode == 0:
+            return True, ""
+        err = err or (r.stderr or r.stdout or f"git apply exited {r.returncode}").strip()
+    return False, err[:500]
 
 
 _DIFF_GIT_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")
@@ -98,14 +150,12 @@ _SYMLINK_MODE = "120000"
 
 
 def _rel(path: str) -> str:
-    # git --no-index emits absolute-ish a//tmp/.../pristine/app/x paths; keep the
-    # tail after the copy root so refuse/target matching works on repo-relative paths
-    p = path.replace("\\", "/")
-    for marker in ("/pristine/", "/work/", "/sc-ws-"):
-        i = p.find(marker)
-        if i >= 0:
-            return p[i + len(marker):].split("/", 1)[-1] if marker == "/sc-ws-" else p[i + len(marker):]
-    return p.lstrip("/")
+    """Repo-relative POSIX path from a diff header path (the `a/ b/` prefix is
+    already removed by the header regex). `extract_patch` emits plain
+    repo-relative paths now, so this only normalizes separators and a stray
+    leading slash; it used to search for `/work/` markers, which mangled a
+    genuine `src/work/x.py` into `x.py`."""
+    return path.replace("\\", "/").lstrip("/")
 
 
 def validate_patch(diff: str, *, target_files: set[str] | None = None,

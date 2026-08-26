@@ -159,13 +159,47 @@ def _partial_reason(r: ArmResult) -> str:
     return f"completion={cov.get('completion') or 'partial'} — scanned less than the full scope"
 
 
+def _verify_one_patch(target: Path, patch_path: Path, findings: list[Finding],
+                      merged: list[Finding], scan_arms: list[Arm], out_dir: Path, store, *,
+                      run_id: str, collected_at: str, base_commit: str | None,
+                      fix_family: str | None = None,
+                      patch_label: str | None = None) -> tuple[dict, list[dict], list[dict]]:
+    """Deterministic verify-fix for ONE patch (R11 Q4): apply it to a scratch
+    copy, re-run the scanners that reported each finding, record the verdicts
+    as machine evidence. Returns (manifest block, artifacts, degradations).
+    The findings' dispositions are deliberately never touched."""
+    from . import verify_patch as _vp
+    pv = _vp.verify_patch(target, patch_path, findings, merged, arms=scan_arms,
+                          out_dir=out_dir, run_id=run_id, collected_at=collected_at,
+                          base_commit=base_commit, patch_label=patch_label)
+    arts = _vp.evidence_artifacts(pv, run_id=run_id, collected_at=collected_at,
+                                  fix_family=fix_family)
+    _vp.record_evidence(store, pv, findings, now_iso=collected_at)
+    degr: list[dict] = []
+    if findings and not pv.applied:
+        degr.append({"kind": "verify_patch_not_applied", "arm": _vp.PRODUCER,
+                     "detail": f"{pv.patch}: {pv.apply_error} — every verdict is unproven"})
+    for a in pv.arms:
+        if not a["ok"]:
+            degr.append({"kind": "verify_patch_arm_failed", "arm": a["name"],
+                         "detail": f"{a['name']} failed on the patched copy: {a['error']}"})
+        elif a["coverage_verdict"] != coverage.VERIFIED:
+            degr.append({"kind": "verify_patch_coverage", "arm": a["name"],
+                         "detail": f"{a['name']} covered the patched copy only "
+                                   f"'{a['coverage_verdict']}'; it cannot vouch for an absence"})
+    return pv.to_dict(), arts, degr
+
+
 def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: Path,
-                  store, *, run_id: str, collected_at: str) -> tuple[list[dict], list[dict]]:
+                  store, *, run_id: str, collected_at: str,
+                  scan_arms: list[Arm] | None = None,
+                  base_commit: str | None = None) -> tuple[list[dict], list[dict], list[dict]]:
     """Run fix jobs SERIALLY (each makes its own fenced fresh copy). Only open,
-    non-refuted findings are fixable. If `verify`, run verify-fix on each produced
-    patch and record it as machine evidence — NEVER changing the finding's state."""
+    non-refuted findings are fixable. If `verify`, each produced patch is verified
+    DETERMINISTICALLY (`verify_patch`: scratch copy + the scanners that reported
+    the finding) and recorded as machine evidence — NEVER changing the finding's
+    state. Returns (artifacts, degradations, patch-verification blocks)."""
     from .arms.fix import FixArm
-    from .arms.verify_fix import VerifyFixArm
     from .jsonio import to_dict as _td
     jobs = list(fix_spec.get("jobs") or [])
     want_ids = set(fix_spec.get("finding_ids") or [])
@@ -177,6 +211,7 @@ def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: 
                and (not want_ids or f.id in want_ids)]
     artifacts: list[dict] = []
     degr: list[dict] = []
+    verifications: list[dict] = []
     for f in fixable:
         row = _td(f)
         for job in jobs:
@@ -190,31 +225,58 @@ def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: 
             if not verify or not res.raw_path:
                 continue
             meta = (res.artifacts[0].get("patch") or {}) if res.artifacts else {}
-            varm = VerifyFixArm(finding=row, patch_path=res.raw_path,
-                                patch_sha256=meta.get("sha256", ""),
-                                base_commit=meta.get("base_commit"),
-                                family=arm.family, fix_family=arm.family, model=model)
-            vres = _safe_run(varm, target, out_dir, run_id, collected_at)
-            artifacts += vres.artifacts
-            if vres.artifacts:
-                ev = vres.artifacts[0]
-                store.record_verify_evidence(
-                    root_cause=f.fingerprints.root_cause, finding_id=f.id,
-                    verdict=ev.get("verdict", "unproven"), patch_sha256=ev.get("patch_sha256", ""),
-                    base_commit=ev.get("base_commit"), producer=varm.name, now_iso=collected_at,
-                    model=model, note=ev.get("note", ""))
+            block, v_arts, v_degr = _verify_one_patch(
+                target, Path(res.raw_path), [f], merged, list(scan_arms or []), out_dir, store,
+                run_id=run_id, collected_at=collected_at,
+                base_commit=meta.get("base_commit") or base_commit, fix_family=arm.family,
+                patch_label=f"{arm.name}:{f.id[:8]}")
+            verifications.append(block)
+            artifacts += v_arts
+            degr += v_degr
             # a verify verdict is evidence only; f.disposition is deliberately untouched
-    return artifacts, degr
+    return artifacts, degr, verifications
+
+
+def _verify_patch_lane(target: Path, merged: list[Finding], spec: dict, out_dir: Path,
+                       store, scan_arms: list[Arm], *, run_id: str, collected_at: str,
+                       base_commit: str | None) -> tuple[list[dict], list[dict], list[dict]]:
+    """`scan --verify-patch FILE [--for IDS]`: verify the OPERATOR's own patch
+    against this run's findings — the fix lane is not involved at all."""
+    from . import verify_patch as _vp
+    patch_path = Path(spec["patch"]).resolve()
+    files = _vp._patches.validate_patch(
+        patch_path.read_text(encoding="utf-8", errors="replace")).files
+    chosen, unknown = _vp.select_findings(merged, files=files,
+                                         finding_ids=spec.get("finding_ids"))
+    degr: list[dict] = []
+    if unknown:
+        degr.append({"kind": "verify_patch_unknown_ids", "arm": _vp.PRODUCER,
+                     "detail": "no open finding in this run has id " + ", ".join(unknown)
+                               + " (ids come from this run's summary; a refuted or "
+                                 "suppressed finding is not verified)"})
+    if not chosen:
+        degr.append({"kind": "verify_patch_nothing_to_verify", "arm": _vp.PRODUCER,
+                     "detail": f"{patch_path.name} touches {len(files)} file(s) "
+                               f"({', '.join(files[:5]) or 'none parsed'}) but no open finding "
+                               "of this run lives there; pass --for <finding-id> to name one"})
+    block, arts, v_degr = _verify_one_patch(
+        target, patch_path, chosen, merged, scan_arms, out_dir, store, run_id=run_id,
+        collected_at=collected_at, base_commit=base_commit, patch_label=patch_path.name)
+    return [block], arts, degr + v_degr
 
 
 def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path | None = None,
              isolate: bool = True, validate: bool = False, validate_max_findings: int | None = None,
              validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None,
-             fix_spec: dict | None = None, vendor_validate: bool = False) -> ScanRun:
+             fix_spec: dict | None = None, vendor_validate: bool = False,
+             verify_patch: dict | None = None) -> ScanRun:
     target = Path(target).resolve()
     if fix_spec and not isolate:
         raise ValueError("the fix lane requires isolation (an in-place fix would edit the "
                          "real tree); --inplace is refused with fix jobs (R6/MV4-2).")
+    if verify_patch and not isolate:
+        raise ValueError("patch verification requires isolation (the patch is applied to a "
+                         "scratch copy only); --inplace is refused with --verify-patch.")
     run_id, collected_at = _utc_stamp()
     outdir_root = Path(config.get("reports", {}).get("outdir", ".security-council/runs"))
     out_dir = Path(out_dir) if out_dir else (target / outdir_root / run_id)
@@ -491,11 +553,28 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
 
         # fix lane (M-V4a): serial, after the scan/policy phase, each job in its
         # own fenced fresh copy. Only fix open, non-refuted findings.
+        # Deterministic verify-fix (R11 Q4) hangs off both the fix lane and
+        # `--verify-patch`; its verdicts are evidence in the manifest and the
+        # store, never a disposition, and never touch the gate.
+        verify_blocks: list[dict] = []
+        if fix_spec or verify_patch:
+            base_commit = ws.git_info().get("git_commit")
         if fix_spec:
-            fx_arts, fx_degr = _run_fix_jobs(target, merged, fix_spec, out_dir, store,
-                                             run_id=run_id, collected_at=collected_at)
+            fx_arts, fx_degr, fx_ver = _run_fix_jobs(
+                target, merged, fix_spec, out_dir, store, run_id=run_id,
+                collected_at=collected_at, scan_arms=run_arms, base_commit=base_commit)
             artifacts += fx_arts
             pre_degr += fx_degr
+            verify_blocks += fx_ver
+        if verify_patch:
+            vp_blocks, vp_arts, vp_degr = _verify_patch_lane(
+                target, merged, verify_patch, out_dir, store, run_arms, run_id=run_id,
+                collected_at=collected_at, base_commit=base_commit)
+            artifacts += vp_arts
+            pre_degr += vp_degr
+            verify_blocks += vp_blocks
+        verify_fix = ({"method": "deterministic", "patches": verify_blocks}
+                      if verify_blocks else None)
 
         policy_rows = policy_mod.decisions_to_json(decisions)
         (out_dir / "policy.json").write_text(dumps(policy_rows))
@@ -526,6 +605,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             disposition_actions=policy_mod.decisions_summary(decisions),
             baseline_delta=baseline_delta, prior_decisions=prior_decisions, artifacts=artifacts,
             calibration=cal_meta, signature_policy=sig_policy, history_audit=history_audit,
+            verify_fix=verify_fix,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
                      (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
                       ("summary.md", "markdown"), ("manifest.json", "json"),

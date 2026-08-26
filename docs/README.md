@@ -20,7 +20,9 @@ existing repo's backlog manageable (`baseline set`).
 
 **"I run this day to day"** (triage, suppressions, ground truth)
 [triage.md](triage.md) → [signing.md](signing.md) to sign those decisions
-with your SSH key so CI can verify who made them
+with your SSH key so CI can verify who made them →
+[verify-fix.md](verify-fix.md) to check a patch against the scanners before
+you open the pull request
 
 **"I want the AI reviewers"**
 [arms.md](arms.md) for setup and costs — but read
@@ -51,6 +53,7 @@ the council design reviews under [reviews/](reviews/)
 | [data-boundaries.md](data-boundaries.md) | Exactly what leaves your machine, per arm |
 | [triage.md](triage.md) | Baselines, suppressions, outcome marks, shadow mode, team sharing |
 | [signing.md](signing.md) | Sign decisions with your SSH key; what `enforce`/`warn` do; what signing does and does not buy |
+| [verify-fix.md](verify-fix.md) | `--verify-patch`: apply your patch to a scratch copy, re-run the scanners, get fixed / not fixed / unproven as evidence |
 | [ci/](ci/) | GitHub · Azure DevOps Server · GitLab guides |
 | [compliance/emass.md](compliance/emass.md) | DoD eMASS static-code-scans export |
 | [safety-model.md](safety-model.md) | Invariants, guardrails, scoring — with code pointers |

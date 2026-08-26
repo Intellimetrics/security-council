@@ -66,6 +66,41 @@
 - Round 6 (council YES): only `\"` is treated as an escape inside a quoted
   roster value, exactly as OpenSSH does.
 
+### Added — deterministic verify-fix
+
+- `scan <path> --verify-patch FILE [--for IDS]` verifies a patch the way the
+  R11 council settled on: the orchestrator applies it to a scratch copy
+  (never your tree), re-runs the deterministic scanners that reported each
+  finding (semgrep / gitleaks / osv-scanner), and requires the finding to
+  disappear — matched by the same fingerprint tiers as the baseline delta.
+  `fixed` only when every vouching scanner completed a *verified* scan of the
+  patched copy and no longer reports it; `not_fixed` when one still does or
+  the same rule fires at a new place in the same file (a moved sink is not a
+  fix); `unproven` when nothing can vouch (agent-only finding, scanner
+  unavailable or failed, coverage `partial`/`none`, patch refused or not
+  applied). No model, no network, no cost. Without `--for`, every open
+  finding in the files the patch touches is checked.
+- `--fix … --verify-fix` takes the same deterministic path; the vendor
+  verify arm is no longer on any path (kept only as a possible future
+  explainer). `--help` says what is functional.
+- Results are machine evidence, never a decision: a `verify_fix` block and
+  one `verify-fix` artifact per finding in the manifest (`method:
+  deterministic`, `decided_by: machine`, `non_closing: true`, bound to
+  patch sha256 + base commit), a *Patch verification* section in
+  `summary.md` that renders provenance and says "requires human review",
+  the verdicts in `scan --json` and the terminal summary, the scanners' raw
+  output from the patched copy under `<run>/verify-patch/raw/`, and a
+  `deterministic_verify_fix` event in the decision store that the score
+  history term ignores and that never counts as a decision for
+  `require_signatures: auto`.
+- Fixed on the way (reproduced first): the fix lane's `.patch` artifact
+  carried the absolute scratch paths of the `git diff --no-index` snapshot,
+  so neither `git apply` nor `patch -p1` could apply it. `extract_patch` now
+  emits an ordinary `-p1` patch, and `patches.apply_patch` is the one shared,
+  atomic, config-neutralised applier.
+- New page `docs/verify-fix.md`; pointers from the README, triage, FAQ, arms
+  and data-boundaries pages.
+
 ### Changed
 
 - Machine (auto) suppressions in the store replay only while the current
