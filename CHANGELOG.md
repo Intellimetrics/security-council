@@ -57,6 +57,9 @@
   even if its block's `decided_by.kind` was edited to `auto`; signed times
   compared as datetimes with a shorter-expiry tiebreak; `cert-authority` is
   matched as a roster option, not a substring of the comment.
+- Round 4: the roster option field is parsed the way OpenSSH parses it —
+  quote-aware (`namespaces="a,b c"`) and case-insensitive — so a
+  `CERT-AUTHORITY` or a CA option hidden behind a quoted space is refused.
 
 ### Changed
 

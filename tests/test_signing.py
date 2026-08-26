@@ -1072,6 +1072,78 @@ def test_cert_authority_is_an_option_not_a_substring(tmp_path, keys):
     assert ("refuse", ) == tuple({s for s, _ in signing.roster_problems(store.allowed_signers_path)})
 
 
+def test_roster_options_are_parsed_like_openssh(tmp_path, keys):
+    """R13 round 4 (claude + codex): OpenSSH's option field is quote-aware —
+    `namespaces="a,b c"` contains a space and a comma — and option names are
+    case-insensitive. A whitespace split hid `cert-authority` behind a
+    quoted space; a case-sensitive compare hid `CERT-AUTHORITY`."""
+    kt, key = keys[BOB][1].read_text().split()[:2]
+    ns = signing.NAMESPACE
+    cases = {
+        f'ca@x cert-authority,namespaces="{ns},x y" {kt} {key}': ("refuse", "cert-authority"),
+        f'ca@x CERT-AUTHORITY,namespaces="{ns}" {kt} {key}': ("refuse", "cert-authority"),
+        f'ca@x namespaces="{ns},x y",Cert-Authority {kt} {key} c': ("refuse", "cert-authority"),
+        f'{BOB} namespaces="{ns},x y" {kt} {key}': None,               # quoted space, fine
+        f'{BOB} valid-after="20260101",namespaces="{ns}" {kt} {key}': None,
+        f'{BOB} {kt} {key} cert-authority,namespaces="{ns}"': ("warn", "namespaces"),  # comment
+    }
+    for line, expect in cases.items():
+        principal, opts = signing.parse_roster_line(line)
+        assert principal in (BOB, "ca@x"), line
+        probs = signing.roster_problems(_roster(tmp_path, line))
+        if expect is None:
+            assert probs == [], line
+        else:
+            sev, needle = expect
+            assert [p[0] for p in probs] == [sev] and needle in probs[0][1], (line, probs)
+    # and ssh-keygen itself accepts the quoted-space line as a trust anchor,
+    # so the refusal has to see what ssh-keygen sees
+    roster = _roster(tmp_path, f'{ALICE} namespaces="{ns},x y" '
+                               + " ".join(keys[ALICE][1].read_text().split()[:2]))
+    payload = signing.canonical({"q": 1})
+    sig = signing.sign(payload, key_path=keys[ALICE][0])
+    assert signing.verify(payload, sig, allowed_signers=roster, principal=ALICE)[0] == "verified"
+    roster = _roster(tmp_path, f'{ALICE} CERT-AUTHORITY,namespaces="{ns}" '
+                               + " ".join(keys[ALICE][1].read_text().split()[:2]))
+    assert signing.verify(payload, sig, allowed_signers=roster,
+                          principal=ALICE)[1].startswith("roster refused")
+
+
+def _roster(tmp_path, line):
+    p = tmp_path / f"roster-{abs(hash(line))}"
+    p.write_text(line + "\n")
+    return p
+
+
+def test_signed_event_with_unparseable_at_is_not_verified(tmp_path, keys):
+    """A trusted signer could sign `at: "yesterday"`; it must not govern and
+    must not be reported as verified (the record is refused, fail-safe)."""
+    store = _store(tmp_path, keys, ALICE)
+    f = _finding()
+    with pytest.raises(ValueError):                                # the CLI path can't
+        _signed_suppress(store, keys, f, now="yesterday")
+    # so forge the shape a buggy producer could write: sign it directly
+    event = {"at": "yesterday", "kind": "human_suppressed", "lifecycle": "suppressed",
+             "operator": ALICE, "finding_id": f.id, "root_cause": f.fingerprints.root_cause,
+             "context_hash": f.fingerprints.context_hash, "justification": "j",
+             "expires_at": "2099-01-01T00:00:00Z", "vex_justification": None,
+             "store_id": store.store_id()}
+    store._sign_event(event, dec.Signer(key_path=str(keys[ALICE][0])), now_iso=NOW)
+    rec = {"schema_version": 1, "root_cause": f.fingerprints.root_cause, "finding_id": f.id,
+           "title": f.title, "context_hash": f.fingerprints.context_hash, "history": [event],
+           "suppression": {"lifecycle": "suppressed", "status": "active", "shadow": False,
+                           "decided_by": {"kind": "human", "decided_at": NOW, "operator": ALICE},
+                           "decision_ref": f"decision:root_cause:{f.fingerprints.root_cause}",
+                           "expires_at": "2099-01-01T00:00:00Z", "sarif_suppression": {},
+                           "vex_status": None, "vex_justification": None}}
+    store.dir.mkdir(parents=True, exist_ok=True)
+    store._path(f.fingerprints.root_cause).write_text(json.dumps(rec))
+    ev, status, detail = store._authoritative_human_event(rec, root_cause=f.fingerprints.root_cause)
+    assert status == "invalid" and "timestamp" in detail
+    [a] = _replay(store, _finding(), "enforce")
+    assert a["action"] == "refused_signature"
+
+
 def test_same_instant_decisions_prefer_the_shorter_lived_one(tmp_path, keys):
     store = _store(tmp_path, keys, ALICE)
     _signed_suppress(store, keys, _finding(), days=90, now=NOW)

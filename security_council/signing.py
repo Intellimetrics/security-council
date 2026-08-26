@@ -238,24 +238,59 @@ def roster_problems(allowed_signers: str | Path) -> list[tuple[str, str]]:
         ln = ln.strip()
         if not ln or ln.startswith("#"):
             continue
-        tokens = ln.split()
-        principal = tokens[0]
-        # allowed_signers: `principal [options] keytype key [comment]` — the
-        # options field is present only when the line has one before the key
-        # type. Parse it as tokens (R13 round 3): a key COMMENT that happens
-        # to contain "cert-authority" is not an option.
-        opts = (tokens[1].split(",") if len(tokens) >= 4
-                and not _KEYTYPE_RE.match(tokens[1]) and _KEYTYPE_RE.match(tokens[2]) else [])
+        principal, opts = parse_roster_line(ln)
+        names = {o.split("=", 1)[0].lower() for o in opts}
         if not valid_principal(principal):
             out.append(("refuse", f"line {n}: principal {principal!r} is a pattern — it would "
                                   "vouch for any matching operator name"))
-        if "cert-authority" in opts:
+        if "cert-authority" in names:
             out.append(("refuse", f"line {n}: cert-authority — every certificate this CA "
                                   "issues would be trusted"))
-        if not any(o.startswith("namespaces=") for o in opts):
+        if "namespaces" not in names:
             out.append(("warn", f"line {n}: no namespaces= option — this key is trusted for "
                                 "every signature namespace, not just decisions"))
     return out
+
+
+def parse_roster_line(line: str) -> tuple[str, list[str]]:
+    """``(principal, options)`` of one allowed_signers line, parsed the way
+    OpenSSH does (R13 round 4): ``principal [options] keytype key [comment]``
+    where the options field is comma-separated, may carry quoted values
+    that CONTAIN spaces and commas (``namespaces="a,b c"``), and option names
+    are case-insensitive. A whitespace split hid ``cert-authority`` behind a
+    quoted space; a case-sensitive compare hid ``CERT-AUTHORITY``."""
+    s = line.strip()
+    i = 0
+    while i < len(s) and not s[i].isspace():
+        i += 1
+    principal, rest = s[:i], s[i:].lstrip()
+    # is the next field a key type? then there are no options
+    head = rest.split(None, 1)[0] if rest else ""
+    if not head or _KEYTYPE_RE.match(head):
+        return principal, []
+    # scan the options field: ends at the first whitespace OUTSIDE quotes
+    j, quoted = 0, False
+    while j < len(rest):
+        c = rest[j]
+        if c == '"':
+            quoted = not quoted
+        elif c.isspace() and not quoted:
+            break
+        j += 1
+    field = rest[:j]
+    opts, cur, quoted = [], "", False
+    for c in field:
+        if c == '"':
+            quoted = not quoted
+            cur += c
+        elif c == "," and not quoted:
+            opts.append(cur)
+            cur = ""
+        else:
+            cur += c
+    if cur:
+        opts.append(cur)
+    return principal, [o for o in opts if o]
 
 
 def roster_warnings(allowed_signers: str | Path) -> list[str]:

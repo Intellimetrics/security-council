@@ -288,7 +288,10 @@ class DecisionStore:
             try:
                 at = _now(str(ev.get("at")))
             except (ValueError, TypeError):
-                continue                      # signed but unparseable: not a candidate
+                # signed but with an unparseable timestamp: not a candidate,
+                # and never reported as VERIFIED either (R13 round 4)
+                last_status, last_detail = signing.INVALID, "signed `at` is not a timestamp"
+                continue
             exp = str(ev.get("expires_at") or "")
             # later decision wins; same instant -> the shorter-lived one wins
             if best is None or at > best[0] or (at == best[0] and exp < best[1]):
