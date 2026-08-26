@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-24. Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-26. Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -216,16 +216,21 @@ which the substantive peer named no defect.** codex voted "no" with empty
 evidence for its last seven rounds (abstentions); antigravity mostly returned
 empty — plan for 1–2 usable peers.
 
-**STATE AT HANDOFF (2026-08-26): 0.1.0 is READY TO TAG at `3cf80d4`, not
-tagged.** 490 tests, ruff clean, eval gate recall 1.0 / suppression 0.0.
-`live-verify` green on real GitHub runners against the final templates
-(clean-pass exit 0 + SARIF upload; detects-and-gates exit 1). `uv build`
-produces a wheel that installs clean in a fresh venv and ships `data/*.toml`.
-To cut the release (the user's call):
+**RELEASED (2026-08-26): `v0.1.0` is tagged at `3cf80d4` and published** —
+<https://github.com/Intellimetrics/security-council/releases/tag/v0.1.0>
+(notes = CHANGELOG.md). At tagging time: 490 tests (489 + 1 skip), ruff clean,
+eval gate recall 1.0 / suppression 0.0. `live-verify` green on real GitHub
+runners against the final templates (clean-pass exit 0 + SARIF upload;
+detects-and-gates exit 1). `uv build` produces a wheel that installs clean in
+a fresh venv and ships `data/*.toml`.
 
-    git tag -a v0.1.0 3cf80d4 -m "security-council 0.1.0"
-    git push origin v0.1.0
-    gh release create v0.1.0 --notes-file CHANGELOG.md --title "security-council 0.1.0"
+Gotcha found while cutting it: a `v0.1.0` tag had **already been pushed on
+2026-08-23 at `5414ffd`** (the docs-set commit, 72 commits and the whole R12
+ship review earlier) with no GitHub release behind it; the previous handoff
+said "not tagged". With the user's approval the stale tag was deleted on
+origin and re-pointed. Lesson: `git ls-remote --tags origin` before writing
+"not tagged" in a handoff. The next release is `0.1.1`/`0.2.0` — bump
+`pyproject.toml` + CHANGELOG first; never move a tag that has a release.
 
 Verification discipline that this review proved necessary: reproduce every
 claimed defect live BEFORE fixing; revert the fix and re-run the regression to
