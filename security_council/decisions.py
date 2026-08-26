@@ -74,6 +74,23 @@ _HEX_RE = re.compile(r":([0-9a-f]{32})$")
 # config keys whose change resets the shadow counter (suppression-relevant only)
 POLICY_FP_KEYS = ("auto_suppress", "accept_suppression_risk", "shadow_runs",
                   "suppress_below", "suppression_expiry_days")
+# Fingerprint tiers, strongest first. The baseline delta and the deterministic
+# verify-fix lane both answer "is this the same finding?" with this list, so
+# a patch is judged by exactly the identity rule that stamps `baselineState`.
+MATCH_TIERS = ("root_cause", "context_hash", "path_cwe_sink")
+# Machine verify-fix evidence kinds (never signed, never a decision — L1/L3).
+VERIFY_EVIDENCE_KINDS = frozenset({"vendor_verify_fix", "deterministic_verify_fix"})
+
+
+def match_tier(fps, entry) -> str | None:
+    """The strongest tier on which `entry` (a `Fingerprints`, or a dict carrying
+    the tier keys) identifies the same finding as `fps`; None if no tier matches."""
+    for tier in MATCH_TIERS:
+        want = getattr(fps, tier, None)
+        have = entry.get(tier) if isinstance(entry, dict) else getattr(entry, tier, None)
+        if want and have and want == have:
+            return tier
+    return None
 
 # The fields a signature covers, per event kind. Fixed lists, NOT "everything
 # in the event": machine fields added later (reapplied counters, stamps) must
@@ -696,21 +713,34 @@ class DecisionStore:
     def record_verify_evidence(self, *, root_cause: str, finding_id: str, verdict: str,
                                patch_sha256: str, base_commit: str | None, producer: str,
                                now_iso: str, model: str | None = None, note: str = "",
-                               title: str = "", context_hash: str = "") -> dict:
-        """Attach a vendor verify-fix verdict as machine EVIDENCE bound to the
-        exact patch. It informs a human but can NEVER close a finding, feed the
+                               title: str = "", context_hash: str = "",
+                               kind: str = "vendor_verify_fix",
+                               detail: dict | None = None) -> dict:
+        """Attach a verify-fix verdict as machine EVIDENCE bound to the exact
+        patch. It informs a human but can NEVER close a finding, feed the
         score history term (L1: kind != outcome_mark, decided_by machine), or
-        become a panel vote (L3: it lives here, not in validation)."""
+        become a panel vote (L3: it lives here, not in validation).
+
+        ``kind`` names the verifier: ``deterministic_verify_fix`` (R11 Q4 —
+        the scanners that reported the finding re-run on the patched copy;
+        ``producer`` is their names + versions) or the legacy
+        ``vendor_verify_fix`` (a model's opinion of its own vendor's patch).
+        Neither is signed and neither is ever a decision."""
         if verdict not in ("fixed", "not_fixed", "unproven"):
             raise ValueError(f"verify verdict must be fixed|not_fixed|unproven, got {verdict!r}")
+        if kind not in VERIFY_EVIDENCE_KINDS:
+            raise ValueError(f"verify evidence kind must be one of "
+                             f"{sorted(VERIFY_EVIDENCE_KINDS)}, got {kind!r}")
         rec = self.load(root_cause) or {
             "schema_version": SCHEMA_VERSION, "root_cause": root_cause,
             "finding_id": finding_id, "title": title, "context_hash": context_hash,
             "history": [],
         }
-        ev = {"at": now_iso, "kind": "vendor_verify_fix", "decided_by": "machine",
+        ev = {"at": now_iso, "kind": kind, "decided_by": "machine",
               "verdict": verdict, "patch_sha256": patch_sha256, "base_commit": base_commit,
               "producer": producer, "model": model, "finding_id": finding_id, "note": note}
+        if detail:
+            ev["detail"] = detail
         rec["history"].append(ev)
         rec.setdefault("verify_evidence", []).append(ev)
         _atomic_write(self._path(root_cause), rec)
@@ -926,9 +956,7 @@ def annotate_baseline(findings: list[Finding], baseline: dict, *, partial: bool 
     for f in findings:
         # only a root-cause match with identical context is "unchanged"; a
         # context/sink-tier match means the identity moved -> "updated"
-        (_take(f, "root_cause", True)
-         or _take(f, "context_hash", False)
-         or _take(f, "path_cwe_sink", False))
+        any(_take(f, key, key == "root_cause") for key in MATCH_TIERS)
     for f in findings:
         f.baseline_state = resolved.get(f.id, "new")
     counts = {"new": 0, "unchanged": 0, "updated": 0}

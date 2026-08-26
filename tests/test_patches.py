@@ -92,3 +92,64 @@ def test_out_of_scope_hunk_flagged():
     rep = patches.validate_patch(_diff("app/a.py", "app/b.py"),
                                  target_files={"app/a.py"})
     assert rep.ok and any("out_of_scope" in r for r in rep.review_required)
+
+
+def test_extracted_patch_applies_to_a_fresh_copy(tmp_path):
+    """The fix lane's `.patch` carried the ABSOLUTE scratch paths git printed
+    for `diff --no-index /tmp/.../pristine /tmp/.../work`, so `git apply` and
+    `patch -p1` both failed on it ("No such file or directory") — the artifact
+    could never be applied, and the vendor verify arm only survived because
+    its test monkeypatched `_apply_patch`. The deterministic verify lane is the
+    first real consumer, so the patch must be an ordinary -p1 patch."""
+    pristine, work, fresh = tmp_path / "pristine", tmp_path / "work", tmp_path / "fresh"
+    for d in (pristine, work, fresh):
+        (d / "app").mkdir(parents=True)
+        (d / "app" / "x.py").write_text("q = bad\n")
+    (work / "app" / "x.py").write_text("q = good\n")
+    (work / "app" / "new.py").write_text("n = 1\n")           # an added file...
+    for d in (pristine, fresh):                                 # ...and a deleted one
+        (d / "app" / "gone.py").write_text("g = 0\n")
+    diff = patches.extract_patch(pristine, work, ceiling=tmp_path)
+    assert "diff --git a/app/x.py b/app/x.py" in diff
+    assert "--- a/app/x.py" in diff and "+++ b/app/x.py" in diff
+    assert "diff --git a/app/new.py b/app/new.py" in diff and "+++ b/app/new.py" in diff
+    assert "diff --git a/app/gone.py b/app/gone.py" in diff and "--- a/app/gone.py" in diff
+    assert "pristine" not in diff and "work/" not in diff
+    assert patches.validate_patch(diff).files == ["app/gone.py", "app/new.py", "app/x.py"]
+    patch_file = tmp_path / "fix.patch"
+    patch_file.write_text(diff)
+    ok, err = patches.apply_patch(fresh, patch_file)
+    assert ok, err
+    assert (fresh / "app" / "x.py").read_text() == "q = good\n"
+    assert (fresh / "app" / "new.py").read_text() == "n = 1\n"
+    assert not (fresh / "app" / "gone.py").exists()
+
+
+def test_apply_patch_fails_closed_and_touches_nothing_on_a_bad_hunk(tmp_path):
+    fresh = tmp_path / "fresh"
+    (fresh / "app").mkdir(parents=True)
+    (fresh / "app" / "x.py").write_text("q = something_else\n")
+    patch_file = tmp_path / "fix.patch"
+    patch_file.write_text("diff --git a/app/x.py b/app/x.py\n--- a/app/x.py\n+++ b/app/x.py\n"
+                          "@@ -1 +1 @@\n-q = bad\n+q = good\n")
+    ok, err = patch_file and patches.apply_patch(fresh, patch_file)
+    assert not ok and err
+    assert (fresh / "app" / "x.py").read_text() == "q = something_else\n"
+
+
+def test_apply_patch_refuses_paths_that_escape_the_tree(tmp_path):
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    (tmp_path / "victim.txt").write_text("keep\n")
+    patch_file = tmp_path / "escape.patch"
+    patch_file.write_text("diff --git a/../victim.txt b/../victim.txt\n"
+                          "--- a/../victim.txt\n+++ b/../victim.txt\n"
+                          "@@ -1 +1 @@\n-keep\n+owned\n")
+    ok, _ = patches.apply_patch(fresh, patch_file)
+    assert not ok
+    assert (tmp_path / "victim.txt").read_text() == "keep\n"
+
+
+def test_rel_keeps_a_genuine_work_directory_in_the_path():
+    assert patches._rel("src/work/x.py") == "src/work/x.py"
+    assert patches._rel("/pristine/x.py") == "pristine/x.py"
