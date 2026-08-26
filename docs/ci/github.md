@@ -58,9 +58,9 @@ schedule.
 A team that commits `.security-council/decisions/` and `baseline/` so the
 gate honours its suppressions should also commit `store.json` and
 `allowed_signers`, and put all four paths behind CODEOWNERS + required
-review. The action's `ci` posture enforces signatures: a suppression or
-baseline whose `ssh-keygen` signature does not verify is not applied, and
-the finding gates. `security-council decisions verify` in a PR check makes
+review. The action passes `--require-signatures enforce` (input
+`require-signatures`): a suppression or baseline whose `ssh-keygen`
+signature does not verify is not applied, and the finding gates. `security-council decisions verify` in a PR check makes
 a bad record fail early. Setup and what it does (and does not) buy:
 [../signing.md](../signing.md).
 

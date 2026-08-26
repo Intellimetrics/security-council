@@ -114,10 +114,11 @@ What makes it load-bearing is review:
   `baseline/` (keep `runs/` ignored).
 - Put those paths behind **CODEOWNERS + required review**. Adding a signer
   is then a reviewed diff; so is every suppression.
-- In CI, scan with `--profile ci` (or `decisions.require_signatures:
-  enforce` in an operator-controlled config passed with `--config`), so a
-  branch cannot lower the level from inside the repo it is trying to get
-  past. The level always comes from config, never from the store.
+- In CI, pass `--require-signatures enforce` (the shipped GitHub Action,
+  GitLab and Azure DevOps templates do, alongside `--ignore-repo-config`),
+  or use `--profile ci`, so a branch cannot lower the level from inside the
+  repo it is trying to get past. The level always comes from the operator's
+  side — flag, profile or `--config` file — never from the store.
 
 Without protected paths, signing is theater — the docs say so because the
 council review that designed this said so.

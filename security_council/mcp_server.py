@@ -93,6 +93,8 @@ def sc_scan(arguments: dict) -> dict:
     for k in ("fail_on_severity", "gate_baseline"):
         if arguments.get(k):
             config["policy"][k] = arguments[k]
+    if arguments.get("require_signatures"):
+        config.setdefault("decisions", {})["require_signatures"] = arguments["require_signatures"]
     raw = arguments.get("arms")
     names = ([n.strip() for n in raw.split(",")] if isinstance(raw, str)
              else list(raw) if raw else config["arms"]["enabled"])
@@ -340,6 +342,7 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
            "arms": {"type": "string", "description": "comma-separated arm names"},
            "validate": {"type": "boolean"},
            "validate_max": {"type": "integer"},
+           "require_signatures": {"enum": ["off", "warn", "enforce", "auto"]},
            "fail_on_severity": {"enum": ["critical", "high", "medium", "low", "info"]},
            "gate_baseline": {"enum": ["all", "new"]},
            "inplace": {"type": "boolean"}}),

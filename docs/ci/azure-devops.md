@@ -51,8 +51,9 @@ manufacture a gate result.
 
 If the repo commits its decision store, commit `store.json` and
 `allowed_signers` too and protect the paths with required reviewers. The
-`ci` profile enforces signatures — an unverifiable suppression or baseline
-is not applied and the finding gates. See [../signing.md](../signing.md).
+template passes `--require-signatures enforce` (parameter
+`requireSignatures`) — an unverifiable suppression or baseline is not
+applied and the finding gates. See [../signing.md](../signing.md).
 
 *Status: annotation output, escaping, and REST payloads are tested against
 recorded runs; the template has not yet executed on a real ADO Server

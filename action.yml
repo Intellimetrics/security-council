@@ -44,6 +44,9 @@ inputs:
   gate-baseline:
     description: '"new" gates only findings absent from the committed baseline'
     default: 'all'
+  require-signatures:
+    description: 'Decision-signature policy (enforce|warn|off|auto). CI is the trust boundary, so a committed suppression/baseline whose ssh-keygen signature does not verify is not applied — docs/signing.md'
+    default: 'enforce'
   upload-sarif:
     description: 'Upload merged.sarif to GitHub code scanning'
     default: 'true'
@@ -76,6 +79,7 @@ runs:
           --arms "${{ inputs.arms }}" \
           --fail-on-severity "${{ inputs.fail-on-severity }}" \
           --gate-baseline "${{ inputs.gate-baseline }}" \
+          --require-signatures "${{ inputs.require-signatures }}" \
           --json > "$RUNNER_TEMP/security-council-scan.json"
         SCAN_EXIT=$?
         set -e

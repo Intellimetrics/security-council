@@ -150,6 +150,7 @@ def load_config(start: Path, *, explicit: Path | None = None,
         # fail-closed: a typo'd profile silently scanning with defaults is a
         # misconfiguration hazard, not a fallback
         raise ValueError(f"unknown profile {profile!r} in {p}; known: {sorted(PROFILES)}")
+    _normalize_yaml_booleans(data)
     problems = validate_config(data)
     if problems:
         # fail-closed, same reasoning as an unknown profile: a config the tool
@@ -164,6 +165,15 @@ def load_config(start: Path, *, explicit: Path | None = None,
         merged["profile"] = profile
     merged["_source"] = source
     return merged
+
+
+def _normalize_yaml_booleans(data: dict) -> None:
+    """YAML 1.1 reads a bare `off` as the boolean False — so
+    `require_signatures: off` arrived as `False` and was rejected as not one
+    of the four levels. Accept the operator's evident meaning (R13)."""
+    dec = data.get("decisions") if isinstance(data, dict) else None
+    if isinstance(dec, dict) and dec.get("require_signatures") is False:
+        dec["require_signatures"] = "off"
 
 
 _POLICY_ENUMS = {"fail_on_severity": {"critical", "high", "medium", "low", "info"},

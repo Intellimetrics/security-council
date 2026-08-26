@@ -222,10 +222,15 @@ class DecisionStore:
                               "principal": operator, "sig": sig}
         return event
 
-    def verify_event(self, event: dict) -> tuple[str, str]:
+    def verify_event(self, event: dict, *, expect: dict | None = None) -> tuple[str, str]:
         """(status, detail) for one stored event: verified | unsigned | invalid |
         foreign | unverifiable. `foreign` = a good signature made for another
-        store (a transplanted record) — refused under enforce like the rest."""
+        store (a transplanted record) — refused under enforce like the rest.
+
+        ``expect`` binds the event to its PLACE: a verified event pasted into a
+        different record (R13 — a real signature by a trusted signer, for a
+        different root cause) is INVALID here, not verified. The signed
+        payload carries the root cause, so the check is on signed bytes."""
         sig = event.get("signature") if isinstance(event, dict) else None
         if not isinstance(sig, dict) or not sig.get("sig"):
             return signing.UNSIGNED, "no signature on this event"
@@ -239,21 +244,26 @@ class DecisionStore:
         status, detail = signing.verify(payload, str(sig["sig"]),
                                         allowed_signers=self.allowed_signers_path,
                                         principal=str(principal))
-        if status == signing.VERIFIED and event.get("store_id") != self.store_id():
+        if status != signing.VERIFIED:
+            return status, detail
+        if event.get("store_id") != self.store_id():
             return signing.FOREIGN, (f"signed for store {str(event.get('store_id'))[:12]}…, "
                                      f"this store is {str(self.store_id())[:12]}…")
+        for k, want in (expect or {}).items():
+            if event.get(k) != want:
+                return signing.INVALID, (f"signed {k} {str(event.get(k))[:40]!r} does not "
+                                         f"belong to this record ({str(want)[:40]!r})")
         return status, detail
 
     @staticmethod
-    def _human_event_for(rec: dict, sup: dict) -> dict | None:
-        """The history event that created the record's current suppression
-        block: same operator, same decided_at. Signatures live on events (Q6),
-        so this is what gets verified."""
-        db = sup.get("decided_by") or {}
+    def _human_event_for(rec: dict) -> dict | None:
+        """The LATEST human decision event in the record. Signatures live on
+        events (Q6), so this is what gets verified — and it is chosen by
+        position, not by whatever the record's mutable `suppression` block
+        points at (R13: pointing the block at an older, longer-lived signed
+        event was otherwise a way to pick which of two real decisions applied)."""
         for ev in reversed(rec.get("history") or []):
-            if (isinstance(ev, dict) and str(ev.get("kind", "")).startswith("human_")
-                    and ev.get("at") == db.get("decided_at")
-                    and ev.get("operator") == db.get("operator")):
+            if isinstance(ev, dict) and str(ev.get("kind", "")).startswith("human_"):
                 return ev
         return None
 
@@ -383,11 +393,11 @@ class DecisionStore:
                                               "config; a machine decision is not replayed"})
                     continue
             elif signature_policy != "off":
-                ev = self._human_event_for(rec, sup)
+                ev = self._human_event_for(rec)
                 if ev is None:
-                    sig_status, sig_detail = signing.UNSIGNED, "no matching human event"
+                    sig_status, sig_detail = signing.UNSIGNED, "no human decision event"
                 else:
-                    sig_status, sig_detail = self.verify_event(ev)
+                    sig_status, sig_detail = self.verify_event(ev, expect={"root_cause": rc})
                     principal = (ev.get("signature") or {}).get("principal")
                 if sig_status == signing.VERIFIED:
                     just = ev.get("justification") or ""
@@ -570,7 +580,8 @@ class DecisionStore:
                         and ev.get("decided_by") != "machine"):
                     continue
                 if signature_policy != "off":
-                    status, detail = self.verify_event(ev)
+                    status, detail = self.verify_event(
+                        ev, expect={"root_cause": rec.get("root_cause", "")})
                     if status != signing.VERIFIED:
                         if audit is not None:
                             audit.append({"root_cause": rec.get("root_cause", ""),
@@ -734,9 +745,10 @@ class DecisionStore:
                 sup = rec.get("suppression")
                 if sup and sup.get("status") == "active" and not sup.get("shadow"):
                     if (sup.get("decided_by") or {}).get("kind") == "human":
-                        ev = self._human_event_for(rec, sup)
-                        status, detail = ((signing.UNSIGNED, "no matching human event")
-                                          if ev is None else self.verify_event(ev))
+                        ev = self._human_event_for(rec)
+                        status, detail = ((signing.UNSIGNED, "no human decision event")
+                                          if ev is None else self.verify_event(
+                                              ev, expect={"root_cause": rec.get("root_cause", "")}))
                     else:
                         status, detail = signing.MACHINE, "auto-suppression (never signed)"
                     rows.append({"record": p.name, "kind": "suppression",

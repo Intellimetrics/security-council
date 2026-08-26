@@ -35,6 +35,12 @@ parameters:
   - name: gateBaseline
     type: string
     default: 'all'
+  # R13: decision signatures. CI is the trust boundary, so the default is
+  # enforce — a suppression/baseline whose ssh-keygen signature does not
+  # verify against the committed allowed_signers is not applied (docs/signing.md).
+  - name: requireSignatures
+    type: string
+    default: 'enforce'
   - name: extraScanArgs
     type: string
     default: ''
@@ -50,6 +56,7 @@ steps:
         --arms "${{ parameters.arms }}" \
         --fail-on-severity "${{ parameters.failOnSeverity }}" \
         --gate-baseline "${{ parameters.gateBaseline }}" \
+        --require-signatures "${{ parameters.requireSignatures }}" \
         ${{ parameters.extraScanArgs }} \
         --json > "$(Agent.TempDirectory)/security-council-scan.json"
       SCAN_EXIT=$?

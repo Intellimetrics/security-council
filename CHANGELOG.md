@@ -24,6 +24,16 @@
   Signature column on reapplied suppressions, and a "refused" table.
 - New page `docs/signing.md`; updates to triage, safety-model, FAQ, concepts,
   CI guides, MCP and config reference.
+- `scan --require-signatures off|warn|enforce|auto` (MCP `require_signatures`);
+  the GitHub Action (`require-signatures` input), GitLab
+  (`SECURITY_COUNCIL_REQUIRE_SIGNATURES`) and Azure DevOps (`requireSignatures`)
+  templates pass `enforce` — `--ignore-repo-config` alone resolves to `auto`,
+  which is `warn` for a committed pre-existing store.
+- A signed event is bound to its record: a real signed event pasted into
+  another root cause's record is `invalid`, and the LATEST human event is
+  the one verified (not whichever the mutable block points at).
+- `require_signatures: off` written bare in YAML (which YAML reads as `False`)
+  is accepted as `off`.
 
 ### Changed
 

@@ -314,6 +314,22 @@ def test_ci_scan_commands_shell_parse_cleanly():
         assert "\\" not in tokens, (path, tokens)                      # no stray backslash arg
         assert tokens[:4] == tokens[0:1] + ["-P", "-m", "security_council.cli"], (path, tokens)
         assert "--ignore-repo-config" in tokens, path
+        # R13: `--ignore-repo-config` alone resolves decision signing to `auto`,
+        # which is `warn` for a committed pre-existing store — so every template
+        # names the level explicitly, and its default is enforce.
+        assert "--require-signatures" in tokens, path
+        assert tokens[tokens.index("--require-signatures") + 1].startswith("$"), path
+
+
+def test_every_ci_template_defaults_decision_signatures_to_enforce():
+    from pathlib import Path
+    for path, needle in (("action.yml", "require-signatures:"),
+                         ("templates/security-council.yml", "name: requireSignatures"),
+                         ("templates/security-council.gitlab-ci.yml",
+                          "SECURITY_COUNCIL_REQUIRE_SIGNATURES:")):
+        text = Path(path).read_text()
+        i = text.index(needle)
+        assert "'enforce'" in text[i:i + 400], path
 
 
 def test_ci_templates_take_the_run_dir_from_the_scan_record_not_a_glob():

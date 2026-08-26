@@ -58,6 +58,11 @@ def cmd_scan(args) -> int:
         config["policy"]["min_arms_ok"] = args.min_arms
     if getattr(args, "gate_baseline", None):
         config["policy"]["gate_baseline"] = args.gate_baseline
+    if getattr(args, "require_signatures", None):
+        # R13: CI is the operator-side trust boundary, so the templates pass
+        # `enforce` explicitly — `--ignore-repo-config` alone resolves to the
+        # `auto` default, which is `warn` for a pre-existing unsigned store.
+        config.setdefault("decisions", {})["require_signatures"] = args.require_signatures
     names = [n.strip() for n in args.arms.split(",")] if args.arms else config["arms"]["enabled"]
     unknown = [n for n in names if n not in known_arms()]
     if unknown:
@@ -748,6 +753,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fail-on-severity", choices=["critical", "high", "medium", "low", "info"])
     s.add_argument("--gate-baseline", choices=["all", "new"],
                    help='"new" gates only findings absent from the operator-set baseline')
+    s.add_argument("--require-signatures", choices=["off", "warn", "enforce", "auto"],
+                   help="decision-signature policy for this run (docs/signing.md); the CI "
+                        "templates pass `enforce` so a committed store cannot lower it")
     s.add_argument("--diff", metavar="BASE",
                    help="change-scoped scan: committed range BASE..HEAD (diff-capable "
                         "arms only: claude-security, codex-security)")

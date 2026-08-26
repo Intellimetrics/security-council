@@ -7,6 +7,7 @@ import dataclasses
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -438,6 +439,15 @@ def test_ci_and_gov_profiles_enforce_and_config_validates():
     assert any("signing_key" in p for p in validate_config({"decisions": {"signing_key": 3}}))
 
 
+def test_yaml_bare_off_is_accepted(tmp_path):
+    """YAML 1.1 reads a bare `off` as boolean False (R13 own pass)."""
+    (tmp_path / ".security-council.yaml").write_text("decisions:\n  require_signatures: off\n")
+    assert load_config(tmp_path)["decisions"]["require_signatures"] == "off"
+    (tmp_path / ".security-council.yaml").write_text("decisions:\n  require_signatures: on\n")
+    with pytest.raises(ValueError, match="require_signatures"):
+        load_config(tmp_path)
+
+
 # --------------------------------------------------------------------- #
 # CLI + report, end to end
 # --------------------------------------------------------------------- #
@@ -571,3 +581,110 @@ def test_mcp_signing_key_passthrough(tmp_path, keys, monkeypatch):
     assert out["signed"] is True
     audit = srv.sc_decisions_verify({})
     assert audit["summary"]["verified"] == 1 and audit["policy_resolution"]["effective"] == "enforce"
+
+
+# --------------------------------------------------------------------- #
+# R13 (own adversarial pass while council ran)
+# --------------------------------------------------------------------- #
+
+def test_pasted_verified_event_from_another_record_is_invalid(tmp_path, keys):
+    """Attack: take alice's REAL signed suppression event for root cause A and
+    paste it into record B's history (same store, same trusted signer). The
+    signature verifies as bytes — but the signed root_cause is A's."""
+    from tests.test_cluster import mk
+    store = _store(tmp_path, keys, ALICE)
+    a = _finding()
+    b = mk(path="app/other.py", cwe="CWE-79", family="xss", source_id="semgrep",
+           source_kind="scanner", vendor="semgrep")
+    assert a.fingerprints.root_cause != b.fingerprints.root_cause
+    _signed_suppress(store, keys, a)
+    ev = json.loads(store._path(a.fingerprints.root_cause).read_text())["history"][-1]
+    rec_b = {"schema_version": 1, "root_cause": b.fingerprints.root_cause,
+             "finding_id": b.id, "title": b.title, "context_hash": b.fingerprints.context_hash,
+             "history": [ev],
+             "suppression": {"lifecycle": "suppressed", "status": "active", "shadow": False,
+                             "decided_by": {"kind": "human", "decided_at": NOW,
+                                            "operator": ALICE},
+                             "decision_ref": f"decision:root_cause:{b.fingerprints.root_cause}",
+                             "expires_at": ev["expires_at"],
+                             "sarif_suppression": {"kind": "external", "status": "accepted",
+                                                   "justification": "pasted"},
+                             "vex_status": None, "vex_justification": None}}
+    store._path(b.fingerprints.root_cause).write_text(json.dumps(rec_b))
+    status, detail = store.verify_event(ev, expect={"root_cause": b.fingerprints.root_cause})
+    assert status == "invalid" and "does not belong" in detail
+    fb = mk(path="app/other.py", cwe="CWE-79", family="xss", source_id="semgrep",
+            source_kind="scanner", vendor="semgrep")
+    [act] = _replay(store, fb, "enforce")
+    assert act["action"] == "refused_signature" and act["signature"] == "invalid"
+    assert fb.disposition.lifecycle == "open"
+    # a pasted outcome mark likewise does not feed the score under enforce
+    store.mark_outcome(root_cause=a.fingerprints.root_cause, finding_id=a.id,
+                       verdict="false_positive", operator=ALICE, now_iso=NOW,
+                       signer=dec.Signer(key_path=str(keys[ALICE][0])))
+    mark = json.loads(store._path(a.fingerprints.root_cause).read_text())["history"][-1]
+    rec_b["history"].append(mark)
+    store._path(b.fingerprints.root_cause).write_text(json.dumps(rec_b))
+    counts = store.history_counts(signature_policy="enforce")
+    assert b.fingerprints.root_cause not in counts
+    assert counts[a.fingerprints.root_cause]["confirmed_fp"] == 1
+    # control: signing off, the pasted suppression applies
+    fb = mk(path="app/other.py", cwe="CWE-79", family="xss", source_id="semgrep",
+            source_kind="scanner", vendor="semgrep")
+    assert _replay(store, fb, "off")[0]["action"] == "reapplied_suppressed"
+
+
+def test_latest_human_event_is_authoritative_not_the_block_pointer(tmp_path, keys):
+    """Alice suppressed for 90 days, then re-decided with a 1-day expiry (both
+    signed). Attacker points the mutable block at the older, longer event."""
+    store = _store(tmp_path, keys, ALICE)
+    _signed_suppress(store, keys, _finding(), days=90, now=NOW)
+    later_decision = "2026-08-23T00:00:00Z"
+    _signed_suppress(store, keys, _finding(), days=1, now=later_decision)  # expires 08-24
+    path = store._path(_finding().fingerprints.root_cause)
+    rec = json.loads(path.read_text())
+    assert [e["kind"] for e in rec["history"]] == ["human_suppressed", "human_suppressed"]
+    rec["suppression"]["decided_by"]["decided_at"] = NOW              # point at event 1
+    rec["suppression"]["expires_at"] = rec["history"][0]["expires_at"]
+    path.write_text(json.dumps(rec))
+    f = _finding()                                                    # control first:
+    assert _replay(store, f, "off")[0]["action"] == "reapplied_suppressed"   # block wins
+    f = _finding()
+    [a] = _replay(store, f, "enforce")                                # LATER = 08-25
+    assert a["action"] == "reopened_expired" and a["signature"] == "verified"
+
+
+def test_scan_require_signatures_flag_overrides_config(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from security_council import cli
+    target = _repo(tmp_path, "off")
+    seen = {}
+
+    def fake_run_scan(target, arms, config, **kw):
+        seen["cfg"] = config
+        return SimpleNamespace(run_id="r", out_dir=tmp_path, exit_code=0,
+                               manifest={"counts": {}}, degradations=[])
+    monkeypatch.setattr(cli, "run_scan", fake_run_scan)
+    monkeypatch.setattr(cli, "_build_arms", lambda names, config=None, diff=None: [])
+    assert cli.main(["scan", str(target), "--arms", "semgrep", "--json"]) == 0
+    assert seen["cfg"]["decisions"]["require_signatures"] == "off"    # the repo's file
+    assert cli.main(["scan", str(target), "--arms", "semgrep", "--json",
+                     "--ignore-repo-config", "--require-signatures", "enforce"]) == 0
+    assert seen["cfg"]["decisions"]["require_signatures"] == "enforce"
+    assert cli.main(["scan", str(target), "--arms", "semgrep", "--json",
+                     "--ignore-repo-config"]) == 0
+    assert seen["cfg"]["decisions"]["require_signatures"] == "auto"   # defaults alone
+
+
+def test_mcp_scan_accepts_require_signatures(tmp_path, monkeypatch):
+    from security_council import mcp_server as srv
+    target = _repo(tmp_path, "off")
+    monkeypatch.setenv(srv.ROOT_ENV, str(target))
+    monkeypatch.delenv(srv.NESTED_ENV, raising=False)
+    finding = orch_finding(source_id="semgrep", kind="scanner", vendor="semgrep", rc="ms")
+    monkeypatch.setattr(srv, "_arms", lambda names, config: [
+        FakeArm("semgrep", "scanner", "semgrep", [finding])])
+    out = srv.sc_scan({"arms": "semgrep", "require_signatures": "enforce"})
+    m = json.loads((Path(out["out_dir"]) / "manifest.json").read_text())
+    assert m["signature_policy"]["configured"] == "enforce"

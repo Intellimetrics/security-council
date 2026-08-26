@@ -35,6 +35,8 @@ security_council:
     SECURITY_COUNCIL_ARMS: 'semgrep,gitleaks,osv-scanner'
     SECURITY_COUNCIL_FAIL_ON: 'high'
     SECURITY_COUNCIL_GATE_BASELINE: 'all'
+    # R13: enforce decision signatures in CI (docs/signing.md)
+    SECURITY_COUNCIL_REQUIRE_SIGNATURES: 'enforce'
   script:
     - pip install security-council
     # R12: `SCAN_EXIT=$?` MUST be in the same script entry as the command.
@@ -49,6 +51,7 @@ security_council:
         --arms "$SECURITY_COUNCIL_ARMS" \
         --fail-on-severity "$SECURITY_COUNCIL_FAIL_ON" \
         --gate-baseline "$SECURITY_COUNCIL_GATE_BASELINE" \
+        --require-signatures "$SECURITY_COUNCIL_REQUIRE_SIGNATURES" \
         --json > "$CI_PROJECT_DIR/.security-council-scan.json"
       SCAN_EXIT=$?
       set -e

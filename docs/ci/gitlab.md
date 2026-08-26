@@ -51,7 +51,8 @@ both reports per the disposition rules ([../triage.md](../triage.md)).
 
 If the project commits its decision store, commit `store.json` and
 `allowed_signers` too and protect the paths with CODEOWNERS + approval
-rules. The `ci` profile enforces signatures — an unverifiable suppression or
+rules. The template passes `--require-signatures enforce`
+(`SECURITY_COUNCIL_REQUIRE_SIGNATURES`) — an unverifiable suppression or
 baseline is not applied and the finding gates. See
 [../signing.md](../signing.md).
 
