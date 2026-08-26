@@ -1084,6 +1084,9 @@ def test_roster_options_are_parsed_like_openssh(tmp_path, keys):
         f'ca@x CERT-AUTHORITY,namespaces="{ns}" {kt} {key}': ("refuse", "cert-authority"),
         f'ca@x namespaces="{ns},x y",Cert-Authority {kt} {key} c': ("refuse", "cert-authority"),
         f'{BOB} namespaces="{ns},x y" {kt} {key}': None,               # quoted space, fine
+        f'ca@x "cert-authority",namespaces="{ns}" {kt} {key}': ("refuse", "cert-authority"),
+        f'ca@x\tcert-authority,namespaces="{ns}"\t{kt} {key}': ("refuse", "cert-authority"),
+        f'ca@x  cert-authority, {kt} {key}': ("refuse", "cert-authority"),
         f'{BOB} valid-after="20260101",namespaces="{ns}" {kt} {key}': None,
         f'{BOB} {kt} {key} cert-authority,namespaces="{ns}"': ("warn", "namespaces"),  # comment
     }
@@ -1095,7 +1098,9 @@ def test_roster_options_are_parsed_like_openssh(tmp_path, keys):
             assert probs == [], line
         else:
             sev, needle = expect
-            assert [p[0] for p in probs] == [sev] and needle in probs[0][1], (line, probs)
+            assert any(p[0] == sev and needle in p[1] for p in probs), (line, probs)
+            if sev == "warn":
+                assert not any(p[0] == "refuse" for p in probs), (line, probs)
     # and ssh-keygen itself accepts the quoted-space line as a trust anchor,
     # so the refusal has to see what ssh-keygen sees
     roster = _roster(tmp_path, f'{ALICE} namespaces="{ns},x y" '

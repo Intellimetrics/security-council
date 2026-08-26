@@ -239,7 +239,9 @@ def roster_problems(allowed_signers: str | Path) -> list[tuple[str, str]]:
         if not ln or ln.startswith("#"):
             continue
         principal, opts = parse_roster_line(ln)
-        names = {o.split("=", 1)[0].lower() for o in opts}
+        # names compared case-insensitively and with any quoting stripped —
+        # whatever OpenSSH makes of `"cert-authority"`, we refuse it
+        names = {o.split("=", 1)[0].strip().strip('"').lower() for o in opts}
         if not valid_principal(principal):
             out.append(("refuse", f"line {n}: principal {principal!r} is a pattern — it would "
                                   "vouch for any matching operator name"))
