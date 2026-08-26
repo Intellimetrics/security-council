@@ -204,18 +204,32 @@ def roster_line(principal: str, pubkey_text: str) -> str:
     return f'{principal} namespaces="{NAMESPACE}" {parts[0]} {parts[1]}\n'
 
 
-def roster_principals(allowed_signers: str | Path) -> list[str]:
-    """Principals listed in the roster (for `decisions verify` and doctor)."""
+# OpenSSH's allowed_signers reader (sshsig.c, `strdelimw`) splits records on
+# "\n" only and treats exactly " \t\r\n" as whitespace. Python's
+# `splitlines()` / universal newlines also split on \r, \v, \f and more, so
+# one OpenSSH line could be two of ours (R13 round 5, A). Read bytes, split
+# on \n, and use the same whitespace set everywhere.
+_WS = " \t\r\n"
+
+
+def roster_lines(allowed_signers: str | Path) -> list[tuple[int, str]]:
+    """(line number, stripped line) for every non-blank, non-comment line,
+    split exactly as ssh-keygen splits them."""
     try:
-        text = Path(allowed_signers).read_text()
+        text = Path(allowed_signers).read_bytes().decode("utf-8", "replace")
     except OSError:
         return []
     out = []
-    for ln in text.splitlines():
-        ln = ln.strip()
+    for n, raw in enumerate(text.split("\n"), 1):
+        ln = raw.strip(_WS)
         if ln and not ln.startswith("#"):
-            out.append(ln.split()[0])
+            out.append((n, ln))
     return out
+
+
+def roster_principals(allowed_signers: str | Path) -> list[str]:
+    """Principals listed in the roster (for `decisions verify` and doctor)."""
+    return [parse_roster_line(ln)[0] for _, ln in roster_lines(allowed_signers)]
 
 
 def roster_problems(allowed_signers: str | Path) -> list[tuple[str, str]]:
@@ -229,15 +243,8 @@ def roster_problems(allowed_signers: str | Path) -> list[tuple[str, str]]:
     ``verify()`` refuses against such a roster.
     ``("warn", msg)`` — a line without ``namespaces=``: the key still binds
     to one person, it is just also trusted for other signature namespaces."""
-    try:
-        text = Path(allowed_signers).read_text()
-    except OSError:
-        return []
     out: list[tuple[str, str]] = []
-    for n, ln in enumerate(text.splitlines(), 1):
-        ln = ln.strip()
-        if not ln or ln.startswith("#"):
-            continue
+    for n, ln in roster_lines(allowed_signers):
         principal, opts = parse_roster_line(ln)
         # names compared case-insensitively and with any quoting stripped —
         # whatever OpenSSH makes of `"cert-authority"`, we refuse it
@@ -256,43 +263,53 @@ def roster_problems(allowed_signers: str | Path) -> list[tuple[str, str]]:
 
 def parse_roster_line(line: str) -> tuple[str, list[str]]:
     """``(principal, options)`` of one allowed_signers line, parsed the way
-    OpenSSH does (R13 round 4): ``principal [options] keytype key [comment]``
-    where the options field is comma-separated, may carry quoted values
-    that CONTAIN spaces and commas (``namespaces="a,b c"``), and option names
-    are case-insensitive. A whitespace split hid ``cert-authority`` behind a
-    quoted space; a case-sensitive compare hid ``CERT-AUTHORITY``."""
-    s = line.strip()
+    OpenSSH does (R13 rounds 4-5): ``principal [options] keytype key [comment]``
+    where whitespace is exactly ``" \\t\\r\\n"``, the options field is
+    comma-separated, may carry quoted values that CONTAIN spaces and commas
+    (``namespaces="a,b c"``) and backslash-escaped quotes inside them
+    (``namespaces="x\\" y"``, `opt_dequote`), and option names are
+    case-insensitive. A whitespace split hid ``cert-authority`` behind a
+    quoted space; a naive quote toggle hid it behind an escaped quote."""
+    s = line.strip(_WS)
     i = 0
-    while i < len(s) and not s[i].isspace():
+    while i < len(s) and s[i] not in _WS:
         i += 1
-    principal, rest = s[:i], s[i:].lstrip()
+    principal, rest = s[:i], s[i:].lstrip(_WS)
     # is the next field a key type? then there are no options
-    head = rest.split(None, 1)[0] if rest else ""
+    head = _first_token(rest)
     if not head or _KEYTYPE_RE.match(head):
         return principal, []
-    # scan the options field: ends at the first whitespace OUTSIDE quotes
-    j, quoted = 0, False
+    # scan the options field: ends at the first whitespace OUTSIDE quotes;
+    # inside quotes a backslash escapes the next character
+    opts: list[str] = []
+    cur, quoted, j = "", False, 0
     while j < len(rest):
         c = rest[j]
-        if c == '"':
-            quoted = not quoted
-        elif c.isspace() and not quoted:
-            break
-        j += 1
-    field = rest[:j]
-    opts, cur, quoted = [], "", False
-    for c in field:
+        if quoted and c == "\\" and j + 1 < len(rest):
+            cur += rest[j:j + 2]
+            j += 2
+            continue
         if c == '"':
             quoted = not quoted
             cur += c
+        elif c in _WS and not quoted:
+            break
         elif c == "," and not quoted:
             opts.append(cur)
             cur = ""
         else:
             cur += c
+        j += 1
     if cur:
         opts.append(cur)
     return principal, [o for o in opts if o]
+
+
+def _first_token(s: str) -> str:
+    i = 0
+    while i < len(s) and s[i] not in _WS:
+        i += 1
+    return s[:i]
 
 
 def roster_warnings(allowed_signers: str | Path) -> list[str]:

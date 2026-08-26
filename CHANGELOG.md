@@ -60,6 +60,9 @@
 - Round 4: the roster option field is parsed the way OpenSSH parses it —
   quote-aware (`namespaces="a,b c"`) and case-insensitive — so a
   `CERT-AUTHORITY` or a CA option hidden behind a quoted space is refused.
+- Round 5: the roster is read as OpenSSH reads it — records split on `\n`
+  only (`\r` is in-line whitespace) and `\"` honoured inside quoted values —
+  so a CA option cannot hide behind either.
 
 ### Changed
 

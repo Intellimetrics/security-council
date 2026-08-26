@@ -1085,6 +1085,13 @@ def test_roster_options_are_parsed_like_openssh(tmp_path, keys):
         f'ca@x namespaces="{ns},x y",Cert-Authority {kt} {key} c': ("refuse", "cert-authority"),
         f'{BOB} namespaces="{ns},x y" {kt} {key}': None,               # quoted space, fine
         f'ca@x "cert-authority",namespaces="{ns}" {kt} {key}': ("refuse", "cert-authority"),
+        # R13 round 5: OpenSSH splits records on \n only (\r is in-line
+        # whitespace) and honours \" inside quoted values
+        f'ca@x\rcert-authority,namespaces="{ns}" {kt} {key}': ("refuse", "cert-authority"),
+        f'ca@x namespaces="x\\" y",cert-authority {kt} {key}': ("refuse", "cert-authority"),
+        f'ca@x namespaces="x\\",cert-authority" {kt} {key}': ("warn", "namespaces") if False
+        else None,                                   # CA inside the quotes: a VALUE, not an option
+        f'{BOB} namespaces="\\",{ns}" {kt} {key}': None,
         f'ca@x\tcert-authority,namespaces="{ns}"\t{kt} {key}': ("refuse", "cert-authority"),
         f'ca@x  cert-authority, {kt} {key}': ("refuse", "cert-authority"),
         f'{BOB} valid-after="20260101",namespaces="{ns}" {kt} {key}': None,
@@ -1112,6 +1119,17 @@ def test_roster_options_are_parsed_like_openssh(tmp_path, keys):
                                + " ".join(keys[ALICE][1].read_text().split()[:2]))
     assert signing.verify(payload, sig, allowed_signers=roster,
                           principal=ALICE)[1].startswith("roster refused")
+    # round 5 proofs against the real verifier: a \r-joined line and an
+    # escaped-quote value are each ONE OpenSSH line that ssh-keygen accepts
+    akey = " ".join(keys[ALICE][1].read_text().split()[:2])
+    for benign in (f'{ALICE}\rnamespaces="{ns}" {akey}',
+                   f'{ALICE} namespaces="\\",{ns}" {akey}'):
+        roster = _roster(tmp_path, benign)
+        assert signing.roster_problems(roster) == [], benign
+        assert signing.verify(payload, sig, allowed_signers=roster,
+                              principal=ALICE)[0] == "verified", benign
+    assert signing.roster_principals(_roster(tmp_path, f'{ALICE}\rnamespaces="{ns}" {akey}')) \
+        == [ALICE]
 
 
 def _roster(tmp_path, line):
