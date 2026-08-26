@@ -63,6 +63,8 @@
 - Round 5: the roster is read as OpenSSH reads it — records split on `\n`
   only (`\r` is in-line whitespace) and `\"` honoured inside quoted values —
   so a CA option cannot hide behind either.
+- Round 6 (council YES): only `\"` is treated as an escape inside a quoted
+  roster value, exactly as OpenSSH does.
 
 ### Changed
 

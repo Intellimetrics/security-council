@@ -1092,6 +1092,10 @@ def test_roster_options_are_parsed_like_openssh(tmp_path, keys):
         f'ca@x namespaces="x\\",cert-authority" {kt} {key}': ("warn", "namespaces") if False
         else None,                                   # CA inside the quotes: a VALUE, not an option
         f'{BOB} namespaces="\\",{ns}" {kt} {key}': None,
+        # R13 round 6: only \" is an escape — a backslash before a backslash
+        # is literal, so `A\\"B` is `A\` + escaped quote + `B` (one value)
+        f'ca@x namespaces="A\\\\"B,{ns}",cert-authority {kt} {key}': ("refuse", "cert-authority"),
+        f'{BOB} namespaces="A\\\\"B,{ns}" {kt} {key}': None,
         f'ca@x\tcert-authority,namespaces="{ns}"\t{kt} {key}': ("refuse", "cert-authority"),
         f'ca@x  cert-authority, {kt} {key}': ("refuse", "cert-authority"),
         f'{BOB} valid-after="20260101",namespaces="{ns}" {kt} {key}': None,
@@ -1123,7 +1127,8 @@ def test_roster_options_are_parsed_like_openssh(tmp_path, keys):
     # escaped-quote value are each ONE OpenSSH line that ssh-keygen accepts
     akey = " ".join(keys[ALICE][1].read_text().split()[:2])
     for benign in (f'{ALICE}\rnamespaces="{ns}" {akey}',
-                   f'{ALICE} namespaces="\\",{ns}" {akey}'):
+                   f'{ALICE} namespaces="\\",{ns}" {akey}',
+                   f'{ALICE} namespaces="A\\\\"B,{ns}" {akey}'):
         roster = _roster(tmp_path, benign)
         assert signing.roster_problems(roster) == [], benign
         assert signing.verify(payload, sig, allowed_signers=roster,

@@ -285,7 +285,9 @@ def parse_roster_line(line: str) -> tuple[str, list[str]]:
     cur, quoted, j = "", False, 0
     while j < len(rest):
         c = rest[j]
-        if quoted and c == "\\" and j + 1 < len(rest):
+        if quoted and c == "\\" and j + 1 < len(rest) and rest[j + 1] == '"':
+            # OpenSSH opt_dequote: ONLY `\"` is an escape; any other backslash
+            # is a literal character (R13 round 6 — `A\\"B` is `A\` + `\"` + `B`)
             cur += rest[j:j + 2]
             j += 2
             continue
