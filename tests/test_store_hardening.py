@@ -87,7 +87,10 @@ def test_orchestrator_refuses_non_intact_baseline(tmp_path, monkeypatch):
     (target / "app" / "x.py").write_text("q = 1\n")
     finding = _of(source_id="semgrep", kind="scanner", vendor="semgrep")
     cfg = {**DEFAULT_CONFIG, "policy": {**DEFAULT_CONFIG["policy"],
-                                        "gate_baseline": "new"}}
+                                        "gate_baseline": "new"},
+           # this test is about the digest TRIPWIRE, not signatures (R13: the
+           # default is now enforce, which refuses an unsigned baseline outright)
+           "decisions": {**DEFAULT_CONFIG["decisions"], "require_signatures": "warn"}}
 
     def _scan():
         return run_scan(target, [FakeArm("semgrep", "scanner", "semgrep", [finding])],

@@ -32,8 +32,8 @@ code changes, and is recorded with your name. There is deliberately no
 backlog stays visible in reports but only *new* findings fail builds.
 
 **It says my suppression "must be signed here". What?**
-On a new repo, decisions are signed with your SSH key by default so a scan
-can verify *who* made them. Run the two commands the message prints
+Decisions are signed with your SSH key by default so a scan can verify *who*
+made them. Run the two commands the message prints
 (`decisions trust` with your `.pub`, then re-run with `--signing-key`), or
 put `decisions: {require_signatures: warn}` in `.security-council.yaml` to
 record unsigned decisions for now. Three-minute setup: [signing.md](signing.md).

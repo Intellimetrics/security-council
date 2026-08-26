@@ -67,18 +67,20 @@ security-council decisions verify --json   # machine-readable audit
 
 | Level | Behaviour |
 |---|---|
-| `enforce` | A human suppression, outcome mark or baseline applies **only** if its signature verifies. Anything else is refused: the finding stays open and gates, the mark does not feed scoring, the baseline is ignored (so everything gates). `ci` and `gov` profiles set this. |
-| `warn` | Everything applies, but every unsigned or failed decision is named in the manifest, the summary and the degradations box. |
+| `enforce` (default) | A human suppression, outcome mark or baseline applies **only** if its signature verifies. Anything else is refused: the finding stays open and gates, the mark does not feed scoring, the baseline is ignored (so everything gates). The CI templates pass it explicitly. |
+| `warn` | Everything applies, but every unsigned or failed decision is named in the manifest, the summary and the degradations box. The opt-out for a team that is not ready to sign yet. |
 | `off` | No verification. |
-| `auto` (default) | Per store: `enforce` for a store that has been `decisions init`-ed or has no decisions yet; `warn` for a pre-existing store that predates signing — **until 2027-01-01**, after which `auto` means `enforce` everywhere. The summary always prints the level that ran and why. |
+| `auto` | Opt-in adoption mode, per store: `enforce` for a store that has been `decisions init`-ed or has no decisions yet; `warn` for a store that has unsigned decisions and no `store.json` — **until 2027-01-01**, after which `auto` means `enforce` everywhere. Because the store is inside the scanned repo, this level can be lowered from a branch (see residuals), which is why it is not the default. |
 
-Two things follow from `auto`:
+Two things follow from the default:
 
-- **On a fresh repo, an unsigned `suppress` is refused up front** with the
-  three lines to fix it (or `require_signatures: warn` to opt down). A record
-  that could never apply is worse than an error message.
-- **An old repo keeps working** unchanged through the warn period, with a
-  loud note on every scan. Run `decisions init` and re-sign to enforce now.
+- **An unsigned `suppress` is refused up front** with the three lines to fix
+  it (or `require_signatures: warn` to opt down). A record that could never
+  apply is worse than an error message.
+- **A repo with decisions from before signing** sees them come back as
+  "refused" on the next scan — the findings gate again, and the summary's
+  refused table says why. Sign them (`decisions init`, `decisions trust`,
+  re-make each decision with `--signing-key`), or set `warn` while you do.
 
 Under `enforce` the scan applies the **signed values** — the expiry, the
 lifecycle, the context hash — not whatever the record's editable block says.
@@ -130,17 +132,27 @@ Residuals, stated plainly:
   (90 days; 30 for crypto/critical) bounds this; a signed sequence counter
   was considered and dropped as a hot, merge-conflicting file that is itself
   rollback-able.
-- **`auto` on a pre-existing store** can be downgraded to `warn` by deleting
-  `store.json` — until the sunset date, and always visibly (the reason is
-  printed on every run). `ci`/`gov` are immune because they set `enforce`.
+- **`auto` is attacker-influenced.** Under the opt-in `auto` level, deleting
+  `store.json` — or committing a first unsigned record without one — resolves
+  the store to `warn` until the sunset date, always visibly (the reason is
+  printed on every run). This is why the default is `enforce`.
+- **Machine suppressions are unsigned.** In a repo whose config arms
+  auto-suppression (both flags), a hand-written `kind: auto` record replays
+  under `enforce`, bounded by G1/G7 (never crypto/critical), expiry, drift and
+  the operator's double opt-in; the run reports it as
+  `machine_decisions_replayed`. The shipped CI templates are unarmed.
+- **The roster is the trust root.** `trust` refuses pattern principals
+  (`*`, `?`, `!`, `,`) and always writes a `namespaces=` line; a hand-edited
+  roster line that vouches for any name, any namespace, or a whole CA is
+  flagged by `decisions verify`, not refused.
 - **No verifier, no verification.** If `ssh-keygen -Y` is missing on the
   scanning machine, signed decisions are *unverifiable* and `enforce`
   refuses them (fail-closed). `security-council doctor` shows the verifier.
 
 ## Troubleshooting
 
-**`suppress must be signed here`** — the store resolved to `enforce` and you
-gave no key. Follow the three printed lines, or set `warn`.
+**`suppress must be signed here`** — the level is `enforce` (the default) and
+you gave no key. Follow the three printed lines, or set `warn`.
 
 **`signature ... does not verify against allowed_signers`** at write time —
 the key you signed with is not listed for that `--operator` principal. Run

@@ -37,16 +37,19 @@ DEFAULT_CONFIG: dict = {
                "shadow_runs": 5, "suppress_below": 0.10,
                "suppression_expiry_days": 90, "gate_baseline": "all"},
     # Decision-store signing (R9 signing lane). require_signatures:
-    #   auto    (default) per-store: enforce for a store initialised for
-    #           signing or with no decisions yet; warn for a pre-existing
-    #           unsigned store until the sunset date in signing.py
-    #   enforce a human suppression / outcome mark / baseline applies ONLY
-    #           when its ssh-keygen signature verifies against allowed_signers
+    #   enforce (default) a human suppression / outcome mark / baseline applies
+    #           ONLY when its ssh-keygen signature verifies against
+    #           allowed_signers; anything else is refused and the finding gates
     #   warn    everything applies; unsigned decisions are reported loudly
+    #   auto    per-store adoption mode: enforce for a store initialised for
+    #           signing or with no decisions yet; warn for a store with unsigned
+    #           decisions and no store.json, until the sunset in signing.py.
+    #           Opt-in only (R13): the store is attacker-writable, so this
+    #           level can be lowered from inside the scanned repo
     #   off     no verification
     # signing_key: path used by `suppress`, `outcome mark`, `baseline set`
     # (flag --signing-key and $SECURITY_COUNCIL_SIGNING_KEY override it).
-    "decisions": {"require_signatures": "auto", "signing_key": None},
+    "decisions": {"require_signatures": "enforce", "signing_key": None},
     "reports": {"outdir": ".security-council/runs"},
 }
 
@@ -86,7 +89,13 @@ PROFILES: dict[str, dict] = {
 
 
 def resolve_profile(config: dict, name: str | None) -> dict:
-    """Apply a profile UNDER an already-loaded config (config keys win)."""
+    """Apply a profile UNDER an already-loaded config (config keys win).
+
+    This is the precedence of a config FILE's own `profile:` key (the file's
+    other keys are the operator's explicit choices). The CLI `--profile` flag
+    is the opposite on purpose — cli.py merges the profile OVER the file,
+    because an explicit flag outranks a file (R13: the two are not in
+    conflict; they answer different questions)."""
     if not name:
         return config
     if name not in PROFILES:

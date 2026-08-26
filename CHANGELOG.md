@@ -15,9 +15,10 @@
   unsigned, tampered, untrusted, foreign (copied from another repo) or
   unverifiable decision is **not applied** — the finding reappears and gates;
   when a signature verifies, the signed expiry/lifecycle/context hash are what
-  get applied. `ci` and `gov` profiles enforce. Default `auto`: enforce for
-  new or initialised stores, warn (loudly) for pre-existing unsigned stores
-  until 2027-01-01.
+  get applied. **Default `enforce`** (R13: `auto`'s "pre-existing store" is
+  a fact about attacker-writable files, so it is an opt-in adoption mode:
+  enforce for new or initialised stores, warn — loudly — for a store with
+  unsigned decisions and no `store.json`, until 2027-01-01).
 - Manifest `signature_policy` (configured, effective, reason, verifier, store
   id, trusted principals), a `signature` on every `prior_decisions` row and on
   `baseline_delta`, `history_audit`; the summary shows the level that ran, a
@@ -34,16 +35,23 @@
   the one verified (not whichever the mutable block points at).
 - `require_signatures: off` written bare in YAML (which YAML reads as `False`)
   is accepted as `off`.
+- One signed outcome mark pasted N times counts once (dedupe on signature
+  bytes); `trust` refuses pattern principals (`*`, `?`, `!`, `,`) and
+  `decisions verify` flags hand-edited roster lines (patterns, missing
+  `namespaces=`, `cert-authority`); a run that replays unsigned machine
+  suppressions under `enforce` reports `machine_decisions_replayed`; the
+  baseline's age is printed with its provenance.
 
 ### Changed
 
 - Machine (auto) suppressions in the store replay only while the current
   config still arms auto-suppression (a forged `kind: auto` record no longer
   applies in a repo that never enabled it).
-- On a fresh store the default policy resolves to `enforce`, so an unsigned
-  `suppress`/`outcome mark`/`baseline set` is refused up front with the setup
-  steps; set `decisions.require_signatures: warn` to keep recording unsigned
-  decisions.
+- The default policy is `enforce`: an unsigned `suppress`/`outcome mark`/
+  `baseline set` is refused up front with the setup steps, and decisions
+  recorded before signing come back as "refused" (the findings gate) until
+  they are re-made signed; set `decisions.require_signatures: warn` to keep
+  applying unsigned decisions meanwhile.
 
 
 ## 0.1.0 — 2026-08-25

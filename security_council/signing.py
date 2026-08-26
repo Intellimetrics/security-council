@@ -47,12 +47,15 @@ from pathlib import Path
 NAMESPACE = "security-council-decision"
 PAYLOAD_VERSION = 1
 
-# require_signatures levels. `auto` (the default) is per-store (R9 Q2): a
-# store initialised for signing, or one with no decisions yet, is `enforce`;
-# a pre-existing store that predates the lane is `warn` until the sunset
-# below, after which `auto` means `enforce` everywhere. The sunset is a fixed
-# date rather than "N releases" so the flip is predictable and needs no
-# config change — and so a store cannot stay grandfathered forever.
+# require_signatures levels. The DEFAULT is `enforce` (R13): R9 Q2 asked for
+# "new stores enforce, pre-existing warn + sunset", but in code "pre-existing"
+# is a fact about files the adversary writes — a branch that commits its first
+# unsigned record and no store.json would make itself "pre-existing" and be
+# honoured under warn. `auto` keeps that per-store adoption mode as an
+# explicit opt-in: enforce for an initialised or empty store; warn for a
+# store with unsigned decisions and no store.json until the sunset below,
+# after which `auto` means `enforce` everywhere. The sunset is a fixed date
+# so the flip is predictable and a store cannot stay grandfathered forever.
 LEVELS = ("off", "warn", "enforce", "auto")
 WARN_SUNSET = "2027-01-01T00:00:00Z"
 
@@ -66,7 +69,10 @@ UNCHECKED = "unchecked"        # policy `off`: nothing was looked at
 MACHINE = "machine"            # a machine (auto-suppression) write; never signed
 ACCEPTED = frozenset({VERIFIED})
 
-_PRINCIPAL_RE = re.compile(r"^[^\s\"]{1,256}$")
+# One roster token — and NOT an allowed_signers pattern: `*` `?` (wildcards),
+# `!` (negation) and `,` (pattern lists) would make `trust --principal '*'`
+# vouch for every operator name while the report still said "verified" (R13).
+_PRINCIPAL_RE = re.compile(r"^[^\s\"*?!,]{1,256}$")
 _KEYTYPE_RE = re.compile(r"^(ssh-|ecdsa-|sk-)[A-Za-z0-9@.\-]+$")
 _SUBPROCESS_TIMEOUT = 30
 
@@ -207,19 +213,45 @@ def roster_principals(allowed_signers: str | Path) -> list[str]:
     return out
 
 
+def roster_warnings(allowed_signers: str | Path) -> list[str]:
+    """Hand-edited roster lines that weaken attribution without breaking
+    verification (R13): pattern principals, lines valid for EVERY namespace,
+    and certificate-authority lines that trust a whole CA. `trust` never
+    writes these; `decisions verify` surfaces them."""
+    try:
+        text = Path(allowed_signers).read_text()
+    except OSError:
+        return []
+    out = []
+    for n, ln in enumerate(text.splitlines(), 1):
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        principal = ln.split()[0]
+        if not valid_principal(principal):
+            out.append(f"line {n}: principal {principal!r} is a pattern — it vouches for any "
+                       "matching operator name")
+        if f'namespaces="{NAMESPACE}"' not in ln and "namespaces=" not in ln:
+            out.append(f"line {n}: no namespaces= option — this key is trusted for every "
+                       "signature namespace, not just decisions")
+        if "cert-authority" in ln:
+            out.append(f"line {n}: cert-authority — every certificate this CA issues is trusted")
+    return out
+
+
 def resolve_policy(config: dict, *, store_initialised: bool, store_has_decisions: bool,
                    now_iso: str) -> dict:
     """Turn the configured level into the level that RUNS, and say why.
 
     The configured value comes from operator config (defaults < profile <
-    config file), never from the store: a level stored in the target would be
-    writable by the same party the signatures are meant to catch. ``ci`` and
-    ``gov`` profiles set ``enforce`` explicitly for that reason; ``auto`` is
-    the adoption default and its one residual is documented (deleting
-    ``store.json`` from a pre-existing store downgrades `auto` to `warn`
-    until the sunset — visible in every manifest and report as the reason).
+    config file < CLI flag), never from the store: a level stored in the
+    target would be writable by the same party the signatures are meant to
+    catch. Only the opt-in ``auto`` looks at the store, and its residual is
+    documented (deleting ``store.json``, or committing a first unsigned record
+    without one, resolves `auto` to `warn` until the sunset — visible in every
+    manifest and report as the reason).
     """
-    configured = str((config.get("decisions") or {}).get("require_signatures", "auto"))
+    configured = str((config.get("decisions") or {}).get("require_signatures", "enforce"))
     if configured not in LEVELS:
         raise ValueError(f"decisions.require_signatures must be one of {LEVELS}, "
                          f"got {configured!r}")
@@ -232,9 +264,10 @@ def resolve_policy(config: dict, *, store_initialised: bool, store_has_decisions
             effective, reason = "enforce", (f"pre-existing unsigned store; the warn period "
                                             f"ended {WARN_SUNSET[:10]}")
         else:
-            effective, reason = "warn", (f"pre-existing store from before signing; unsigned "
-                                         f"decisions still apply until {WARN_SUNSET[:10]} "
-                                         "(run `decisions init` + sign them to enforce now)")
+            effective, reason = "warn", (f"auto: store has decisions but no store.json, so "
+                                         f"unsigned decisions still apply until "
+                                         f"{WARN_SUNSET[:10]} (run `decisions init` + sign "
+                                         "them, or set require_signatures: enforce)")
     else:
         effective, reason = configured, "set by config"
     return {"configured": configured, "effective": effective, "reason": reason,

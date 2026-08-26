@@ -123,7 +123,7 @@ policy:
   suppress_below: 0.10
   suppression_expiry_days: 90
 decisions:
-  require_signatures: auto    # auto | enforce | warn | off — docs/signing.md
+  require_signatures: enforce # enforce | warn | auto | off — docs/signing.md
   signing_key: null           # e.g. ~/.ssh/id_ed25519; --signing-key and
                               # $SECURITY_COUNCIL_SIGNING_KEY override it
 reports:

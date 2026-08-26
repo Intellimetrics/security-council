@@ -580,6 +580,8 @@ def cmd_decisions_verify(args) -> int:
               f"(configured {policy['configured']}: {policy['reason']})")
         print(f"verifier: {audit['verifier'] or 'MISSING'} · roster: "
               f"{', '.join(audit['roster']) or '(empty)'}")
+        for w in audit.get("roster_warnings") or []:
+            print(f"  ⚠ roster {w}")
         for r in audit["rows"]:
             who = r.get("operator") or "—"
             what = r.get("lifecycle") or r.get("verdict") or r.get("kind")

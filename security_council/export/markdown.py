@@ -247,7 +247,9 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
             if bd.get("operator"):
                 prov.append(f"set by {_code(bd['operator'])}")
             if bd.get("set_at"):
-                prov.append(f"on {_cell(str(bd['set_at'])[:10])}")
+                age = bd.get("age_days")
+                prov.append(f"on {_cell(str(bd['set_at'])[:10])}"
+                            + (f" ({age} days ago)" if isinstance(age, int) else ""))
             if bd.get("content_sha256"):
                 prov.append(f"digest {_code(str(bd['content_sha256'])[:12])}")
             if bd.get("integrity") == "unpinned":

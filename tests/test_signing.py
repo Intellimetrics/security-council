@@ -431,7 +431,7 @@ def test_resolve_policy_auto_is_per_store_with_sunset(tmp_path, keys):
 def test_ci_and_gov_profiles_enforce_and_config_validates():
     for prof in ("ci", "gov"):
         assert resolve_profile({}, prof)["decisions"]["require_signatures"] == "enforce"
-    assert resolve_profile({}, "quick")["decisions"]["require_signatures"] == "auto"
+    assert resolve_profile({}, "quick")["decisions"]["require_signatures"] == "enforce"
     assert validate_config({"decisions": {"require_signatures": "enforce"}}) == []
     assert any("require_signatures" in p for p in
                validate_config({"decisions": {"require_signatures": "Enforce"}}))
@@ -674,7 +674,7 @@ def test_scan_require_signatures_flag_overrides_config(tmp_path, monkeypatch):
     assert seen["cfg"]["decisions"]["require_signatures"] == "enforce"
     assert cli.main(["scan", str(target), "--arms", "semgrep", "--json",
                      "--ignore-repo-config"]) == 0
-    assert seen["cfg"]["decisions"]["require_signatures"] == "auto"   # defaults alone
+    assert seen["cfg"]["decisions"]["require_signatures"] == "enforce"   # defaults alone
 
 
 def test_mcp_scan_accepts_require_signatures(tmp_path, monkeypatch):
@@ -688,3 +688,135 @@ def test_mcp_scan_accepts_require_signatures(tmp_path, monkeypatch):
     out = srv.sc_scan({"arms": "semgrep", "require_signatures": "enforce"})
     m = json.loads((Path(out["out_dir"]) / "manifest.json").read_text())
     assert m["signature_policy"]["configured"] == "enforce"
+
+
+
+# --------------------------------------------------------------------- #
+# R13 council round 1 (claude): dedupe, same-context transplant, roster
+# patterns, machine-replay visibility, baseline age
+# --------------------------------------------------------------------- #
+
+def test_pasted_signed_mark_counts_once(tmp_path, keys):
+    """Attack: one REAL signed FP mark pasted three times into its own record
+    moved the history term to the cap. Same signature bytes = one mark."""
+    store = _store(tmp_path, keys, ALICE)
+    f = _finding()
+    rc = f.fingerprints.root_cause
+    store.mark_outcome(root_cause=rc, finding_id=f.id, verdict="false_positive", operator=ALICE,
+                       now_iso=NOW, signer=dec.Signer(key_path=str(keys[ALICE][0])))
+    path = store._path(rc)
+    rec = json.loads(path.read_text())
+    mark = rec["history"][-1]
+    rec["history"] += [dict(mark), dict(mark)]
+    path.write_text(json.dumps(rec))
+    for level in ("enforce", "warn", "off"):
+        audit: list = []
+        assert store.history_counts(signature_policy=level, audit=audit)[rc]["confirmed_fp"] == 1, level
+    audit = []
+    store.history_counts(signature_policy="enforce", audit=audit)
+    assert [a["signature"] for a in audit] == ["duplicate", "duplicate"]
+    # two genuinely distinct signed marks still count as two
+    store.mark_outcome(root_cause=rc, finding_id=f.id, verdict="false_positive", operator=ALICE,
+                       now_iso=LATER, signer=dec.Signer(key_path=str(keys[ALICE][0])))
+    assert store.history_counts(signature_policy="enforce")[rc]["confirmed_fp"] == 2
+
+
+def test_transplant_with_identical_context_hash_is_still_refused(tmp_path, keys):
+    """claude's R13 case: two root causes can share a context_hash (the hash
+    is the ±3-line window; rule/CWE are not inputs), so G8 alone would not
+    catch a pasted event. The signed root_cause does."""
+    from tests.test_cluster import mk
+    store = _store(tmp_path, keys, ALICE)
+    a = _finding()
+    _signed_suppress(store, keys, a)
+    ev = json.loads(store._path(a.fingerprints.root_cause).read_text())["history"][-1]
+    b = mk(path="app/other.py", cwe="CWE-79", family="xss", source_id="semgrep",
+           source_kind="scanner", vendor="semgrep")
+    b.fingerprints = dataclasses.replace(b.fingerprints, context_hash=a.fingerprints.context_hash)
+    assert b.fingerprints.root_cause != a.fingerprints.root_cause
+    rec_b = {"schema_version": 1, "root_cause": b.fingerprints.root_cause, "finding_id": b.id,
+             "title": b.title, "context_hash": a.fingerprints.context_hash, "history": [ev],
+             "suppression": {"lifecycle": "suppressed", "status": "active", "shadow": False,
+                             "decided_by": {"kind": "human", "decided_at": NOW, "operator": ALICE},
+                             "decision_ref": f"decision:root_cause:{b.fingerprints.root_cause}",
+                             "expires_at": ev["expires_at"],
+                             "sarif_suppression": {"kind": "external", "status": "accepted",
+                                                   "justification": "pasted"},
+                             "vex_status": None, "vex_justification": None}}
+    store._path(b.fingerprints.root_cause).write_text(json.dumps(rec_b))
+    [act] = _replay(store, b, "enforce")
+    assert act["action"] == "refused_signature" and act["signature"] == "invalid"
+    assert b.disposition.lifecycle == "open"
+    b2 = mk(path="app/other.py", cwe="CWE-79", family="xss", source_id="semgrep",
+            source_kind="scanner", vendor="semgrep")
+    b2.fingerprints = dataclasses.replace(b2.fingerprints, context_hash=a.fingerprints.context_hash)
+    assert _replay(store, b2, "off")[0]["action"] == "reapplied_suppressed"     # control
+
+
+def test_pattern_principals_are_rejected_and_hand_edits_are_flagged(tmp_path, keys, capsys):
+    store = _store(tmp_path, keys, ALICE)
+    for bad in ("*", "*@example", "alice?", "alice,bob", "!alice"):
+        with pytest.raises(signing.SigningError, match="single token"):
+            store.add_trusted_signer(principal=bad, pubkey_text=keys[ALICE][1].read_text(),
+                                     now_iso=NOW)
+        assert not signing.valid_principal(bad)
+    # a hand-edited roster: wildcard principal, no namespaces=, cert-authority
+    pub = keys[BOB][1].read_text().split()
+    with open(store.allowed_signers_path, "a") as fh:
+        fh.write(f"* {pub[0]} {pub[1]}\n")
+        fh.write(f"ca@example cert-authority,namespaces=\"{signing.NAMESPACE}\" {pub[0]} {pub[1]}\n")
+    warns = signing.roster_warnings(store.allowed_signers_path)
+    assert any("pattern" in w for w in warns) and any("namespaces=" in w for w in warns)
+    assert any("cert-authority" in w for w in warns)
+    audit = store.verify_store(signature_policy="enforce")
+    assert audit["roster_warnings"] == warns
+    assert cli_main(["decisions", "verify", "--target", str(tmp_path)]) == 0
+    assert "⚠ roster" in capsys.readouterr().out
+    # the trusted line `trust` writes raises none of these
+    clean = _store(tmp_path / "clean", keys, ALICE)
+    assert signing.roster_warnings(clean.allowed_signers_path) == []
+
+
+def test_machine_replay_under_enforce_is_a_visible_degradation(tmp_path):
+    target = tmp_path / "repo"
+    (target / "app").mkdir(parents=True)
+    (target / "app" / "x.py").write_text("q = 1\n")
+    finding = orch_finding(source_id="semgrep", kind="scanner", vendor="semgrep", rc="mach")
+    store = dec.DecisionStore(target / ".security-council")
+    store.dir.mkdir(parents=True)
+    rc = finding.fingerprints.root_cause
+    rec = {"schema_version": 1, "root_cause": rc, "finding_id": finding.id, "title": finding.title,
+           "context_hash": finding.fingerprints.context_hash, "history": [],
+           "suppression": {"lifecycle": "suppressed", "status": "active", "shadow": False,
+                           "decided_by": {"kind": "auto", "decided_at": NOW, "model_id": "m",
+                                          "prompt_sha256": SHA, "panel_sha256": SHA},
+                           "decision_ref": f"decision:root_cause:{rc}",
+                           "expires_at": "2099-01-01T00:00:00Z",
+                           "sarif_suppression": {"kind": "external", "status": "accepted",
+                                                 "justification": "forged"},
+                           "vex_status": None, "vex_justification": None}}
+    store._path(rc).write_text(json.dumps(rec))
+    arms = [FakeArm("semgrep", "scanner", "semgrep", [finding])]
+    run = run_scan(target, arms, _cfg("enforce"), isolate=False)
+    assert run.exit_code == 1                                       # unarmed: not replayed
+    assert any(p["action"] == "ignored_machine_unarmed" for p in run.manifest["prior_decisions"])
+    armed = _cfg("enforce", auto_suppress=True, accept_suppression_risk=True)
+    run = run_scan(target, arms, armed, isolate=False)
+    assert run.exit_code == 0                                       # the documented residual
+    assert any(d["kind"] == "machine_decisions_replayed" for d in run.degradations)
+    assert "machine" in (run.out_dir / "summary.md").read_text()
+
+
+def test_signed_baseline_reports_its_age(tmp_path, keys):
+    target = tmp_path / "repo"
+    (target / "app").mkdir(parents=True)
+    (target / "app" / "x.py").write_text("q = 1\n")
+    finding = orch_finding(source_id="semgrep", kind="scanner", vendor="semgrep", rc="age")
+    store = _store(target, keys, ALICE)
+    store.set_baseline([_bl_row(finding)], run_id="r", now_iso="2026-08-01T00:00:00Z",
+                       operator=ALICE, signer=dec.Signer(key_path=str(keys[ALICE][0])))
+    run = run_scan(target, [FakeArm("semgrep", "scanner", "semgrep", [finding])],
+                   _cfg("enforce", gate_baseline="new"), isolate=False)
+    bd = run.manifest["baseline_delta"]
+    assert bd["signature"] == "verified" and isinstance(bd["age_days"], int) and bd["age_days"] >= 20
+    assert "days ago" in (run.out_dir / "summary.md").read_text()

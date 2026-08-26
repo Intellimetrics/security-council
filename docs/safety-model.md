@@ -120,8 +120,8 @@ in two layers:
    operator's SSH key (`ssh-keygen -Y`, no new dependency) over a fixed field
    list bound to this store's id, and verified on every scan against the
    committed `allowed_signers` roster with the principal = the claimed
-   operator. Under `require_signatures: enforce` (the `ci`/`gov` profiles;
-   the default for new stores) a decision that is unsigned, edited after
+   operator. Under `require_signatures: enforce` (the default; the CI
+   templates pass it explicitly) a decision that is unsigned, edited after
    signing, signed by an untrusted key, or copied from another repository is
    **not applied** — the finding reappears and gates. When a signature
    verifies, the scan applies the **signed** expiry, lifecycle and context

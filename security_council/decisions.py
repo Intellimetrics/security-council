@@ -572,6 +572,7 @@ class DecisionStore:
             except (OSError, json.JSONDecodeError):
                 continue
             counts = {"confirmed_tp": 0, "confirmed_fp": 0}
+            seen_sigs: set[str] = set()
             for ev in rec.get("history") or []:
                 # L1 anti-poisoning: ONLY human outcome_mark events count — a
                 # machine event (verify-fix evidence) is ignored even if it
@@ -579,6 +580,22 @@ class DecisionStore:
                 if not (ev.get("kind") == "outcome_mark" and ev.get("operator")
                         and ev.get("decided_by") != "machine"):
                     continue
+                # R13: one signed mark pasted N times is ONE mark. A real mark
+                # by a trusted signer must not be replayable into a bigger
+                # history term than the signer produced.
+                sig_bytes = ((ev.get("signature") or {}).get("sig") if isinstance(
+                    ev.get("signature"), dict) else None)
+                if sig_bytes:
+                    if sig_bytes in seen_sigs:
+                        if audit is not None:
+                            audit.append({"root_cause": rec.get("root_cause", ""),
+                                          "finding_id": ev.get("finding_id"),
+                                          "operator": ev.get("operator"),
+                                          "verdict": ev.get("verdict"),
+                                          "signature": "duplicate", "applied": False,
+                                          "detail": "same signature already counted"})
+                        continue
+                    seen_sigs.add(sig_bytes)
                 if signature_policy != "off":
                     status, detail = self.verify_event(
                         ev, expect={"root_cause": rec.get("root_cause", "")})
@@ -781,6 +798,7 @@ class DecisionStore:
                    "machine": sum(1 for r in rows if r["signature"] == signing.MACHINE),
                    "would_refuse": sum(1 for r in rows if not r["applies"])}
         return {"store_id": self.store_id(), "roster": self.trusted_principals(),
+                "roster_warnings": signing.roster_warnings(self.allowed_signers_path),
                 "verifier": signing.verifier(), "policy": signature_policy,
                 "summary": summary, "rows": rows}
 

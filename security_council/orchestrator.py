@@ -317,6 +317,18 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                                        + " (require_signatures: enforce); the findings "
                                          "are open and gate. `security-council decisions "
                                          "verify` lists them."})
+        machine = [p for p in prior_decisions if p.get("signature") == signing_mod.MACHINE
+                   and str(p.get("action", "")).startswith("reapplied")]
+        if machine and sig_policy["effective"] == "enforce":
+            # R13: machine writes are never signed (Q6), so in an ARMED repo a
+            # forged `kind: auto` record replays under enforce, bounded only by
+            # G1/G7 and the operator's double opt-in. Say so, every run.
+            pre_degr.append({"kind": "machine_decisions_replayed",
+                             "detail": f"{len(machine)} automatic suppression(s) reapplied "
+                                       "without a signature (machine writes are never "
+                                       "signed; they replay only because auto-suppression "
+                                       "is armed in this config). Review them in the "
+                                       "summary's reapplied table."})
         warned = [p for p in prior_decisions if p.get("signature_warning")]
         if warned:
             # Q2: `warn` must be loud or it is functionally `off`
@@ -437,6 +449,14 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             baseline_delta["set_at"] = baseline.get("set_at")
             baseline_delta["operator"] = baseline.get("operator")
             baseline_delta["signature"] = baseline.get("signature_status")
+            # R13: a signed baseline has no expiry (Q3's replay bound is the
+            # suppression's expires_at), so at least its AGE is printed.
+            try:
+                set_at = datetime.fromisoformat(str(baseline.get("set_at")).replace("Z", "+00:00"))
+                baseline_delta["age_days"] = max(
+                    0, (datetime.fromisoformat(collected_at.replace("Z", "+00:00")) - set_at).days)
+            except (ValueError, TypeError):
+                baseline_delta["age_days"] = None
 
         # fix lane (M-V4a): serial, after the scan/policy phase, each job in its
         # own fenced fresh copy. Only fix open, non-refuted findings.
