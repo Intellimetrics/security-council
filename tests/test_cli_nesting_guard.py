@@ -5,7 +5,8 @@ import json
 
 from security_council.cli import main as cli_main
 from tests.test_decisions import _finding  # noqa: F401 - ensures import graph
-from tests.test_orchestrator import FakeArm, _finding as orch_finding, _run as orch_run
+from tests.test_orchestrator import FakeArm, _allow_unsigned, _finding as orch_finding, \
+    _run as orch_run
 
 
 def _run_with_finding(tmp_path):
@@ -40,6 +41,7 @@ def test_suppress_and_baseline_refused_when_nested(tmp_path, capsys, monkeypatch
 def test_writes_allowed_when_not_nested(tmp_path, monkeypatch):
     run, fid = _run_with_finding(tmp_path)
     monkeypatch.delenv("SECURITY_COUNCIL_NESTED", raising=False)
+    _allow_unsigned(tmp_path)
     assert cli_main(["outcome", "mark", fid, "--verdict", "fp", "--operator", "clindell",
                      "--run", str(run.out_dir), "--target", str(tmp_path)]) == 0
     assert (tmp_path / ".security-council" / "decisions").exists()

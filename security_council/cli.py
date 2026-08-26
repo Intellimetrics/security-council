@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -171,6 +172,11 @@ def cmd_doctor(args) -> int:
     from .arms.sbom import SbomArm
     ok, detail = SbomArm().available()
     print(f"  {'sbom':<13} {'ready' if ok else 'unavailable':<11} {detail}")
+    from . import signing
+    ver = signing.verifier()
+    print(f"  {'ssh-keygen':<13} {'ready' if ver else 'MISSING':<11} "
+          f"{ver or 'no ssh-keygen -Y (OpenSSH >= 8.2): decision signing unavailable; '
+                     'require_signatures: enforce refuses every signed decision (fail-closed)'}")
     return 0
 
 
@@ -358,6 +364,43 @@ def _store(args):
     return DecisionStore(Path(args.target).resolve() / ".security-council")
 
 
+def _signer(args, store, *, action: str):
+    """Resolve the signing key for a human write (flag > env > config) and the
+    effective signature policy for this target. Returns (Signer|None, policy)
+    — or raises SystemExit-free: prints and returns (None, None) on refusal.
+
+    Under `enforce` an unsigned write is refused HERE, not silently written
+    and then refused on every scan: a record that can never apply is worse
+    than an error message that says what to do."""
+    from . import signing
+    from .decisions import Signer
+    config = load_config(Path(args.target).resolve())
+    policy = signing.resolve_policy(config, store_initialised=store.store_meta() is not None,
+                                    store_has_decisions=store.has_decisions(),
+                                    now_iso=_now_iso())
+    key = (getattr(args, "signing_key", None)
+           or os.environ.get("SECURITY_COUNCIL_SIGNING_KEY")
+           or (config.get("decisions") or {}).get("signing_key"))
+    if key:
+        return Signer(key_path=str(key)), policy
+    if policy["effective"] == "enforce":
+        print(f"error: {action} must be signed here (decisions.require_signatures: "
+              f"{policy['configured']} -> enforce: {policy['reason']}).\n"
+              "  1. security-council decisions trust --principal <operator> "
+              "--key ~/.ssh/id_ed25519.pub\n"
+              f"  2. re-run with --signing-key ~/.ssh/id_ed25519 (or set "
+              "$SECURITY_COUNCIL_SIGNING_KEY / decisions.signing_key in config)\n"
+              "  or set decisions.require_signatures: warn to record unsigned decisions.",
+              file=sys.stderr)
+        return None, None
+    return None, policy
+
+
+def _signing_failed(e) -> int:
+    print(f"error: signing failed: {e}", file=sys.stderr)
+    return EXIT_USAGE
+
+
 def _run_dir(args) -> Path | None:
     if getattr(args, "run", None):
         d = Path(args.run)
@@ -413,11 +456,20 @@ def cmd_outcome_mark(args) -> int:
     verdict = {"tp": "true_positive", "fp": "false_positive"}.get(args.verdict, args.verdict)
     operator = args.operator or __import__("getpass").getuser()
     fp = row.get("fingerprints") or {}
-    _store(args).mark_outcome(root_cause=fp.get("root_cause", ""), finding_id=row["id"],
-                              verdict=verdict, operator=operator, note=args.note,
-                              now_iso=_now_iso(), title=row.get("title", ""),
-                              context_hash=fp.get("context_hash", ""))
-    print(f"marked {row['id']} {verdict} (operator {operator}); "
+    store = _store(args)
+    signer, policy = _signer(args, store, action="outcome mark")
+    if policy is None:
+        return EXIT_USAGE
+    from .signing import SigningError
+    try:
+        store.mark_outcome(root_cause=fp.get("root_cause", ""), finding_id=row["id"],
+                           verdict=verdict, operator=operator, note=args.note,
+                           now_iso=_now_iso(), title=row.get("title", ""),
+                           context_hash=fp.get("context_hash", ""), signer=signer)
+    except SigningError as e:
+        return _signing_failed(e)
+    print(f"marked {row['id']} {verdict} (operator {operator}, "
+          f"{'signed' if signer else 'UNSIGNED'}); "
           f"feeds the score history term for {fp.get('root_cause')}")
     return 0
 
@@ -437,21 +489,103 @@ def cmd_baseline_set(args) -> int:
               "Run a full scan and baseline that.", file=sys.stderr)
         return EXIT_USAGE
     rows = json.loads((run_dir / "findings.json").read_text())
-    bl = _store(args).set_baseline(rows, run_id=run_dir.name, now_iso=_now_iso(),
-                                   operator=args.operator)
-    print(f"baseline set from run {run_dir.name}: {len(bl['findings'])} findings")
+    store = _store(args)
+    signer, policy = _signer(args, store, action="baseline set")
+    if policy is None:
+        return EXIT_USAGE
+    if signer and not args.operator:
+        print("error: --operator is required to sign the baseline (it is the signing "
+              "principal)", file=sys.stderr)
+        return EXIT_USAGE
+    from .signing import SigningError
+    try:
+        bl = store.set_baseline(rows, run_id=run_dir.name, now_iso=_now_iso(),
+                                operator=args.operator, signer=signer)
+    except SigningError as e:
+        return _signing_failed(e)
+    print(f"baseline set from run {run_dir.name}: {len(bl['findings'])} findings "
+          f"({'signed' if signer else 'UNSIGNED'})")
     return 0
 
 
 def cmd_baseline_show(args) -> int:
-    bl = _store(args).load_baseline()
+    bl = _store(args).load_baseline(signature_policy="enforce")
     if bl is None:
         print("no baseline set (security-council baseline set)", file=sys.stderr)
         return 1
     print(json.dumps({"run_id": bl.get("run_id"), "set_at": bl.get("set_at"),
                       "operator": bl.get("operator"),
-                      "findings": len(bl.get("findings") or [])}, indent=2))
+                      "findings": len(bl.get("findings") or []),
+                      "integrity": bl.get("integrity"),
+                      "signature": bl.get("signature_status")}, indent=2))
     return 0
+
+
+def cmd_decisions_init(args) -> int:
+    if _nested_write_refused("decisions init"):
+        return EXIT_USAGE
+    store = _store(args)
+    fresh = store.store_meta() is None
+    meta = store.init_store(operator=args.operator, now_iso=_now_iso())
+    print(f"{'initialised' if fresh else 'already initialised'}: store {meta['store_id']} "
+          f"at {store.store_path}\n"
+          f"roster: {store.allowed_signers_path} "
+          f"({len(store.trusted_principals())} signer(s))\n"
+          "next: security-council decisions trust --principal <operator> "
+          "--key ~/.ssh/id_ed25519.pub")
+    return 0
+
+
+def cmd_decisions_trust(args) -> int:
+    if _nested_write_refused("decisions trust"):
+        return EXIT_USAGE
+    from .signing import SigningError
+    key = Path(os.path.expanduser(args.key))
+    if not key.is_file():
+        print(f"error: public key file not found: {key}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        line = _store(args).add_trusted_signer(principal=args.principal,
+                                               pubkey_text=key.read_text(),
+                                               now_iso=_now_iso(), operator=args.operator)
+    except SigningError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    print(f"trusted: {line.strip()}\n"
+          "commit .security-council/allowed_signers and store.json with the decisions, "
+          "behind CODEOWNERS + required review.")
+    return 0
+
+
+def cmd_decisions_verify(args) -> int:
+    from . import signing
+    store = _store(args)
+    config = load_config(Path(args.target).resolve())
+    policy = signing.resolve_policy(config, store_initialised=store.store_meta() is not None,
+                                    store_has_decisions=store.has_decisions(),
+                                    now_iso=_now_iso())
+    level = args.policy or policy["effective"]
+    audit = store.verify_store(signature_policy=level)
+    audit["policy_resolution"] = policy
+    if args.json:
+        print(json.dumps(audit, indent=2))
+    else:
+        s = audit["summary"]
+        print(f"store {audit['store_id'] or '(not initialised)'} · policy {level} "
+              f"(configured {policy['configured']}: {policy['reason']})")
+        print(f"verifier: {audit['verifier'] or 'MISSING'} · roster: "
+              f"{', '.join(audit['roster']) or '(empty)'}")
+        for r in audit["rows"]:
+            who = r.get("operator") or "—"
+            what = r.get("lifecycle") or r.get("verdict") or r.get("kind")
+            mark = "ok " if r["applies"] else "REFUSED"
+            print(f"  {mark:<8} {r['kind']:<12} {r['signature']:<12} {what:<16} {who:<20} "
+                  f"{(r.get('finding_id') or r.get('run_id') or '')[:20]:<20} "
+                  f"{r.get('detail', '')[:60]}")
+        print(f"{s['rows']} decision(s): {s['verified']} verified · {s['not_verified']} not "
+              f"verified · {s['machine']} machine · {s['would_refuse']} would be refused "
+              f"under {level}")
+    return 1 if audit["summary"]["would_refuse"] else 0
 
 
 def cmd_suppress(args) -> int:
@@ -463,13 +597,26 @@ def cmd_suppress(args) -> int:
     _, row = resolved
     fp = row.get("fingerprints") or {}
     lifecycle = "accepted_risk" if args.accept_risk else "suppressed"
-    _store(args).record_human_decision(
-        root_cause=fp.get("root_cause", ""), context_hash=fp.get("context_hash", ""),
-        finding_id=row["id"], title=row.get("title", ""), operator=args.operator,
-        justification=args.justification, now_iso=_now_iso(), lifecycle=lifecycle,
-        expires_days=args.expires_days, vex_justification=args.vex_justification)
-    print(f"recorded human {lifecycle} for {row['id']} (root cause {fp.get('root_cause')}); "
+    store = _store(args)
+    signer, policy = _signer(args, store, action="suppress")
+    if policy is None:
+        return EXIT_USAGE
+    from .signing import SigningError
+    try:
+        store.record_human_decision(
+            root_cause=fp.get("root_cause", ""), context_hash=fp.get("context_hash", ""),
+            finding_id=row["id"], title=row.get("title", ""), operator=args.operator,
+            justification=args.justification, now_iso=_now_iso(), lifecycle=lifecycle,
+            expires_days=args.expires_days, vex_justification=args.vex_justification,
+            signer=signer)
+    except SigningError as e:
+        return _signing_failed(e)
+    print(f"recorded human {lifecycle} for {row['id']} (root cause {fp.get('root_cause')}, "
+          f"{'signed by ' + args.operator if signer else 'UNSIGNED'}); "
           f"applies on future scans, expires in {args.expires_days} days")
+    if not signer and policy["effective"] == "warn":
+        print("note: this decision is unsigned; scans will apply it but flag it "
+              f"({policy['reason']})", file=sys.stderr)
     return 0
 
 
@@ -572,6 +719,12 @@ def cmd_calibrate(args) -> int:
               f"Brier {m['brier_preclamp']}/{m['brier_postclamp']}")
     print("  enable with: score.calibration: <path> (or 'auto' for the packaged record)")
     return 0
+
+
+_SIGNING_KEY_HELP = ("SSH key to sign this decision with (ssh-keygen -Y; private key, or a "
+                     ".pub whose key is in ssh-agent). Defaults to $SECURITY_COUNCIL_SIGNING_KEY, "
+                     "then decisions.signing_key in config. Required when "
+                     "require_signatures resolves to enforce.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -701,6 +854,7 @@ def build_parser() -> argparse.ArgumentParser:
     om.add_argument("--operator", help="defaults to the OS user")
     om.add_argument("--run", help="run directory (default: latest under the target)")
     om.add_argument("--target", default=".", help="repo whose decision store to use")
+    om.add_argument("--signing-key", help=_SIGNING_KEY_HELP)
     om.set_defaults(fn=cmd_outcome_mark)
 
     b = sub.add_parser("baseline", help="manage the operator-gated baseline")
@@ -709,7 +863,32 @@ def build_parser() -> argparse.ArgumentParser:
     bs.add_argument("--run", help="run directory (default: latest under the target)")
     bs.add_argument("--target", default=".")
     bs.add_argument("--operator")
+    bs.add_argument("--signing-key", help=_SIGNING_KEY_HELP)
     bs.set_defaults(fn=cmd_baseline_set)
+
+    dc = sub.add_parser("decisions", help="decision-store identity, signer roster, and "
+                                          "signature audit (R9 signing lane)")
+    dsub = dc.add_subparsers(dest="action", required=True)
+    di = dsub.add_parser("init", help="give the store an identity (store.json) and an empty "
+                                      "allowed_signers roster; idempotent")
+    di.add_argument("--target", default=".")
+    di.add_argument("--operator")
+    di.set_defaults(fn=cmd_decisions_init)
+    dt = dsub.add_parser("trust", help="add an operator's SSH public key to allowed_signers "
+                                       "(the principal is the --operator name they sign with)")
+    dt.add_argument("--principal", required=True,
+                    help="one token, e.g. an email; must equal the operator on their decisions")
+    dt.add_argument("--key", required=True, help="path to the .pub file")
+    dt.add_argument("--target", default=".")
+    dt.add_argument("--operator", help="who is adding the signer (recorded on init)")
+    dt.set_defaults(fn=cmd_decisions_trust)
+    dv = dsub.add_parser("verify", help="check every stored decision's signature; exit 1 if "
+                                        "any would be refused under the effective policy")
+    dv.add_argument("--target", default=".")
+    dv.add_argument("--policy", choices=["off", "warn", "enforce"],
+                    help="audit against this level instead of the configured one")
+    dv.add_argument("--json", action="store_true")
+    dv.set_defaults(fn=cmd_decisions_verify)
     bw = bsub.add_parser("show", help="show the current baseline pointer")
     bw.add_argument("--target", default=".")
     bw.set_defaults(fn=cmd_baseline_show)
@@ -728,8 +907,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="also mark OpenVEX not_affected with this justification")
     sp.add_argument("--run", help="run directory (default: latest under the target)")
     sp.add_argument("--target", default=".")
+    sp.add_argument("--signing-key", help=_SIGNING_KEY_HELP)
     sp.set_defaults(fn=cmd_suppress)
     return p
+
 
 
 def main(argv=None) -> int:

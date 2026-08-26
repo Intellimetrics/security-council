@@ -47,6 +47,14 @@ reports and artifacts publish (`artifacts: when: always`), and the job exits
 with the captured code last. Suppressed/demoted findings are withheld from
 both reports per the disposition rules ([../triage.md](../triage.md)).
 
+## Signed decisions
+
+If the project commits its decision store, commit `store.json` and
+`allowed_signers` too and protect the paths with CODEOWNERS + approval
+rules. The `ci` profile enforces signatures — an unverifiable suppression or
+baseline is not applied and the finding gates. See
+[../signing.md](../signing.md).
+
 *Status: reports are validated against the official schema and the REST
 payloads are tested; the job template has not yet run on a real GitLab
 project — issue reports from real pipelines welcome.*

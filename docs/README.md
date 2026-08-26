@@ -19,7 +19,8 @@ baseline…) in plain language.
 existing repo's backlog manageable (`baseline set`).
 
 **"I run this day to day"** (triage, suppressions, ground truth)
-[triage.md](triage.md)
+[triage.md](triage.md) → [signing.md](signing.md) to sign those decisions
+with your SSH key so CI can verify who made them
 
 **"I want the AI reviewers"**
 [arms.md](arms.md) for setup and costs — but read
@@ -49,6 +50,7 @@ the council design reviews under [reviews/](reviews/)
 | [arms.md](arms.md) | Every scanner/AI arm: cost, prerequisites, options, attestation |
 | [data-boundaries.md](data-boundaries.md) | Exactly what leaves your machine, per arm |
 | [triage.md](triage.md) | Baselines, suppressions, outcome marks, shadow mode, team sharing |
+| [signing.md](signing.md) | Sign decisions with your SSH key; what `enforce`/`warn` do; what signing does and does not buy |
 | [ci/](ci/) | GitHub · Azure DevOps Server · GitLab guides |
 | [compliance/emass.md](compliance/emass.md) | DoD eMASS static-code-scans export |
 | [safety-model.md](safety-model.md) | Invariants, guardrails, scoring — with code pointers |

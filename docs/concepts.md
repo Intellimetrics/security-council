@@ -68,6 +68,15 @@ A snapshot of the findings you've decided to live with for now. With
 that's how you adopt the tool on a codebase with an existing backlog without
 turning CI permanently red. [triage.md](triage.md).
 
+### Signed decision
+A suppression, baseline or ground-truth mark that carries a signature made
+with the operator's **SSH key** (the same key that pushes to your git host).
+Every scan checks it against `allowed_signers`, a short list of trusted keys
+committed with the decisions. If it doesn't check out — no signature, edited
+afterwards, unknown key, copied from another repo — the decision is not
+applied and the finding comes back. It proves *who* decided, not that they
+were right. [signing.md](signing.md).
+
 ### Validator panel
 An optional cross-examination step (`--validate`): for each finding, three
 AI seats on **different vendors** argue it out — a prosecutor (argues it's

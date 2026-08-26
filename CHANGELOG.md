@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Added — signed decisions (R9 signing lane)
+
+- Suppressions, accepted-risk decisions, outcome marks and baselines can be
+  signed with the operator's SSH key (`ssh-keygen -Y`, OpenSSH ≥ 8.2; no new
+  dependency) and are verified on every scan against a committed
+  `allowed_signers` roster. `security-council decisions init|trust|verify`;
+  `--signing-key` (or `$SECURITY_COUNCIL_SIGNING_KEY` / `decisions.signing_key`)
+  on `suppress`, `outcome mark`, `baseline set`; MCP `signing_key` argument and
+  `sc_decisions_verify` tool. `doctor` reports the verifier.
+- `decisions.require_signatures: auto|enforce|warn|off`. Under `enforce` an
+  unsigned, tampered, untrusted, foreign (copied from another repo) or
+  unverifiable decision is **not applied** — the finding reappears and gates;
+  when a signature verifies, the signed expiry/lifecycle/context hash are what
+  get applied. `ci` and `gov` profiles enforce. Default `auto`: enforce for
+  new or initialised stores, warn (loudly) for pre-existing unsigned stores
+  until 2027-01-01.
+- Manifest `signature_policy` (configured, effective, reason, verifier, store
+  id, trusted principals), a `signature` on every `prior_decisions` row and on
+  `baseline_delta`, `history_audit`; the summary shows the level that ran, a
+  Signature column on reapplied suppressions, and a "refused" table.
+- New page `docs/signing.md`; updates to triage, safety-model, FAQ, concepts,
+  CI guides, MCP and config reference.
+
+### Changed
+
+- Machine (auto) suppressions in the store replay only while the current
+  config still arms auto-suppression (a forged `kind: auto` record no longer
+  applies in a repo that never enabled it).
+- On a fresh store the default policy resolves to `enforce`, so an unsigned
+  `suppress`/`outcome mark`/`baseline set` is refused up front with the setup
+  steps; set `decisions.require_signatures: warn` to keep recording unsigned
+  decisions.
+
+
 ## 0.1.0 — 2026-08-25
 
 First release. A multi-arm security scanner: deterministic scanners (semgrep,

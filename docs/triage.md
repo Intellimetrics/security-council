@@ -50,6 +50,11 @@ What you get, structurally:
 Future scans reapply it automatically (`prior_decisions` in the manifest,
 "Decision store" line in the summary).
 
+Add `--signing-key ~/.ssh/id_ed25519` to sign the decision with your SSH key
+(or set `SECURITY_COUNCIL_SIGNING_KEY`). On a new repo this is required by
+default; the command tells you the two setup steps if you skip it. See
+[signing.md](signing.md).
+
 ## Recording ground truth (`outcome mark`)
 
 ```bash
@@ -90,8 +95,14 @@ runs/<id>/...                       # keep these ignored
 ```
 
 This repo's own `.gitignore` excludes the whole directory. A team that wants
-shared suppressions/baselines should un-ignore `decisions/` and `baseline/`
-in *their* repo and commit them — the records are plain, reviewable JSON, so
-suppression changes show up in code review like any other change. Honest
-limitation: records are not cryptographically signed yet; git history is the
-audit trail.
+shared suppressions/baselines should un-ignore `decisions/`, `baseline/`,
+`store.json` and `allowed_signers` in *their* repo and commit them — the
+records are plain, reviewable JSON, so suppression changes show up in code
+review like any other change.
+
+Decisions can be **signed with the operator's SSH key** and are verified on
+every scan against the committed `allowed_signers` roster; under
+`require_signatures: enforce` (the `ci`/`gov` profiles) an unsigned or
+tampered decision is not applied and the finding gates. Setup is three
+commands: [signing.md](signing.md). Put the store paths behind CODEOWNERS +
+required review — that is what makes the signatures load-bearing.

@@ -36,6 +36,17 @@ DEFAULT_CONFIG: dict = {
                "auto_suppress": False, "accept_suppression_risk": False,
                "shadow_runs": 5, "suppress_below": 0.10,
                "suppression_expiry_days": 90, "gate_baseline": "all"},
+    # Decision-store signing (R9 signing lane). require_signatures:
+    #   auto    (default) per-store: enforce for a store initialised for
+    #           signing or with no decisions yet; warn for a pre-existing
+    #           unsigned store until the sunset date in signing.py
+    #   enforce a human suppression / outcome mark / baseline applies ONLY
+    #           when its ssh-keygen signature verifies against allowed_signers
+    #   warn    everything applies; unsigned decisions are reported loudly
+    #   off     no verification
+    # signing_key: path used by `suppress`, `outcome mark`, `baseline set`
+    # (flag --signing-key and $SECURITY_COUNCIL_SIGNING_KEY override it).
+    "decisions": {"require_signatures": "auto", "signing_key": None},
     "reports": {"outdir": ".security-council/runs"},
 }
 
@@ -50,7 +61,10 @@ PROFILES: dict[str, dict] = {
     "quick": {},
     # CI gate posture: same $0 arms; only findings NEW since the operator-set
     # baseline fail the build (no baseline set -> everything gates, fail-safe).
-    "ci": {"policy": {"gate_baseline": "new"}},
+    # R9 Q2: the gate profiles ENFORCE decision signatures — the level comes
+    # from config, never from the store, so deleting store.json cannot lower it.
+    "ci": {"policy": {"gate_baseline": "new"},
+           "decisions": {"require_signatures": "enforce"}},
     # Deep audit: adds the three house LLM-CLI reviewer arms (one per vendor
     # family, so corroboration is cross-vendor) and turns on the validation
     # panel. Real vendor cost, on your CLI subscriptions.
@@ -66,7 +80,8 @@ PROFILES: dict[str, dict] = {
              "defaults": {"validate": True}},
     # Government / compliance posture: $0 arms + CI-style baseline gating; the
     # paperwork itself comes from `report <run> --bundle gov` afterwards.
-    "gov": {"policy": {"gate_baseline": "new"}},
+    "gov": {"policy": {"gate_baseline": "new"},
+            "decisions": {"require_signatures": "enforce"}},
 }
 
 
@@ -189,6 +204,20 @@ def validate_config(data: dict) -> list[str]:
             v = pol["suppress_below"]
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1:
                 out.append(f"policy.suppress_below must be a number in [0, 1], got {v!r}")
+    dec = data.get("decisions")
+    if dec is not None:
+        if not isinstance(dec, dict):
+            return out + ["decisions must be a mapping"]
+        for k in dec:
+            if k not in DEFAULT_CONFIG["decisions"]:
+                out.append(f"unknown decisions key {k!r}")
+        lvl = dec.get("require_signatures")
+        if lvl is not None and lvl not in ("off", "warn", "enforce", "auto"):
+            out.append("decisions.require_signatures must be one of "
+                       f"['auto', 'enforce', 'off', 'warn'], got {lvl!r}")
+        key = dec.get("signing_key")
+        if key is not None and not isinstance(key, str):
+            out.append(f"decisions.signing_key must be a path string, got {key!r}")
     arms = data.get("arms")
     if arms is not None:
         if not isinstance(arms, dict):

@@ -139,6 +139,10 @@ def config_text(profile: str) -> str:
             "  gate_baseline: new       # only findings NEW since `baseline set` gate;",
             "                           # without a baseline everything gates (fail-safe)",
             "",
+            "decisions:",
+            "  require_signatures: enforce   # suppressions/baselines apply only with a",
+            "                                # verified ssh-keygen signature (see docs/signing.md)",
+            "",
         ]
     else:
         body += [

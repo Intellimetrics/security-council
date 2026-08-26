@@ -197,9 +197,50 @@ def sc_baseline(arguments: dict) -> dict:
     if run_dir is None:
         raise ValueError("no run with findings.json found (pass run)")
     rows = json.loads((run_dir / "findings.json").read_text())
+    signer = _mcp_signer(arguments, target, store, action="baseline set")
+    if signer and not arguments.get("operator"):
+        raise ValueError("operator is required to sign the baseline (it is the principal)")
     bl = store.set_baseline(rows, run_id=run_dir.name, now_iso=cli._now_iso(),
-                            operator=arguments.get("operator"))
-    return {"set": True, "run_id": bl["run_id"], "findings": len(bl["findings"])}
+                            operator=arguments.get("operator"), signer=signer)
+    return {"set": True, "run_id": bl["run_id"], "findings": len(bl["findings"]),
+            "signed": signer is not None}
+
+
+def _mcp_signer(arguments: dict, target: Path, store, *, action: str):
+    """Same resolution as the CLI (argument > env > config); under `enforce` an
+    unsigned write is refused with the steps to fix it. Signing over MCP needs
+    a key without a passphrase prompt (there is no terminal): a .pub whose
+    private half is in ssh-agent is the recommended shape."""
+    from . import cli, signing
+    from .decisions import Signer
+    config = load_config(target)
+    policy = signing.resolve_policy(config, store_initialised=store.store_meta() is not None,
+                                    store_has_decisions=store.has_decisions(),
+                                    now_iso=cli._now_iso())
+    key = (arguments.get("signing_key") or os.environ.get("SECURITY_COUNCIL_SIGNING_KEY")
+           or (config.get("decisions") or {}).get("signing_key"))
+    if key:
+        return Signer(key_path=str(key))
+    if policy["effective"] == "enforce":
+        raise ValueError(f"{action} must be signed here (require_signatures resolves to "
+                         f"enforce: {policy['reason']}). Pass signing_key (an SSH key trusted "
+                         "via `security-council decisions trust`), or set "
+                         "decisions.require_signatures: warn.")
+    return None
+
+
+def sc_decisions_verify(arguments: dict) -> dict:
+    from . import cli, signing
+    from .decisions import DecisionStore
+    target = _resolve_dir(arguments, "target")
+    store = DecisionStore(target / ".security-council")
+    config = load_config(target)
+    policy = signing.resolve_policy(config, store_initialised=store.store_meta() is not None,
+                                    store_has_decisions=store.has_decisions(),
+                                    now_iso=cli._now_iso())
+    audit = store.verify_store(signature_policy=arguments.get("policy") or policy["effective"])
+    audit["policy_resolution"] = policy
+    return audit
 
 
 def _resolve_finding(arguments: dict, target: Path) -> tuple[Any, dict]:
@@ -226,14 +267,17 @@ def sc_suppress(arguments: dict) -> dict:
     _, row = _resolve_finding(arguments, target)
     fp = row.get("fingerprints") or {}
     lifecycle = "accepted_risk" if arguments.get("accept_risk") else "suppressed"
-    DecisionStore(target / ".security-council").record_human_decision(
+    store = DecisionStore(target / ".security-council")
+    signer = _mcp_signer(arguments, target, store, action="suppress")
+    store.record_human_decision(
         root_cause=fp.get("root_cause", ""), context_hash=fp.get("context_hash", ""),
         finding_id=row["id"], title=row.get("title", ""), operator=arguments["operator"],
         justification=arguments["justification"], now_iso=cli._now_iso(),
         lifecycle=lifecycle, expires_days=int(arguments.get("expires_days") or 90),
-        vex_justification=arguments.get("vex_justification"))
+        vex_justification=arguments.get("vex_justification"), signer=signer)
     return {"recorded": lifecycle, "finding_id": row["id"],
-            "root_cause": fp.get("root_cause"), "applies": "future scans"}
+            "root_cause": fp.get("root_cause"), "applies": "future scans",
+            "signed": signer is not None}
 
 
 def sc_outcome_mark(arguments: dict) -> dict:
@@ -247,12 +291,15 @@ def sc_outcome_mark(arguments: dict) -> dict:
         raise ValueError("operator is required (outcome marks feed the score history term)")
     _, row = _resolve_finding(arguments, target)
     fp = row.get("fingerprints") or {}
-    DecisionStore(target / ".security-council").mark_outcome(
+    store = DecisionStore(target / ".security-council")
+    signer = _mcp_signer(arguments, target, store, action="outcome mark")
+    store.mark_outcome(
         root_cause=fp.get("root_cause", ""), finding_id=row["id"], verdict=verdict,
         operator=arguments["operator"], note=arguments.get("note") or "",
         now_iso=cli._now_iso(), title=row.get("title", ""),
-        context_hash=fp.get("context_hash", ""))
-    return {"marked": verdict, "finding_id": row["id"], "root_cause": fp.get("root_cause")}
+        context_hash=fp.get("context_hash", ""), signer=signer)
+    return {"marked": verdict, "finding_id": row["id"], "root_cause": fp.get("root_cause"),
+            "signed": signer is not None}
 
 
 def sc_config(arguments: dict) -> dict:
@@ -278,6 +325,13 @@ def _obj(props: dict, required: list[str] | None = None) -> dict:
     return out
 
 
+_SIGNING_KEY_PROP = {"type": "string",
+                     "description": "SSH key to sign with (ssh-keygen -Y): a .pub whose private "
+                                    "half is in ssh-agent, or an unencrypted private key. "
+                                    "Defaults to $SECURITY_COUNCIL_SIGNING_KEY, then "
+                                    "decisions.signing_key. Required under require_signatures: "
+                                    "enforce."}
+
 TOOLS: list[tuple[str, str, dict, Any]] = [
     ("sc_scan",
      "Scan a repository with the configured arms; returns run summary + exit code. "
@@ -302,7 +356,8 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
      _obj({"target": _target_prop()}), sc_last_run),
     ("sc_baseline", "Show or set the operator-gated baseline for a target.",
      _obj({"target": _target_prop(), "action": {"enum": ["set", "show"]},
-           "run": {"type": "string"}, "operator": {"type": "string"}}),
+           "run": {"type": "string"}, "operator": {"type": "string"},
+           "signing_key": _SIGNING_KEY_PROP}),
      sc_baseline),
     ("sc_suppress",
      "Record a HUMAN suppression/accepted-risk decision for a finding's root cause "
@@ -310,7 +365,8 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
      _obj({"target": _target_prop(), "finding_id": {"type": "string"},
            "operator": {"type": "string"}, "justification": {"type": "string"},
            "accept_risk": {"type": "boolean"}, "expires_days": {"type": "integer"},
-           "vex_justification": {"type": "string"}, "run": {"type": "string"}},
+           "vex_justification": {"type": "string"}, "run": {"type": "string"},
+           "signing_key": _SIGNING_KEY_PROP},
           ["finding_id", "operator", "justification"]),
      sc_suppress),
     ("sc_outcome_mark",
@@ -319,9 +375,14 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
      _obj({"target": _target_prop(), "finding_id": {"type": "string"},
            "verdict": {"enum": ["true_positive", "false_positive", "tp", "fp"]},
            "operator": {"type": "string"}, "note": {"type": "string"},
-           "run": {"type": "string"}},
+           "run": {"type": "string"}, "signing_key": _SIGNING_KEY_PROP},
           ["finding_id", "verdict", "operator"]),
      sc_outcome_mark),
+    ("sc_decisions_verify",
+     "Audit every stored decision's ssh-keygen signature against allowed_signers and say "
+     "which the effective require_signatures policy would refuse.",
+     _obj({"target": _target_prop(), "policy": {"enum": ["off", "warn", "enforce"]}}),
+     sc_decisions_verify),
     ("sc_config", "Effective merged configuration for a target.",
      _obj({"target": _target_prop()}), sc_config),
 ]

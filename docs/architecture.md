@@ -97,6 +97,7 @@ security_council/
   validate/                   # panel via llm-council subprocess
   score.py policy.py          # log-odds confidence + guardrails G1-G8
   decisions.py                # decision store, baseline, shadow counter
+  signing.py                  # ssh-keygen -Y signing/verification + policy (R9)
   eval/                       # replay eval gate (metrics + runner)
   export/                     # sarif, markdown, emass, gitlab
   ci/                         # azure_devops, gitlab glue

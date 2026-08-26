@@ -39,7 +39,15 @@ wherever the extra is installed.
 | `sc_baseline` | Show or set the operator baseline |
 | `sc_suppress` | Record a **human** suppression/accepted-risk (operator + justification required, expiring, root-cause-scoped) |
 | `sc_outcome_mark` | Record ground truth (tp/fp) — feeds the scoring history term |
+| `sc_decisions_verify` | Audit every stored decision's signature against `allowed_signers`; says which the effective policy would refuse |
 | `sc_config` | Effective merged configuration |
+
+`sc_baseline` (set), `sc_suppress` and `sc_outcome_mark` accept `signing_key`
+and honour `$SECURITY_COUNCIL_SIGNING_KEY` / `decisions.signing_key`; under
+`require_signatures: enforce` a write without one is refused with the steps to
+fix it. There is no terminal for a passphrase prompt over MCP, so pass a
+`.pub` whose private half is loaded in `ssh-agent`, or an unencrypted key.
+See [signing.md](signing.md).
 
 Handler errors come back as `isError` tool results carrying the real message
 (not sanitized protocol errors).

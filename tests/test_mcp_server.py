@@ -5,7 +5,7 @@ import json
 import pytest
 
 from security_council import mcp_server as srv
-from tests.test_orchestrator import FakeArm, _finding as orch_finding
+from tests.test_orchestrator import FakeArm, _allow_unsigned, _finding as orch_finding
 
 NOW = "2026-08-22T00:00:00Z"
 
@@ -58,6 +58,7 @@ def test_unknown_tool_and_unknown_arm(root):
 
 def test_scan_report_lastrun_baseline_suppress_flow(root, monkeypatch):
     _fake_arms(monkeypatch)
+    _allow_unsigned(root)          # this flow records UNSIGNED decisions
     out = srv.call_tool("sc_scan", {"arms": "semgrep"})
     assert out["exit_code"] == 1 and out["counts"]["total"] == 1
 
@@ -123,7 +124,7 @@ def test_sc_doctor_reports_every_arm_without_raising(root, monkeypatch):
 def test_tool_registry_schemas_are_complete(root):
     names = [t[0] for t in srv.TOOLS]
     assert names == ["sc_scan", "sc_doctor", "sc_report", "sc_last_run", "sc_baseline",
-                     "sc_suppress", "sc_outcome_mark", "sc_config"]
+                     "sc_suppress", "sc_outcome_mark", "sc_decisions_verify", "sc_config"]
     for name, desc, schema, fn in srv.TOOLS:
         assert desc and schema["type"] == "object"
         assert schema["additionalProperties"] is False

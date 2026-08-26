@@ -56,7 +56,19 @@ class FakeArm:
 def _run(arms, tmp_path, **policy):
     cfg = {**DEFAULT_CONFIG}
     cfg["policy"] = {**DEFAULT_CONFIG["policy"], **policy}
+    # These tests exercise gating/coverage with UNSIGNED stored decisions. Pin
+    # the signature level so the suite does not flip when `auto` sunsets to
+    # `enforce` (signing.WARN_SUNSET); tests/test_signing.py covers `auto`
+    # and `enforce` explicitly, on both sides of that date.
+    cfg["decisions"] = {**DEFAULT_CONFIG["decisions"], "require_signatures": "warn"}
     return run_scan(tmp_path, arms, cfg, out_dir=tmp_path / "out")
+
+
+def _allow_unsigned(target):
+    """Write the target config the CLI/MCP write paths read, so an unsigned
+    `suppress` / `outcome mark` / `baseline set` is recorded (not refused)."""
+    (target / ".security-council.yaml").write_text(
+        "decisions:\n  require_signatures: warn\n")
 
 
 def test_two_arms_cluster_and_gate_high(tmp_path):

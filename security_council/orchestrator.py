@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__, calibration as calibration_mod, decisions as decisions_mod, \
-    entitlements as ent_mod, policy as policy_mod
+    entitlements as ent_mod, policy as policy_mod, signing as signing_mod
 from .arms.base import Arm, ArmResult
 from .cluster import cluster_findings, merge_cluster
 from .export import markdown, sarif
@@ -249,6 +249,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
     # a full-tree scanner's findings never get corroborated against a diff-scoped
     # arm that never looked at the same code.
     pre_degr: list[dict] = []
+    history_audit: list[dict] = []
     if diff is not None:
         run_arms = [a for a in arms if getattr(a, "supports_diff", False)]
         for a in arms:
@@ -295,7 +296,41 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         # BEFORE validation, so suppressed findings don't burn validator budget and
         # reopened ones get re-validated (G8)
         store = decisions_mod.DecisionStore(target / ".security-council")
-        prior_decisions = store.apply_prior_decisions(merged, now_iso=collected_at)
+        # R9 signing lane: the level comes from OPERATOR config (defaults <
+        # profile < config file), resolved once here and recorded in the
+        # manifest with its reason. Machine (auto) suppressions replay only
+        # while the operator's standing double opt-in still arms them.
+        sig_policy = signing_mod.resolve_policy(
+            config, store_initialised=store.store_meta() is not None,
+            store_has_decisions=store.has_decisions(), now_iso=collected_at)
+        sig_policy["store_id"] = store.store_id()
+        sig_policy["trusted_principals"] = store.trusted_principals()
+        prior_decisions = store.apply_prior_decisions(
+            merged, now_iso=collected_at, signature_policy=sig_policy["effective"],
+            machine_replay=policy_mod.is_armed(config))
+        refused = [p for p in prior_decisions if p.get("action") == "refused_signature"]
+        if refused:
+            pre_degr.append({"kind": "decisions_refused_unsigned",
+                             "detail": f"{len(refused)} stored decision(s) not applied: "
+                                       "signature " + ", ".join(sorted({
+                                           str(p.get("signature")) for p in refused}))
+                                       + " (require_signatures: enforce); the findings "
+                                         "are open and gate. `security-council decisions "
+                                         "verify` lists them."})
+        warned = [p for p in prior_decisions if p.get("signature_warning")]
+        if warned:
+            # Q2: `warn` must be loud or it is functionally `off`
+            pre_degr.append({"kind": "decisions_applied_unsigned",
+                             "detail": f"{len(warned)} stored decision(s) applied WITHOUT a "
+                                       "verified signature (require_signatures: warn — "
+                                       f"{sig_policy['reason']}). Sign them or set "
+                                       "decisions.require_signatures: enforce."})
+        if (sig_policy["effective"] == "enforce" and sig_policy.get("verifier") is None
+                and any(p.get("signature") in (signing_mod.UNVERIFIABLE,) for p in refused)):
+            pre_degr.append({"kind": "signature_verifier_missing",
+                             "detail": "ssh-keygen -Y (OpenSSH >= 8.2) is not on PATH; "
+                                       "signed decisions cannot be checked and are refused "
+                                       "(fail-closed)."})
 
         if validate and merged:
             from .validate import panel as _vpanel
@@ -339,7 +374,13 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             # run has armed=False so this is 0 anyway) but reading two different
             # configs either side of one decision is the drift that keeps biting.
             prior_runs=_shadow_runs_completed(store, cfg_for_policy, out_dir, run_id) if armed else 0,
-            history=store.history_counts(), calibration=cal)
+            history=store.history_counts(signature_policy=sig_policy["effective"],
+                                         audit=history_audit), calibration=cal)
+        if history_audit and sig_policy["effective"] == "warn":
+            pre_degr.append({"kind": "outcome_marks_unsigned",
+                             "detail": f"{len(history_audit)} outcome mark(s) feeding the score "
+                                       "history term have no verified signature "
+                                       "(require_signatures: warn)."})
         if cal is not None:
             cal_meta["applied_findings"] = sum(
                 1 for d in decisions if d.score and "fitted_base" in d.score.terms)
@@ -351,7 +392,29 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         if armed:
             store.bump_armed_runs(cfg_for_policy, run_id=run_id, now_iso=decided_at)
 
-        baseline = store.load_baseline()
+        baseline = store.load_baseline(signature_policy=sig_policy["effective"])
+        if (baseline and baseline.get("integrity") == "intact"
+                and sig_policy["effective"] == "enforce"
+                and baseline.get("signature_status") != signing_mod.VERIFIED):
+            # R9 signing lane: an intact digest proves the file was not edited
+            # after it was written — not WHO wrote it. Under enforce the
+            # baseline must carry a verified operator signature, or it is no
+            # baseline and everything gates.
+            pre_degr.append({"kind": "baseline_refused",
+                             "detail": "baseline/latest.json signature "
+                                       f"{baseline.get('signature_status')} "
+                                       f"({baseline.get('signature_detail', '')[:120]}); "
+                                       "require_signatures is enforce, so the baseline is "
+                                       "ignored (all findings gate). Re-run `baseline set` "
+                                       "with --signing-key."})
+            baseline = None
+        elif (baseline and baseline.get("integrity") == "intact"
+                and sig_policy["effective"] == "warn"
+                and baseline.get("signature_status") != signing_mod.VERIFIED):
+            pre_degr.append({"kind": "baseline_unsigned",
+                             "detail": "baseline/latest.json applied WITHOUT a verified "
+                                       f"signature ({baseline.get('signature_status')}; "
+                                       "require_signatures: warn)."})
         if baseline and baseline.get("integrity") != "intact":
             # R9: the entry set must match the digest written by `baseline set`.
             # A mismatch means the file was edited afterwards; a MISSING digest
@@ -373,6 +436,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             baseline_delta["content_sha256"] = baseline.get("content_sha256_actual")
             baseline_delta["set_at"] = baseline.get("set_at")
             baseline_delta["operator"] = baseline.get("operator")
+            baseline_delta["signature"] = baseline.get("signature_status")
 
         # fix lane (M-V4a): serial, after the scan/policy phase, each job in its
         # own fenced fresh copy. Only fix open, non-refuted findings.
@@ -410,7 +474,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             degradations=degradations, exit_code=exit_code, scan_scope=scan_scope,
             disposition_actions=policy_mod.decisions_summary(decisions),
             baseline_delta=baseline_delta, prior_decisions=prior_decisions, artifacts=artifacts,
-            calibration=cal_meta,
+            calibration=cal_meta, signature_policy=sig_policy, history_audit=history_audit,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
                      (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
                       ("summary.md", "markdown"), ("manifest.json", "json"),

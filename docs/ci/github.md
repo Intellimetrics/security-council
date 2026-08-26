@@ -53,5 +53,16 @@ Possible but deliberate: the vendor CLIs need credentials in the runner and
 Most teams run deterministic arms on every PR and the deep profile on a
 schedule.
 
+## Signed decisions
+
+A team that commits `.security-council/decisions/` and `baseline/` so the
+gate honours its suppressions should also commit `store.json` and
+`allowed_signers`, and put all four paths behind CODEOWNERS + required
+review. The action's `ci` posture enforces signatures: a suppression or
+baseline whose `ssh-keygen` signature does not verify is not applied, and
+the finding gates. `security-council decisions verify` in a PR check makes
+a bad record fail early. Setup and what it does (and does not) buy:
+[../signing.md](../signing.md).
+
 *Status: the action is schema-validated and tested locally; it has not yet
 run in a real customer workflow — early issue reports welcome.*

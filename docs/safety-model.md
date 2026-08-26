@@ -102,23 +102,45 @@ Plus the meta-rule: **demote, never auto-close.** A refuted finding leaves
 the CI gate but stays open, renders as SARIF `suppressions[underReview]`, and
 appears in the summary's appendix.
 
-### The decision store is tamper-evident, not tamper-proof
+### The decision store: signed events, verified on every scan
 
 `.security-council/decisions/` and `baseline/latest.json` are plain local
 files that decide what does *not* gate. R9 found (and this project reproduced
 live) that a hand-written baseline could switch the CI gate off entirely — the
-fingerprints it needed are published in every SARIF report. That is closed:
-the baseline carries a content digest, and a baseline whose entries don't
-match it — **or that has no digest at all** — is refused, which means no
-baseline, which means everything gates.
+fingerprints it needed are published in every SARIF report. That is closed
+in two layers:
 
-Be clear about what this buys. The digest is a **tripwire**, not a signature:
-someone who can write the file can recompute it. What actually protects a
-shared store is putting `decisions/` and `baseline/` behind CODEOWNERS and
-required review, so every change to what gets hidden is a reviewed diff. Every
-reapplied suppression is also listed individually in the report — who, when,
-expiry, and how many times it has been silently reapplied — because an
-aggregate count is the thing nobody re-reads.
+1. **Tripwire.** The baseline carries a content digest; a baseline whose
+   entries don't match it — **or that has no digest at all** — is refused,
+   which means no baseline, which means everything gates. Someone who can
+   write the file can recompute the digest, so this only catches careless
+   edits.
+2. **Signatures** (`signing.py`, [signing.md](signing.md)). Every human
+   write — suppression, outcome mark, baseline — is an event signed with the
+   operator's SSH key (`ssh-keygen -Y`, no new dependency) over a fixed field
+   list bound to this store's id, and verified on every scan against the
+   committed `allowed_signers` roster with the principal = the claimed
+   operator. Under `require_signatures: enforce` (the `ci`/`gov` profiles;
+   the default for new stores) a decision that is unsigned, edited after
+   signing, signed by an untrusted key, or copied from another repository is
+   **not applied** — the finding reappears and gates. When a signature
+   verifies, the scan applies the **signed** expiry, lifecycle and context
+   hash, not the record's editable copy. Machine writes are never signed (a
+   signing key must not exist on CI runners), so an automatic suppression
+   replays only while the operator config still arms auto-suppression.
+
+Be clear about what this buys. A signature is **provenance, never
+assurance**: it attests who decided and that nothing changed since, not that
+the decision was right, and it cannot stop an insider who can write both the
+store and the roster. What makes it load-bearing is putting `decisions/`,
+`baseline/`, `store.json` and `allowed_signers` behind CODEOWNERS and
+required review, so every change to what gets hidden — and every new
+signer — is a reviewed diff. Every reapplied suppression is also listed
+individually in the report — who, signature status, when, expiry, and how
+many times it has been silently reapplied — because an aggregate count is
+the thing nobody re-reads. Residuals (replay of an unexpired signed record
+from git history; the `auto` level's warn period for pre-existing stores)
+are stated in [signing.md](signing.md).
 
 ## Scoring (`score.py`) — transparent, and honest about calibration
 
@@ -210,5 +232,6 @@ additionally proven to hold under an adversarial minimum-logit record.
   customer codebase.
 - Prompt-injection resistance is a tested regression (the fixture carries a
   labeled canary), not a guarantee.
-- The decision store is target-local and unsigned; git review is the audit
-  trail.
+- Decision signatures attest authorship and integrity, not correctness, and
+  only protect a store whose paths are behind required review; an insider
+  who can edit `allowed_signers` unreviewed can sign anything.

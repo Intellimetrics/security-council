@@ -252,22 +252,50 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
                 prov.append(f"digest {_code(str(bd['content_sha256'])[:12])}")
             if bd.get("integrity") == "unpinned":
                 prov.append("⚠ no integrity digest (created before pinning)")
+            if bd.get("signature") == "verified":
+                prov.append("signature verified")
+            elif bd.get("signature") and bd.get("signature") != "unchecked":
+                prov.append(f"⚠ signature {bd['signature']}")
             if prov:
                 out.append(f"  - baseline provenance: {' · '.join(prov)}")
+        # R9 signing lane: say which level RAN and why, every run. A `warn`
+        # nobody sees is `off`.
+        sp = manifest.get("signature_policy") or {}
+        if sp.get("effective") and sp.get("effective") != "off":
+            eff = sp["effective"]
+            line = (f"- **Decision signatures:** {eff}"
+                    + (f" (configured `{sp.get('configured')}`)"
+                       if sp.get("configured") not in (None, eff) else ""))
+            if eff == "warn":
+                line += f" — ⚠ unsigned decisions still apply: {sp.get('reason', '')}"
+            if not sp.get("verifier"):
+                line += " — ⚠ no ssh-keygen -Y on this machine (signatures cannot be checked)"
+            out.append(line)
         prior = manifest.get("prior_decisions") or []
         reapplied = [p for p in prior if str(p.get("action", "")).startswith("reapplied")]
         reopened = [p for p in prior if str(p.get("action", "")).startswith("reopened")]
         malformed = [p for p in prior if p.get("action") == "ignored_malformed"]
+        refused = [p for p in prior if p.get("action") == "refused_signature"]
+        unarmed = [p for p in prior if p.get("action") == "ignored_machine_unarmed"]
+        unsigned_applied = [p for p in reapplied if p.get("signature_warning")]
         if prior:
             bits = []
             if reapplied:
-                bits.append(f"{len(reapplied)} suppression(s) reapplied")
+                bits.append(f"{len(reapplied)} suppression(s) reapplied"
+                            + (f" — ⚠ {len(unsigned_applied)} WITHOUT a verified signature"
+                               if unsigned_applied else ""))
             for p in reopened:
                 why = "expired" if p["action"] == "reopened_expired" else "context drift"
                 bits.append(f"finding {_code(p.get('finding_id', '?'))} REOPENED ({why})")
             for p in malformed:
                 bits.append(f"finding {_code(p.get('finding_id', '?'))} decision IGNORED "
                             "(malformed record)")
+            for p in refused:
+                bits.append(f"finding {_code(p.get('finding_id', '?'))} decision REFUSED "
+                            f"(signature {p.get('signature')}) — open and gating")
+            for p in unarmed:
+                bits.append(f"finding {_code(p.get('finding_id', '?'))} machine decision "
+                            "not replayed (auto-suppression not armed)")
             out.append(f"- **Decision store:** {' · '.join(bits)}")
         out.append("")
     # R9: every reapplied suppression is listed individually. An aggregate count
@@ -278,23 +306,54 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
     if reapplied:
         out.append("### Suppressions reapplied from the decision store")
         out.append("")
-        out.append("_These findings were hidden from the gate by a stored operator decision. "
-                   "The store is unsigned local state: review this list._")
+        sp = manifest.get("signature_policy") or {}
+        if sp.get("effective") == "enforce":
+            out.append("_These findings were hidden from the gate by a stored operator "
+                       "decision whose signature verified against `allowed_signers`. A "
+                       "signature is provenance (who, what, when), not proof the decision "
+                       "was right: review this list._")
+        else:
+            out.append("_These findings were hidden from the gate by a stored operator decision. "
+                       "Signatures are not enforced for this store: review this list._")
         out.append("")
-        out.append("| Finding | Severity | Title | Decided by | On | Expires | Times reapplied |")
-        out.append("|---|---|---|---|---|---|---|")
+        out.append("| Finding | Severity | Title | Decided by | Signature | On | Expires | "
+                   "Times reapplied |")
+        out.append("|---|---|---|---|---|---|---|---|")
         for p in sorted(reapplied, key=lambda r: _SEV_RANK.get(r.get("severity"), 9)):
             n = p.get("reapplied_count", 1)
             stale = " ⚠ stale" if isinstance(n, int) and n >= 5 else ""
             ha = " 🔒 high-assurance" if p.get("high_assurance") else ""
             clamp = " (expiry shortened)" if p.get("expiry_clamped") else ""
+            sig = str(p.get("signature") or "unchecked")
+            sig_cell = ("✓ verified" if sig == "verified" else
+                        "machine" if sig == "machine" else
+                        "—" if sig == "unchecked" else f"⚠ {sig}")
             out.append(f"| {_code(p.get('finding_id', '?'))} | "
                        f"{_sev_badge(str(p.get('severity', 'info')))}{ha} | "
                        f"{_cell(p.get('title', ''), 60)} | "
                        f"{_cell(p.get('operator') or 'unattributed')} | "
+                       f"{sig_cell} | "
                        f"{_cell(str(p.get('decided_at') or '—')[:10])} | "
                        f"{_cell(str(p.get('expires_at') or '—')[:10])}{clamp} | "
                        f"{n}{stale} |")
+        out.append("")
+    refused = [p for p in prior if p.get("action") == "refused_signature"]
+    if refused:
+        out.append("### Stored decisions refused (signature not verified)")
+        out.append("")
+        out.append("_`require_signatures: enforce` — these decisions exist in the store but "
+                   "did not verify, so they were NOT applied; the findings are open and "
+                   "gate. `security-council decisions verify` shows the detail._")
+        out.append("")
+        out.append("| Finding | Severity | Title | Claimed operator | Signature | Detail |")
+        out.append("|---|---|---|---|---|---|")
+        for p in sorted(refused, key=lambda r: _SEV_RANK.get(r.get("severity"), 9)):
+            out.append(f"| {_code(p.get('finding_id', '?'))} | "
+                       f"{_sev_badge(str(p.get('severity', 'info')))} | "
+                       f"{_cell(p.get('title', ''), 60)} | "
+                       f"{_cell(p.get('operator') or 'unattributed')} | "
+                       f"{_cell(str(p.get('signature')))} | "
+                       f"{_cell(p.get('detail') or '', 80)} |")
         out.append("")
     degr = manifest.get("degradations") or []
     if degr:

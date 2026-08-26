@@ -177,6 +177,10 @@ promises:
   and why — the code literally cannot construct one without it.
 - Human suppressions expire (90 days) and cancel themselves if the code
   around the finding changes.
+- Suppressions, baselines and ground-truth marks are **signed with the
+  operator's SSH key** and verified on every scan; in the CI profiles an
+  unsigned or tampered decision is simply not applied
+  ([docs/signing.md](docs/signing.md)).
 
 Plain-language version with code pointers:
 [docs/safety-model.md](docs/safety-model.md).

@@ -11,7 +11,8 @@ from security_council.arms.base import ArmResult
 from security_council.cli import main as cli_main
 from security_council.jsonio import to_dict
 from security_council.orchestrator import _exit_code
-from tests.test_orchestrator import FakeArm, _finding as orch_finding, _run as orch_run
+from tests.test_orchestrator import FakeArm, _allow_unsigned, _finding as orch_finding, \
+    _run as orch_run
 from tests.test_validate import _finding
 
 NOW = "2026-08-22T00:00:00Z"
@@ -235,6 +236,7 @@ def test_scan_suppress_rescan_flow(tmp_path):
     assert run1.exit_code == 1
     [row] = json.loads((run1.out_dir / "findings.json").read_text())
 
+    _allow_unsigned(tmp_path)
     rc = cli_main(["suppress", row["id"], "--operator", "clindell",
                    "--justification", "mitigated upstream",
                    "--vex-justification", "inline_mitigations_already_exist",
@@ -257,6 +259,7 @@ def test_outcome_mark_cli_feeds_history_term(tmp_path):
                                   vendor="semgrep", rc="hist")])]
     run1 = orch_run(arms, tmp_path)
     [row] = json.loads((run1.out_dir / "findings.json").read_text())
+    _allow_unsigned(tmp_path)
     for _ in range(2):
         assert cli_main(["outcome", "mark", row["id"], "--verdict", "fp",
                          "--operator", "clindell", "--run", str(run1.out_dir),
@@ -277,6 +280,7 @@ def test_baseline_cli_and_delta_in_manifest(tmp_path):
             fs.append(novel)
         return [FakeArm("semgrep", "scanner", "semgrep", fs)]
     run1 = orch_run(arms(), tmp_path)
+    _allow_unsigned(tmp_path)
     assert cli_main(["baseline", "set", "--run", str(run1.out_dir),
                      "--target", str(tmp_path), "--operator", "clindell"]) == 0
     run2 = orch_run(arms(extra=True), tmp_path, gate_baseline="new")
