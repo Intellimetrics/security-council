@@ -988,3 +988,11 @@ def test_refused_marks_and_rosters_are_scan_degradations(tmp_path, keys):
         fh.write(f"* {pub[0]} {pub[1]}\n")
     run = run_scan(target, arms, _cfg("enforce"), isolate=False)
     assert any(d["kind"] == "roster_refused" for d in run.degradations)
+    # a rogue record file is its own degradation, not a "refused mark"
+    (store.dir / ("e" * 32 + ".json")).write_text(json.dumps(
+        {"schema_version": 1, "root_cause": finding.fingerprints.root_cause, "history": []}))
+    run = run_scan(target, arms, _cfg("enforce"), isolate=False)
+    kinds = [d["kind"] for d in run.degradations]
+    assert "records_ignored" in kinds
+    assert sum(1 for d in run.degradations if d["kind"] == "outcome_marks_refused") == 1
+    assert "e" * 32 in next(d["detail"] for d in run.degradations if d["kind"] == "records_ignored")

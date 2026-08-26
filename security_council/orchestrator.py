@@ -388,18 +388,26 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             prior_runs=_shadow_runs_completed(store, cfg_for_policy, out_dir, run_id) if armed else 0,
             history=store.history_counts(signature_policy=sig_policy["effective"],
                                          audit=history_audit), calibration=cal)
-        if history_audit and sig_policy["effective"] == "warn":
+        rogue_records = [a for a in history_audit if a.get("signature") == "noncanonical_record"]
+        mark_audit = [a for a in history_audit if a.get("signature") != "noncanonical_record"]
+        if rogue_records:
+            pre_degr.append({"kind": "records_ignored",
+                             "detail": f"{len(rogue_records)} decision record file(s) not named "
+                                       "by the root cause they claim were ignored: "
+                                       + ", ".join(str(a.get("file")) for a in rogue_records[:5])
+                                       + ". A record can only live at its own slug."})
+        if mark_audit and sig_policy["effective"] == "warn":
             pre_degr.append({"kind": "outcome_marks_unsigned",
-                             "detail": f"{len(history_audit)} outcome mark(s) feeding the score "
+                             "detail": f"{len(mark_audit)} outcome mark(s) feeding the score "
                                        "history term have no verified signature "
                                        "(require_signatures: warn)."})
-        elif history_audit and sig_policy["effective"] == "enforce":
+        elif mark_audit and sig_policy["effective"] == "enforce":
             # R13 round 2: refused marks were only in manifest.history_audit;
             # a reviewer reading the summary never saw them.
             pre_degr.append({"kind": "outcome_marks_refused",
-                             "detail": f"{len(history_audit)} outcome mark(s) not counted: "
+                             "detail": f"{len(mark_audit)} outcome mark(s) not counted: "
                                        + ", ".join(sorted({str(a.get("signature"))
-                                                           for a in history_audit}))
+                                                           for a in mark_audit}))
                                        + " (require_signatures: enforce). `security-council "
                                          "decisions verify` lists them."})
         roster_refusals = [m for s, m in signing_mod.roster_problems(store.allowed_signers_path)
