@@ -617,14 +617,21 @@ def _analysis_artifacts(manifest: dict) -> list[str]:
     if not arts:
         return []
     out = ["## Analysis artifacts", "",
-           "Vendor analysis workflows produce documents, not gate-able findings; "
-           "they are attached here and never enter the finding results.", "",
+           "Analysis jobs produce documents, not gate-able findings; they are attached "
+           "here and never enter the finding results or the gate. `house:<cli>` means "
+           "security-council's own prompt was run through that CLI.", "",
            "| Kind | Producer | Model | Path | Note |", "|---|---|---|---|---|"]
     for a in arts:
         posture = a.get("safeguard_posture")
         note = []
         if a.get("dual_use"):
             note.append("⚠ dual-use — raw/-only, export-excluded")
+        if a.get("completion") == "partial":
+            note.append("partial (model ran out of time or budget)")
+        if a.get("redactions"):
+            note.append(f"{int(a['redactions'])} exploit-shaped span(s) redacted")
+        if a.get("model_attested") is False:
+            note.append("model not attested by the CLI")
         if a.get("kind") == "verify-fix":
             # a verify verdict is machine evidence, never a green check — the
             # human decides. crypto gets an explicit cryptographic-review call.

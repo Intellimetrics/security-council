@@ -22,11 +22,16 @@ def known_arms() -> list[str]:
     return list(SCANNER_SPECS) + list(LLM_CLI_SPECS) + list(DEDICATED_ARMS)
 
 
-def build_analysis_arm(job: str, *, model: str | None = None, options: dict | None = None):
-    """An artifact-lane runner for one vendor analysis job (M-V3)."""
+def build_analysis_arm(job: str, *, family: str | None = None, model: str | None = None,
+                       options: dict | None = None):
+    """An artifact-lane runner for one HOUSE analysis job (M-V3) through one
+    house CLI. `family` (claude|codex|agy) comes from `scan --analyze-with`,
+    else the job's `arms.options.analysis:<job>.cli`, else claude."""
+    if job not in ANALYSIS_JOBS:
+        raise ValueError(f"unknown analysis job {job!r}; known: {sorted(ANALYSIS_JOBS)}")
     opts = dict(options or {})
     model = model or opts.pop("model", None)
-    fam = ANALYSIS_JOBS[job].family
+    fam = family or opts.pop("cli", None) or "claude"
     return ArtifactRunnerArm(job=job, family=fam, model=model, **opts)
 
 

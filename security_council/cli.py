@@ -115,7 +115,8 @@ def cmd_scan(args) -> int:
                   file=sys.stderr)
             return EXIT_USAGE
         options = (config.get("arms") or {}).get("options") or {}
-        analysis_arms = [build_analysis_arm(j, options=options.get(f"analysis:{j}")) for j in jobs]
+        analysis_arms = [build_analysis_arm(j, family=getattr(args, "analyze_with", None),
+                                            options=options.get(f"analysis:{j}")) for j in jobs]
     if getattr(args, "sbom", False):
         from .arms.sbom import SbomArm
         analysis_arms.append(SbomArm())
@@ -772,10 +773,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tier", help="route same-vendor arms to a gated model tier "
                                   "(mythos, daybreak-blue); must be declared in entitlements")
     s.add_argument("--analyze", metavar="JOBS",
-                   help="[NOT FUNCTIONAL IN 0.1.0 — refuses honestly] vendor analysis "
-                        "workflows (threat-model, attack-path, hardening, policy, writeup); "
-                        "the vendor's skills are internal to its own scan and not a public "
-                        "surface, see docs/reviews/R10-live-vendor-runs.md")
+                   help="house analysis documents, attached as artifacts (never findings, "
+                        "never gate): threat-model, attack-path, hardening, policy, writeup "
+                        "(comma-separated). Sends the scanned tree to the chosen CLI's "
+                        "vendor; attack-path and writeup are dual-use (raw/-only)")
+    s.add_argument("--analyze-with", choices=["claude", "codex", "agy"], default=None,
+                   help="which house CLI runs the --analyze jobs (default claude, or "
+                        "arms.options.'analysis:<job>'.cli)")
     s.add_argument("--sbom", action="store_true",
                    help="also generate a CycloneDX SBOM artifact (syft, $0, no network; "
                         "`report --format cyclonedx` then merges findings into it)")

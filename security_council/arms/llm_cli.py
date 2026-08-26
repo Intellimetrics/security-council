@@ -34,6 +34,23 @@ class _Parsed:
     served_model: Optional[str]
     status_ok: bool
     note: str = ""
+    cost_usd: Optional[float] = None     # claude reports total_cost_usd; codex/agy report nothing
+    subtype: Optional[str] = None        # claude result subtype (budget stop shows up here)
+
+
+# The builders/parsers below are shared with the analysis lane
+# (arms/artifact_runner.py): the arm object supplies `schema_path` (which
+# structured-output schema to enforce), `envelope_key` (the top-level key that
+# proves the model returned OUR envelope) and, for claude only, an optional
+# `max_budget_usd` fuse. The read-only flags are the contract and never vary.
+
+
+def _schema_path(arm) -> Path:
+    return Path(getattr(arm, "schema_path", None) or _SCHEMA_PATH)
+
+
+def _envelope_key(arm) -> str:
+    return getattr(arm, "envelope_key", None) or "findings"
 
 
 @dataclass(frozen=True)
@@ -55,11 +72,15 @@ class LlmCliSpec:
 def _claude_cmd(arm, prompt, cwd, out):
     # claude wants the schema INLINE as JSON (codex/agy take a file path)
     cmd = ["claude", "-p", prompt, "--output-format", "json",
-           "--json-schema", _SCHEMA_PATH.read_text(),
+           "--json-schema", _schema_path(arm).read_text(),
            "--permission-mode", "plan", "--tools", "Read,Grep,Glob,LS",
            "--strict-mcp-config", "--no-session-persistence"]
     if arm.model:
         cmd += ["--model", arm.model]
+    budget = getattr(arm, "max_budget_usd", None)
+    if budget is not None:
+        # hard fuse; same flag the claude-security arm has used live
+        cmd += ["--max-budget-usd", f"{float(budget):g}"]
     return cmd
 
 
@@ -76,13 +97,16 @@ def _claude_parse(arm, r, out):
     served = (max(mu, key=lambda k: mu[k].get("outputTokens", 0)) if mu
               else outer.get("model") or (outer.get("usage") or {}).get("model"))
     cand = outer.get("result", outer)
-    env = _coerce_envelope(cand)
-    return _Parsed(env, served, not outer.get("is_error", False))
+    env = _coerce_envelope(cand, _envelope_key(arm))
+    cost = outer.get("total_cost_usd")
+    return _Parsed(env, served, not outer.get("is_error", False),
+                   cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
+                   subtype=outer.get("subtype") if isinstance(outer.get("subtype"), str) else None)
 
 
 def _codex_cmd(arm, prompt, cwd, out):
     cmd = ["codex", "exec", "--ignore-user-config", "-s", "read-only", "--skip-git-repo-check",
-           "-C", str(cwd), "-c", "mcp_servers={}", "--output-schema", str(_SCHEMA_PATH),
+           "-C", str(cwd), "-c", "mcp_servers={}", "--output-schema", str(_schema_path(arm)),
            "--json", "-o", str(out / "codex-last.txt")]
     if arm.model:
         cmd += ["-m", arm.model]
@@ -94,12 +118,12 @@ def _codex_parse(arm, r, out):
     last = out / "codex-last.txt"
     if not last.is_file():
         return _Parsed(None, None, r.ok, (r.stderr or "no last-message file")[:300])
-    env = _coerce_envelope(last.read_text(errors="replace"))
+    env = _coerce_envelope(last.read_text(errors="replace"), _envelope_key(arm))
     return _Parsed(env, arm.model, r.ok)
 
 
 def _agy_cmd(arm, prompt, cwd, out):
-    cmd = ["agy", "-p", prompt, "--output-format", "json", "--json-schema", str(_SCHEMA_PATH),
+    cmd = ["agy", "-p", prompt, "--output-format", "json", "--json-schema", str(_schema_path(arm)),
            "--mode", "plan", "--sandbox", "--print-timeout", "18m", "--add-dir", str(cwd)]
     if arm.model:
         cmd += ["--model", arm.model]
@@ -120,15 +144,15 @@ def _agy_parse(arm, r, out):
                    "" if status == "SUCCESS" else f"status={status}")
 
 
-def _coerce_envelope(cand) -> Optional[dict]:
-    if isinstance(cand, dict) and "findings" in cand:
+def _coerce_envelope(cand, key: str = "findings") -> Optional[dict]:
+    if isinstance(cand, dict) and key in cand:
         return cand
     if isinstance(cand, str):
         try:
             obj = json.loads(cand)
         except json.JSONDecodeError:
             return None
-        return obj if isinstance(obj, dict) and "findings" in obj else None
+        return obj if isinstance(obj, dict) and key in obj else None
     return None
 
 

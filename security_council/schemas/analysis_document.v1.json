@@ -1,0 +1,24 @@
+{
+  "title": "SecurityCouncilAnalysisDocument",
+  "description": "Portable structured-output envelope for the house ANALYSIS prompts (threat model, attack path, hardening, policy, write-up) driven through claude --json-schema / codex --output-schema / agy --json-schema. A document, never a finding. Same portability rules as the finding envelope: no $schema, pattern, or length/range/count keywords (strict structured-output modes reject them); bounds and path rules are enforced post-generation by artifacts.validate_document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "header", "body_markdown"],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["sc-analysis-doc/1"]},
+    "header": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "title", "scope", "inputs_read", "completion", "notes"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["threat-model", "attack-path", "hardening", "policy", "writeup"]},
+        "title": {"type": "string"},
+        "scope": {"type": "string"},
+        "inputs_read": {"type": "array", "items": {"type": "string"}},
+        "completion": {"type": "string", "enum": ["complete", "partial", "declined"]},
+        "notes": {"type": "string"}
+      }
+    },
+    "body_markdown": {"type": "string"}
+  }
+}

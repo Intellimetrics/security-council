@@ -10,6 +10,7 @@ from pathlib import Path
 from . import __version__, calibration as calibration_mod, decisions as decisions_mod, \
     entitlements as ent_mod, policy as policy_mod, signing as signing_mod
 from .arms.base import Arm, ArmResult
+from .artifacts import findings_digest
 from .cluster import cluster_findings, merge_cluster
 from .export import markdown, sarif
 from .jsonio import dumps, to_dict
@@ -269,7 +270,13 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             results = list(ex.map(
                 lambda a: _safe_run(a, ws.root, out_dir, run_id, collected_at), run_arms))
             # analysis arms (M-V3) produce artifacts, not findings — run alongside,
-            # but keep them out of coverage/clustering/gate accounting
+            # but keep them out of coverage/clustering/gate accounting. The
+            # findings-scoped jobs (writeup, attack-path) get a digest of what
+            # the scan arms just reported: context for the document, never a
+            # decision record (pre-cluster, pre-policy, no snippets).
+            for a in analysis_arms:
+                if getattr(a, "needs_findings", False):
+                    a.findings_context = findings_digest([f for r in results for f in r.findings])
             analysis_results = list(ex.map(
                 lambda a: _safe_run(a, ws.root, out_dir, run_id, collected_at), analysis_arms))
         artifacts = [a for r in analysis_results for a in r.artifacts]
