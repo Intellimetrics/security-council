@@ -38,6 +38,14 @@ made them. Run the two commands the message prints
 put `decisions: {require_signatures: warn}` in `.security-council.yaml` to
 record unsigned decisions for now. Three-minute setup: [signing.md](signing.md).
 
+**I wrote a fix. Can it tell me whether the fix worked?**
+Yes, for findings a scanner reported: `security-council scan . --verify-patch
+fix.patch --for <finding_id>` applies your patch to a throwaway copy, re-runs
+that scanner on the copy, and reports **fixed**, **not fixed** or
+**unproven** with the reason. No AI, no cost, your files untouched. It is
+evidence for your reviewer, not a decision — the finding closes only when a
+scan of the merged code no longer sees it ([verify-fix.md](verify-fix.md)).
+
 **A finding I suppressed came back. Why?**
 Suppressions expire after 90 days, and they self-cancel when the code around
 the finding changes (the old justification may no longer hold). The report

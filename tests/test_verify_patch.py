@@ -395,3 +395,28 @@ def test_fix_lane_verify_is_deterministic_not_a_vendor_opinion(tmp_path, monkeyp
                    for a in run.manifest["artifacts"])
     assert run.findings[0].disposition.lifecycle == "open"
     assert (target / "app" / "x.py").read_text().startswith("import db\nq = bad(x)")
+
+
+# --------------------------------------------------------------------------- #
+# evidence must never lower the signature level
+# --------------------------------------------------------------------------- #
+
+def test_evidence_only_record_does_not_make_the_store_pre_existing_for_auto(tmp_path):
+    """`require_signatures: auto` resolves a store WITH decisions and no
+    store.json to `warn` (weaker) and a store with NO decisions to `enforce`.
+    A record holding nothing but machine verify evidence must not count as a
+    decision, or one --verify-patch run would lower the level."""
+    from security_council import signing
+    patch = _patch(tmp_path, "fix.patch", "app/x.py", "q = bad(x)", "q = safe(x)")
+    run = _run(tmp_path, [_arm()], patch)
+    store = dec.DecisionStore(tmp_path / "repo" / ".security-council")
+    assert store.verify_evidence(run.findings[0].fingerprints.root_cause)
+    assert store.has_decisions() is False
+    pol = signing.resolve_policy({"decisions": {"require_signatures": "auto"}},
+                                 store_initialised=False,
+                                 store_has_decisions=store.has_decisions(),
+                                 now_iso="2026-08-26T00:00:00Z")
+    assert pol["effective"] == "enforce"
+    # a real (unsigned) suppression still counts, as before
+    store.record_suppression(run.findings[0], now_iso="2026-08-26T00:00:00Z", shadow=False)
+    assert store.has_decisions() is True

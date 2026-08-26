@@ -146,6 +146,16 @@ patch-generation step is built and tested offline and needs real vendor spend to
 exercise end to end (it degrades safely to "no patch" if the skill produces
 nothing).*
 
+### Verifying a patch (deterministic, $0, no vendor)
+
+Whether the patch came from the fix lane (`--verify-fix`) or from you
+(`--verify-patch fix.patch --for <finding-id>`), verification is the same and
+involves no model: the patch is applied to a scratch copy, the deterministic
+scanners that reported the finding are re-run on that copy, and the finding
+must disappear under verified coverage — `fixed`, `not_fixed` or `unproven`,
+recorded as machine evidence that never closes anything. See
+[verify-fix.md](verify-fix.md).
+
 ## Category-aware corroboration
 
 Not every arm is *eligible* to report every category (Claude's tooling

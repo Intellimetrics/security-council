@@ -17,7 +17,8 @@ is the whole point of the deterministic-by-default design.
 | `claude-security` | dedicated agentic | **Source code** → Anthropic-hosted models, driven by the claude-security plugin. |
 | `codex-security` | dedicated agentic | **Source code** → OpenAI-hosted models (or the provider your `~/.codex` config selects). |
 | `--validate` panel | validator | **Finding details + cited code snippets + repository context** → the three vendor CLIs llm-council routes to (cross-vendor by design). |
-| `--fix` / `--verify-fix` | fix lane | **Not functional in 0.1.0 — refuses before running anything.** *When* it runs, by design it sends **the scanned tree** to a vendor CLI to generate a patch; that egress is the feature, and this table omitted it (R11). The patch is never applied to your code. |
+| `--fix` | fix lane | **Not functional in 0.1.0 — refuses before running anything.** *When* it runs, by design it sends **the scanned tree** to a vendor CLI to generate a patch; that egress is the feature, and this table omitted it (R11). The patch is never applied to your code. |
+| `--verify-fix` / `--verify-patch` | deterministic verify lane | Nothing beyond what the selected scanner arms already send (rows above). No vendor CLI, no model: the patch is applied to a scratch copy and the scanners are re-run there. Your tree is never modified ([verify-fix.md](verify-fix.md)). |
 | `--analyze` | analysis lane | **Not functional in 0.1.0 — refuses before running anything.** Would send the scanned tree to a vendor model. |
 
 The default profile (`semgrep,gitleaks,osv-scanner`) keeps all source local.

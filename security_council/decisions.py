@@ -209,8 +209,31 @@ class DecisionStore:
         return signing.roster_principals(self.allowed_signers_path)
 
     def has_decisions(self) -> bool:
-        """Any record or baseline at all — 'pre-existing store' for policy `auto`."""
-        return (self.dir.is_dir() and any(self.dir.glob("*.json"))) or self.baseline_path.is_file()
+        """Any DECISION record or baseline — 'pre-existing store' for policy `auto`.
+
+        A record that carries only machine verify-fix evidence (no suppression
+        block, no human event) is not a decision: counting it would let one
+        `--verify-patch` run turn a fresh store into a "pre-existing unsigned
+        store", which `auto` resolves to `warn` — a weaker level than the
+        `enforce` a store with no decisions gets. Evidence must never lower
+        the signature level."""
+        if self.baseline_path.is_file():
+            return True
+        if not self.dir.is_dir():
+            return False
+        for p in self.dir.glob("*.json"):
+            try:
+                rec = json.loads(p.read_text())
+            except (OSError, json.JSONDecodeError):
+                return True          # unreadable: treat as a decision (fail-safe: warn is louder than silence)
+            if not isinstance(rec, dict):
+                return True
+            if rec.get("suppression") is not None or self._human_events(rec):
+                return True
+            if any(isinstance(ev, dict) and ev.get("kind") not in VERIFY_EVIDENCE_KINDS
+                   for ev in rec.get("history") or []):
+                return True
+        return False
 
     def _sign_event(self, event: dict, signer: Signer | None, *, now_iso: str) -> dict:
         """Attach a signature to a human event and PROVE it verifies against the
