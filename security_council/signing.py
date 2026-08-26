@@ -238,14 +238,21 @@ def roster_problems(allowed_signers: str | Path) -> list[tuple[str, str]]:
         ln = ln.strip()
         if not ln or ln.startswith("#"):
             continue
-        principal = ln.split()[0]
+        tokens = ln.split()
+        principal = tokens[0]
+        # allowed_signers: `principal [options] keytype key [comment]` — the
+        # options field is present only when the line has one before the key
+        # type. Parse it as tokens (R13 round 3): a key COMMENT that happens
+        # to contain "cert-authority" is not an option.
+        opts = (tokens[1].split(",") if len(tokens) >= 4
+                and not _KEYTYPE_RE.match(tokens[1]) and _KEYTYPE_RE.match(tokens[2]) else [])
         if not valid_principal(principal):
             out.append(("refuse", f"line {n}: principal {principal!r} is a pattern — it would "
                                   "vouch for any matching operator name"))
-        if "cert-authority" in ln:
+        if "cert-authority" in opts:
             out.append(("refuse", f"line {n}: cert-authority — every certificate this CA "
                                   "issues would be trusted"))
-        if "namespaces=" not in ln:
+        if not any(o.startswith("namespaces=") for o in opts):
             out.append(("warn", f"line {n}: no namespaces= option — this key is trusted for "
                                 "every signature namespace, not just decisions"))
     return out

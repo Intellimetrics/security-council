@@ -260,8 +260,8 @@ class DecisionStore:
         return [ev for ev in (rec.get("history") or [])
                 if isinstance(ev, dict) and str(ev.get("kind", "")).startswith("human_")]
 
-    def _authoritative_human_event(self, rec: dict, *, root_cause: str,
-                                   verify: bool) -> tuple[dict | None, str, str]:
+    def _authoritative_human_event(self, rec: dict, *,
+                                   root_cause: str) -> tuple[dict | None, str, str]:
         """(event, status, detail): the human decision that governs this record.
 
         Signatures live on events (Q6), so the event — not the record's
@@ -270,26 +270,31 @@ class DecisionStore:
         two real decisions applied. R13 round 2: choosing by array POSITION was
         no better (the array is as writable as the pointer). So: among the
         events that VERIFY for this root cause, the one with the greatest
-        SIGNED `at` wins. Reordering or pointer-editing changes nothing;
-        deleting the newer decision does — that is the documented
-        replay-inside-the-window residual (R9 Q3), bounded by expiry.
-        Without verification (`off`) the last event by position is used."""
+        SIGNED `at` (parsed, not compared as text) wins; on an identical `at`
+        the EARLIER expiry wins (fail-safe tiebreak). Reordering or
+        pointer-editing changes nothing; deleting the newer decision does —
+        that is the documented replay-inside-the-window residual (R9 Q3),
+        bounded by expiry."""
         events = self._human_events(rec)
         if not events:
             return None, signing.UNSIGNED, "no human decision event"
-        if not verify:
-            return events[-1], signing.UNCHECKED, ""
-        best: tuple[str, dict] | None = None
+        best: tuple[datetime, str, dict] | None = None
         last_status, last_detail = signing.UNSIGNED, ""
         for ev in events:
             status, detail = self.verify_event(ev, expect={"root_cause": root_cause})
             last_status, last_detail = status, detail
-            if status == signing.VERIFIED:
-                at = str(ev.get("at") or "")
-                if best is None or at > best[0]:
-                    best = (at, ev)
+            if status != signing.VERIFIED:
+                continue
+            try:
+                at = _now(str(ev.get("at")))
+            except (ValueError, TypeError):
+                continue                      # signed but unparseable: not a candidate
+            exp = str(ev.get("expires_at") or "")
+            # later decision wins; same instant -> the shorter-lived one wins
+            if best is None or at > best[0] or (at == best[0] and exp < best[1]):
+                best = (at, exp, ev)
         if best is not None:
-            return best[1], signing.VERIFIED, ""
+            return best[2], signing.VERIFIED, ""
         return events[-1], last_status, last_detail
 
     @staticmethod
@@ -411,7 +416,12 @@ class DecisionStore:
             ref = sup.get("decision_ref")
             base = {"finding_id": f.id, "ref": ref, "title": f.title,
                     "severity": f.severity.label}
-            is_human = (sup.get("decided_by") or {}).get("kind") == "human"
+            # R13 round 3: a record with ANY human decision event takes the
+            # human path, whatever the mutable block's `decided_by.kind` says —
+            # flipping it to "auto" was a way to dodge verification in an armed
+            # repo. A record is machine only if no human ever decided on it.
+            is_human = ((sup.get("decided_by") or {}).get("kind") == "human"
+                        or bool(self._human_events(rec)))
 
             # ---- authenticity (R9 signing lane) -------------------------
             # `view` is what replay READS; `sup` is what it WRITES (status,
@@ -430,7 +440,7 @@ class DecisionStore:
                     continue
             elif signature_policy != "off":
                 ev, sig_status, sig_detail = self._authoritative_human_event(
-                    rec, root_cause=rc, verify=True)
+                    rec, root_cause=rc)
                 if ev is not None:
                     principal = (ev.get("signature") or {}).get("principal")
                 if sig_status == signing.VERIFIED:
@@ -646,7 +656,7 @@ class DecisionStore:
         on (signature bytes, signed payload) and only AFTER it verified; an
         invalid event reserves nothing."""
         out: list[tuple[dict, str, str]] = []
-        seen: set[tuple[str, bytes]] = set()
+        seen: set[bytes] = set()
         for ev in rec.get("history") or []:
             # L1 anti-poisoning: ONLY human outcome_mark events count — a
             # machine event (verify-fix evidence) is ignored even if it
@@ -659,13 +669,17 @@ class DecisionStore:
             else:
                 status, detail = self.verify_event(
                     ev, expect={"root_cause": rec.get("root_cause", "")})
-            sig_bytes = ((ev.get("signature") or {}).get("sig") if isinstance(
-                ev.get("signature"), dict) else None)
-            if sig_bytes and status in (signing.VERIFIED, signing.UNCHECKED):
+            if status in (signing.VERIFIED, signing.UNCHECKED):
+                # R13 round 3: the key is the SIGNED PAYLOAD alone — never the
+                # armored signature text. ssh-keygen accepts whitespace variants
+                # of one armor (a stripped trailing newline, re-wrapped base64),
+                # so keying on the string let one real mark count twice. The
+                # same canonical payload is by definition the same decision, and
+                # any signature that verified over it is the same mark.
                 try:
-                    key = (str(sig_bytes), signed_payload(ev))
+                    key = signed_payload(ev)
                 except (KeyError, TypeError):
-                    key = (str(sig_bytes), b"")
+                    key = b""
                 if key in seen:
                     status, detail = "duplicate", "same signed mark already counted"
                 else:
@@ -825,9 +839,10 @@ class DecisionStore:
                 if sup and sup.get("status") == "active" and not sup.get("shadow"):
                     operator = (sup.get("decided_by") or {}).get("operator")
                     lifecycle = sup.get("lifecycle")
-                    if (sup.get("decided_by") or {}).get("kind") == "human":
+                    if ((sup.get("decided_by") or {}).get("kind") == "human"
+                            or self._human_events(rec)):
                         ev, status, detail = self._authoritative_human_event(
-                            rec, root_cause=rec.get("root_cause", ""), verify=True)
+                            rec, root_cause=rec.get("root_cause", ""))
                         if ev is not None and status == signing.VERIFIED:
                             # the audit shows SIGNED attribution, as the scan applies it
                             operator, lifecycle = ev.get("operator"), ev.get("lifecycle")

@@ -50,6 +50,13 @@
   *signed* timestamp, not the last one in the array; `decisions verify`
   applies the same checks as the scan; refused marks and a poisoned roster
   are scan degradations.
+- Round 3: outcome-mark dedupe keys on the signed payload, not the armored
+  signature text (ssh-keygen accepts whitespace variants of one armor, so a
+  real mark stored twice with/without its trailing newline counted twice);
+  a record with any human decision event takes the human (verified) path
+  even if its block's `decided_by.kind` was edited to `auto`; signed times
+  compared as datetimes with a shorter-expiry tiebreak; `cert-authority` is
+  matched as a roster option, not a substring of the comment.
 
 ### Changed
 

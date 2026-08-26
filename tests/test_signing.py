@@ -996,3 +996,90 @@ def test_refused_marks_and_rosters_are_scan_degradations(tmp_path, keys):
     assert "records_ignored" in kinds
     assert sum(1 for d in run.degradations if d["kind"] == "outcome_marks_refused") == 1
     assert "e" * 32 in next(d["detail"] for d in run.degradations if d["kind"] == "records_ignored")
+
+
+
+# --------------------------------------------------------------------- #
+# R13 council round 3 (claude): armor variants, block-kind flip, roster
+# option parsing, same-instant tiebreak
+# --------------------------------------------------------------------- #
+
+def test_whitespace_variants_of_one_signature_count_once(tmp_path, keys):
+    """ssh-keygen accepts a stripped trailing newline and re-wrapped base64
+    as the same armor; keying the dedupe on the string let one real mark
+    count twice under enforce (and `decisions verify` showed both applied)."""
+    store = _store(tmp_path, keys, ALICE)
+    f = _finding()
+    rc = f.fingerprints.root_cause
+    _mark(store, keys, f, "false_positive", NOW)
+    path = store._path(rc)
+    rec = json.loads(path.read_text())
+    real = rec["history"][-1]
+    armored = real["signature"]["sig"]
+    body = "".join(ln for ln in armored.splitlines()
+                   if not ln.startswith("-----"))
+    rewrapped = ("-----BEGIN SSH SIGNATURE-----\n"
+                 + "\n".join(body[i:i + 40] for i in range(0, len(body), 40))
+                 + "\n-----END SSH SIGNATURE-----\n")
+    variants = [json.loads(json.dumps(real)) for _ in range(2)]
+    variants[0]["signature"]["sig"] = armored.rstrip("\n")
+    variants[1]["signature"]["sig"] = rewrapped
+    for v in variants:                                   # each variant verifies on its own
+        assert store.verify_event(v, expect={"root_cause": rc})[0] == "verified"
+    rec["history"] += variants
+    path.write_text(json.dumps(rec))
+    audit: list = []
+    assert store.history_counts(signature_policy="enforce", audit=audit)[rc]["confirmed_fp"] == 1
+    assert [a["signature"] for a in audit] == ["duplicate", "duplicate"]
+    rows = [r for r in store.verify_store()["rows"] if r["kind"] == "outcome_mark"]
+    assert [r["applies"] for r in rows] == [True, False, False]
+
+
+def test_block_kind_flipped_to_auto_still_takes_the_human_path(tmp_path, keys):
+    """A record with a real signed human decision whose block `decided_by.kind`
+    is edited to "auto" (with plausible machine fields) used to take the
+    unverified machine path in an armed repo."""
+    store = _store(tmp_path, keys, ALICE)
+    _signed_suppress(store, keys, _finding(), days=1)              # expires before LATER
+    path = store._path(_finding().fingerprints.root_cause)
+    rec = json.loads(path.read_text())
+    rec["suppression"]["decided_by"] = {"kind": "auto", "decided_at": NOW, "model_id": "m",
+                                        "prompt_sha256": SHA, "panel_sha256": SHA}
+    rec["suppression"]["expires_at"] = "2099-01-01T00:00:00Z"
+    path.write_text(json.dumps(rec))
+    f = _finding()
+    [a] = _replay(store, f, "enforce", machine_replay=True)       # armed: worst case
+    assert a["action"] == "reopened_expired" and a["signature"] == "verified"
+    f = _finding()
+    rec = json.loads(path.read_text())
+    rec["suppression"]["status"] = "active"
+    human = next(e for e in rec["history"] if e["kind"].startswith("human_"))
+    human["justification"] = "edited"                             # break the human event
+    path.write_text(json.dumps(rec))
+    [a] = _replay(store, f, "enforce", machine_replay=True)
+    assert a["action"] == "refused_signature"                     # never the machine path
+
+
+def test_cert_authority_is_an_option_not_a_substring(tmp_path, keys):
+    store = _store(tmp_path, keys, ALICE)
+    pub = keys[BOB][1].read_text().split()
+    with open(store.allowed_signers_path, "a") as fh:
+        fh.write(f'{BOB} namespaces="{signing.NAMESPACE}" {pub[0]} {pub[1]} '
+                 f"cert-authority-team-laptop\n")               # comment only
+    assert [s for s, _ in signing.roster_problems(store.allowed_signers_path)] == []
+    with open(store.allowed_signers_path, "a") as fh:
+        fh.write(f'ca@example cert-authority,namespaces="{signing.NAMESPACE}" {pub[0]} {pub[1]}\n')
+    assert ("refuse", ) == tuple({s for s, _ in signing.roster_problems(store.allowed_signers_path)})
+
+
+def test_same_instant_decisions_prefer_the_shorter_lived_one(tmp_path, keys):
+    store = _store(tmp_path, keys, ALICE)
+    _signed_suppress(store, keys, _finding(), days=90, now=NOW)
+    _signed_suppress(store, keys, _finding(), days=1, now=NOW)     # same `at`
+    path = store._path(_finding().fingerprints.root_cause)
+    rec = json.loads(path.read_text())
+    rec["history"].reverse()                                       # order must not matter
+    path.write_text(json.dumps(rec))
+    f = _finding()
+    [a] = _replay(store, f, "enforce")
+    assert a["action"] == "reopened_expired"                       # the 1-day one governs
