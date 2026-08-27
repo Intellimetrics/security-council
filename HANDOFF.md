@@ -280,12 +280,12 @@ commit, which the moved-sink check needs), MCP exposure, a model explainer.
 
 **Not functional in 0.1.0, labelled so in `--help`:** `--fix`. `--verify-fix` is
 functional but depends on `--fix`; use `--verify-patch`. `--analyze` is functional
-again (M-V3 reframe, below; offline-verified). `codex-security` dedicated arm needs
+again (M-V3 reframe, below; live-verified 2026-08-27). `codex-security` dedicated arm needs
 an interactive `codex-security login`. The four R11 fence defects are fixed and
 live-verified even though the fix lane is disabled.
 
 
-**M-V3 reframe — DONE 2026-08-26 (offline-verified).** `--analyze` no longer
+**M-V3 reframe — DONE 2026-08-26, LIVE-VERIFIED 2026-08-27.** `--analyze` no longer
 refuses: the five jobs (threat-model, attack-path[dual], hardening, policy,
 writeup[dual]) are now OUR prompts (`prompts/house-analysis-<job>.md` + a
 shared preamble, R10-lesson wording: read-only by flag, not prose) driven
@@ -307,19 +307,10 @@ dual-use jobs, payload markers everywhere; visible in place; documented as
 best-effort). writeup/attack-path get `findings_digest` of the scan arms'
 raw findings as context. 35 tests in `tests/test_artifacts.py` (558 total);
 vacuity-checked: neutering the redaction fails 4, letting `_exit_code` see
-analysis results fails the gate-unchanged test. **Live status: NOT
-live-verified.** One capped live run was started here (`scan <seedrepo copy>
---arms semgrep --analyze threat-model --analyze-with claude --config
-{max_cost_usd: 2}`); semgrep finished, the claude analysis call was alive at
-~2 min with no artifact yet, and the run was killed on the coordinator's
-instruction before the CLI's 900 s timeout — no CLI error, no cost stop, just
-not allowed to finish. Re-run it (same command, budget $2, expect a few
-minutes) to move this to live-verified; the flag contract is the one R10
-proved live for the scan arms, so the expected failure surface is the
-document envelope, not the invocation.
+analysis results fails the gate-unchanged test. **Live status: LIVE-VERIFIED 2026-08-27** — `scan <seedrepo copy> --arms semgrep --analyze threat-model --analyze-with claude --config {max_cost_usd: 2}`: 100 s, est. $0.72, model attested `claude-fable-5`, completion `complete`, 9 files read, 0 redactions, artifact indexed as a document (never a finding), gate unchanged (exit 1 from semgrep's two highs), no degradations. The model's own notes reported the README prompt-injection canary and stated it was ignored, and it verified the CWE-annotated comments against the code instead of trusting them. Reference run kept at `tests/fixtures/seedrepo/.security-council/runs/20260827_102732` (gitignored). The earlier attempt was killed at 141 s by the coordinator, not by the CLI — it would have finished. Not live-run: codex/agy families and the dual-use jobs (attack-path, writeup); the redaction post-check is exercised only by tests so far.
 
-**Known residuals, documented:** decision store is tamper-evident not
-tamper-proof (signing lane designed in R9, not built); ADO/GitLab templates
+**Known residuals, documented:** decision store signing is provenance, not assurance (R13: only load-bearing behind
+CODEOWNERS + required review; documented residuals in docs/signing.md); ADO/GitLab templates
 unproven on real infrastructure; CKLB never opened in a live STIG Viewer.
 
 ## 8. Recommended next steps (in rough priority)

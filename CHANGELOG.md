@@ -112,7 +112,7 @@
   they are re-made signed; set `decisions.require_signatures: warn` to keep
   applying unsigned decisions meanwhile.
 
-### Changed — analysis lane reframed onto house prompts (M-V3)
+### Changed — analysis lane reframed onto house prompts (M-V3; threat-model live-verified via claude)
 
 - `scan --analyze threat-model,attack-path,hardening,policy,writeup` works
   again. 0.1.0 refused it honestly because the vendors' analysis skills are

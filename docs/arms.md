@@ -168,11 +168,7 @@ sensitive.
 **Data boundary.** This lane sends your source to the chosen vendor — see
 [data-boundaries.md](data-boundaries.md).
 
-*Status: built and tested offline (fake CLIs) on all three CLIs against the
-same flag contract the house scan arms have already run live. A real
-`--analyze` run has not yet completed here, so expect the first live run to
-tell you something the fakes could not — most likely about the document the
-model returns, not about the invocation.*
+*Status: live-verified on 2026-08-27 for `threat-model` through the `claude` CLI on this repo's fixture (100 s, ~$0.72 estimated, model attested, 0 redactions). The codex and agy families and the dual-use jobs (`attack-path`, `writeup`) are built and tested offline against the same flag contract the house scan arms have run live; the redaction post-check has only been exercised by tests so far.*
 
 ## Fix workflows (reviewed patches, never applied)
 
