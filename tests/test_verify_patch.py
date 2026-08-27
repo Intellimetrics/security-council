@@ -137,6 +137,21 @@ def test_fixed_when_the_finding_disappears_under_verified_coverage(tmp_path):
     assert art["model_id"] is None
 
 
+def test_deleting_the_file_is_fixed_but_said_out_loud(tmp_path):
+    """R14: a deletion is `fixed` by the scanner's lights — nothing is left to
+    report — but the reviewer must see that the patch removed the file."""
+    target = _seed(tmp_path)
+    before = (target / "app" / "x.py").read_text().splitlines(keepends=True)
+    body = "".join(difflib.unified_diff(before, [], fromfile="a/app/x.py", tofile="/dev/null"))
+    patch = tmp_path / "rm.patch"
+    patch.write_text("diff --git a/app/x.py b/app/x.py\ndeleted file mode 100644\n" + body)
+    run = _run(tmp_path, [_arm()], patch, ids=[_main_id()])
+    (res,) = _results(run)
+    assert res["verdict"] == "fixed"
+    assert any("REMOVED app/x.py" in r for r in res["reasons"])
+    assert (target / "app" / "x.py").is_file()                     # the real tree untouched
+
+
 def test_not_fixed_when_the_scanner_still_reports_it(tmp_path):
     patch = _patch(tmp_path, "noop.patch", "README.md", "# demo", "# demo, edited")
     run = _run(tmp_path, [_arm()], patch, ids=[_main_id()])

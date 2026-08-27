@@ -161,7 +161,8 @@ def _moved(f: Finding, unexplained: list[Finding]) -> list[str]:
 
 
 def _verdict_for(f: Finding, results: dict[str, ArmResult],
-                 unexplained_by_arm: dict[str, list[Finding]]) -> FindingVerdict:
+                 unexplained_by_arm: dict[str, list[Finding]],
+                 deleted: set[str] | None = None) -> FindingVerdict:
     fv = FindingVerdict(finding_id=f.id, root_cause=f.fingerprints.root_cause, title=f.title,
                         uri=_primary_uri(f), severity=f.severity.label, verdict=UNPROVEN)
     sources = sorted(set(f.corroboration.deterministic_sources))
@@ -210,6 +211,12 @@ def _verdict_for(f: Finding, results: dict[str, ArmResult],
         fv.verdict = NOT_FIXED
     elif all_verified_absent:
         fv.verdict = FIXED
+        if deleted and fv.uri in deleted:
+            # R14: honest by the scanner's lights (nothing left to report), but a
+            # reviewer must SEE that the fix was a deletion, not a repair
+            fv.reasons.append(f"note: the patch REMOVED {fv.uri} — the scanner sees nothing "
+                              "because there is nothing to see; confirm that deleting the "
+                              "file is the intended fix, not the feature going with it")
     else:
         fv.verdict = UNPROVEN
     return fv
@@ -286,6 +293,8 @@ def verify_patch(target: Path, patch_path: Path, findings: list[Finding],
     results: dict[str, ArmResult] = {}
     try:
         pv.applied, pv.apply_error = _patches.apply_patch(ws.root, patch_path)
+        deleted = ({u for u in {_primary_uri(f) for f in findings} if u and not (ws.root / u).exists()}
+                   if pv.applied else set())
         if not pv.applied:
             pv.results = [_unproven(f, f"patch did not apply cleanly: {pv.apply_error}")
                           for f in findings]
@@ -306,7 +315,7 @@ def verify_patch(target: Path, patch_path: Path, findings: list[Finding],
         ws.cleanup()
     unexplained = {name: _unexplained(res.findings, run_findings) for name, res in results.items()}
     pv.new_findings = sum(len(v) for v in unexplained.values())
-    pv.results = [_verdict_for(f, results, unexplained) for f in findings]
+    pv.results = [_verdict_for(f, results, unexplained, deleted) for f in findings]
     return pv
 
 
