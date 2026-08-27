@@ -347,7 +347,7 @@ def cmd_serve(args) -> int:
                 else f"LAN-exposed on {args.bind} — anyone with the token can read every report")
     print(f"security-council viewer: {url}\n  {exposure}\n  read-only · GET only · "
           f"dual-use artifacts {'INCLUDED' if args.include_dual_use else 'withheld'} · "
-          f"docs {'mounted' if srv.docs_root else 'not found'}\n  Ctrl-C to stop")
+          f"docs {'mounted' if srv.docs_root else 'not found'}\n  Ctrl-C to stop", flush=True)
     if args.open:
         webbrowser.open(url)
     if getattr(args, "_once", False):            # tests
