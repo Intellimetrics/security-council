@@ -957,7 +957,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also generate a CycloneDX SBOM artifact (syft, $0, no network; "
                         "`report --format cyclonedx` then merges findings into it)")
     s.add_argument("--fix", metavar="IDS",
-                   help="[NOT FUNCTIONAL IN 0.1.0 — refuses honestly] generate reviewed .patch "
+                   help="[NOT FUNCTIONAL IN 0.2.0 — refuses honestly] generate reviewed .patch "
                         "artifacts (NEVER applied); the no-network fence cannot reach a vendor "
                         "CLI, see docs/reviews/R11-fix-lane-and-fence.md")
     s.add_argument("--fix-job", choices=["suggest-patches", "fix-finding"],
@@ -966,7 +966,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="verify each patch --fix produces DETERMINISTICALLY: apply it to a "
                         "scratch copy and re-run the scanners that reported the finding "
                         "(fixed | not_fixed | unproven, machine evidence, never closes a "
-                        "finding). Depends on --fix, which is not functional in 0.1.0 — to "
+                        "finding). Depends on --fix, which is not functional in 0.2.0 — to "
                         "verify your OWN patch use --verify-patch")
     s.add_argument("--verify-patch", metavar="FILE",
                    help="verify YOUR patch, $0 and offline: apply FILE to a scratch copy "

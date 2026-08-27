@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-08-27
+
+**Upgrading from 0.1.0:** re-run `security-council baseline set` once so the
+baseline records file locations (see *Fixed* below); until then each scan
+reports `baseline_legacy_entries`. Existing signed decisions and baselines
+still verify. The GitHub Action tag is `Intellimetrics/security-council@v0.2.0`.
 
 ### Fixed — found in the 0.2.0 release rehearsal
 

@@ -131,7 +131,7 @@ what lets it tell "the finding moved" from "the finding was already there".
 ## `--fix … --verify-fix`
 
 The same verification runs on every patch the fix lane produces when
-`--verify-fix` is passed. The fix lane itself is not functional in 0.1.0
+`--verify-fix` is passed. The fix lane itself is not functional in 0.2.0
 (the no-network sandbox cannot reach a vendor CLI, see
 [reviews/R11-fix-lane-and-fence.md](reviews/R11-fix-lane-and-fence.md)), so
 today `--verify-patch` with your own patch is the way to use this.

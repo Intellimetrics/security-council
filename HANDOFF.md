@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-26 (signing lane shipped-ready). Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-27 (0.2.0 rehearsed from the wheel; see §7.10). Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -29,7 +29,7 @@ python3 -m security_council.cli calibrate .corpora/BenchmarkJava  # fit calibrat
 python3 -m security_council.cli setup [--profile quick|ci|deep|gov] [--yes]   # guided front door (R8)
 python3 -m security_council.cli report <run_dir> --format html|csv|cklb|cyclonedx   # R8 formats
 python3 -m security_council.cli report <run_dir> --bundle triage|gov|all [--app-name X --app-version Y]
-python3 -m pytest tests/ -q        # 513 green + 1 skip (~1.9s); .venv/bin/python runs all incl. MCP handshake
+python3 -m pytest tests/ -q        # 623 green + 1 skip (~12s); .venv/bin/python runs all incl. MCP handshake
 python3 -m security_council.cli report <run_dir> --format emass --app-name X --app-version Y   # eMASS POST body
 security-council-mcp                                              # MCP stdio server (pip install .[mcp])
 python3 -m security_council.ci.azure_devops <run_dir> [--post-pr-thread] [--dry-run]   # ADO annotations
@@ -362,6 +362,42 @@ analysis results fails the gate-unchanged test. **Live status: LIVE-VERIFIED 202
 **Known residuals, documented:** decision store signing is provenance, not assurance (R13: only load-bearing behind
 CODEOWNERS + required review; documented residuals in docs/signing.md); ADO/GitLab templates
 unproven on real infrastructure; CKLB never opened in a live STIG Viewer.
+
+## 7.10 Release state — 0.2.0 (2026-08-27, rehearsed; tag/release pending user go-ahead)
+
+**The confidence bar for "a cut that actually works" is now a rehearsal, not the
+test suite.** Method (repeat it for every release; ~15 min, $0 except one
+optional `--validate`): `uv build` → `uv venv` + install the WHEEL with `[mcp]`
+(no `-e`, no dev extras) → copy `tests/fixtures/seedrepo` to a directory OUTSIDE
+the checkout (the venv resolves `security_council` from the cwd otherwise) and
+`git init` it → run as a user: `doctor`, `setup --yes`, `scan .` (default arms,
+docker), `runs`, `report` in all 12 formats + `--bundle all`, `serve` (curl
+index / `/runs/latest` / run page / zip / traversal / bad Host / POST), the MCP
+stdio handshake (`initialize`, `tools/list`, `sc_doctor`), `ci.azure_devops
+--dry-run`, `ci.gitlab --write-reports --dry-run`, `--sbom`, `decisions
+init|trust|verify` + signed `suppress`/`baseline set`/`outcome mark` + rescan,
+`--verify-patch` (a real fix → `fixed`, a comment-only patch → `not_fixed`),
+`--gate-baseline new` (nothing new → 0; a COPIED vulnerable file → must be 1),
+`--validate --validate-max 1` with llm-council on PATH (51 s, TP 0.75, 3/3
+citations) AND with it stripped from PATH. Measure exit codes with
+`${PIPESTATUS[0]}`, never `$?` after a pipe (bit me three times).
+
+Found by the 2026-08-27 rehearsal, both reproduced live before fixing and
+again after: (1) **copy-pasted baselined vuln passed `gate_baseline: new`**
+(path-free root-cause fingerprint → same cluster → `unchanged`) — baseline
+entries now carry `uris` inside the signed digest, out-of-baseline files ⇒
+`new`; 0.1.x baselines ⇒ `baseline_legacy_entries` degradation until re-set;
+tamper on `uris` ⇒ `baseline_refused`. (2) **`--validate` with no backend was
+silent** (needs_human but "1 cross-examined", no degradation) — now
+`validator_unavailable`/`validator_failed` + summary flag + `doctor` row.
+Papercuts: cheat sheet's checkout-only paths and hard-coded `@v0.1.0`;
+`summary.html` missing from the scan footer. Everything else passed from the
+wheel first time. Six regression tests, vacuity-checked. 623 tests.
+
+Release steps left (outward-facing, need the user's go): `git push`, `git tag
+v0.2.0` + push, `gh release create v0.2.0` with the CHANGELOG section, then
+`gh workflow run live-verify` (runs against `@main`) and confirm both jobs
+green. `git ls-remote --tags origin` first — a stale tag bit 0.1.0.
 
 ## 8. Recommended next steps (in rough priority)
 
