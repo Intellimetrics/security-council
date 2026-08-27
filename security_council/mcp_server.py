@@ -149,6 +149,12 @@ def sc_report(arguments: dict) -> dict:
     if fmt == "md":
         from .export import markdown
         return {"markdown": markdown.to_markdown(findings, m)}
+    if fmt == "html":
+        from .export import html_export
+        md = run_dir / "summary.md"
+        return {"html": html_export.to_html(findings, m, run_dir=run_dir,
+                                            markdown_text=md.read_text() if md.is_file() else None),
+                "path": str(run_dir / "summary.html")}
     if fmt == "emass":
         from .export import emass
         app, ver = arguments.get("app_name"), arguments.get("app_version")
@@ -158,14 +164,12 @@ def sc_report(arguments: dict) -> dict:
         body, meta = emass.to_emass_static_code_scans(
             findings, application_name=app, version=ver, scan_date=int(scan_date))
         return {"body": body, "meta": meta}
-    raise ValueError(f"unknown format {fmt!r} (json|md|emass)")
+    raise ValueError(f"unknown format {fmt!r} (json|md|html|emass)")
 
 
 def _latest_run(target: Path) -> Path | None:
-    runs = target / ".security-council" / "runs"
-    cands = sorted(d for d in runs.iterdir()
-                   if (d / "manifest.json").is_file()) if runs.is_dir() else []
-    return cands[-1] if cands else None
+    from .cli import latest_run
+    return latest_run(target, need_findings=False)
 
 
 def sc_last_run(arguments: dict) -> dict:
@@ -351,9 +355,9 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
      sc_scan),
     ("sc_doctor", "Check which arms are available.",
      _obj({"target": _target_prop()}), sc_doctor),
-    ("sc_report", "Summarize or export a run directory (json | md | emass).",
+    ("sc_report", "Summarize or export a run directory (json | md | html | emass).",
      _obj({"run_dir": {"type": "string"},
-           "format": {"enum": ["json", "md", "emass"]},
+           "format": {"enum": ["json", "md", "html", "emass"]},
            "app_name": {"type": "string"}, "app_version": {"type": "string"},
            "scan_date": {"type": "integer"}}, ["run_dir"]),
      sc_report),

@@ -66,6 +66,22 @@
 - Round 6 (council YES): only `\"` is treated as an escape inside a quoted
   roster value, exactly as OpenSSH does.
 
+### Added — one-page HTML report on every scan
+
+- `summary.html` is written next to `summary.md` on every scan: gate banner,
+  what-to-do-next, tiles (severity, gating, corroboration, arms, degradations,
+  decision signatures), a red degradations box, a "Where to look" block
+  linking every file the run produced (SARIF, findings, raw per-arm bundles,
+  analysis documents, patch verification), a section nav, then the full
+  report. The body is rendered FROM `summary.md` by a strict renderer for our
+  own dialect (`export/mdrender.py`), so the page cannot lag the markdown;
+  the hardening is unchanged (one escaping boundary, zero script, zero
+  external assets, print = PDF). Light and dark.
+- `security-council runs` lists a target's runs newest-first; `report` with
+  no run directory means the latest; `report --open` and `scan --open` render
+  and open the page; `runs/latest` symlink points at the newest run. MCP
+  `sc_report` accepts `format: html`.
+
 ### Added — deterministic verify-fix
 
 - `scan <path> --verify-patch FILE [--for IDS]` verifies a patch the way the

@@ -78,6 +78,14 @@ and dry-runs first, crypto/critical can never be auto-suppressed, and a
 CI-enforced eval gate replays labeled ground truth and fails if any true
 positive gets buried. [safety-model.md](safety-model.md).
 
+**Where did the report go?**
+`security-council runs` lists every run with its exit code and counts;
+`security-council report --open` opens the newest run's `summary.html`
+(`scan . --open` does it straight after a scan). Runs live under
+`<your-repo>/.security-council/runs/<timestamp>/`, and `runs/latest` always
+points at the newest. `summary.html` has a "Where to look" block linking the
+SARIF, `findings.json`, each scanner's raw bundle and any analysis documents.
+
 **Is my repo's scan data stored anywhere?**
 Only on your machine: run outputs and decisions live under
 `<your-repo>/.security-council/` (gitignored by default). If you use the

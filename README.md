@@ -112,6 +112,10 @@ Two independent tools found the same hardcoded credential — that agreement is
 exactly what the report highlights. The exit code (`1` here, because a
 high-severity finding is open) is what fails a CI build.
 
+Prefer a page? Every run also writes `summary.html` — the same report with a
+gate banner, tiles, and links to every output file. `security-council report
+--open` opens the latest one; `security-council runs` lists them all.
+
 **➡ Full walkthrough, including how to handle a false positive:
 [docs/tutorial.md](docs/tutorial.md)** — it uses the intentionally-vulnerable
 practice repo that ships in this repository, so you can follow along safely.

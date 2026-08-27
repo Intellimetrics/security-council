@@ -66,12 +66,25 @@ Each scan writes `.security-council/runs/<timestamp>/`:
 
 | File | What it is |
 |---|---|
+| `summary.html` | **Open this one.** The same report as a self-contained page: gate banner, what-to-do-next, tiles, degradations, a "Where to look" block linking every file below, then the full summary. No scripts, no external assets; print for a PDF |
 | `summary.md` | Human-readable executive summary: gate verdict, at-a-glance counts, **method & model attestation** (which arm, which model, cost), findings register, per-finding detail, and a demoted-not-hidden appendix |
 | `merged.sarif` | One SARIF 2.1.0 run of root-cause clusters (validated against the official schema; lossless round-trip via `properties.securityCouncil`) |
 | `raw.sarif` | One SARIF run per arm, unmerged |
 | `findings.json` | The canonical finding model — system of record for all exports |
 | `policy.json` | Per-finding scoring + disposition audit trail (log-odds terms, clamps, guardrails consulted) |
 | `manifest.json` | What ran, on what revision, arm status/cost, degradations, baseline delta, exit code |
+
+### Finding your reports
+
+```bash
+security-council runs                 # every run, newest first, with exit code and counts
+security-council report --open        # render + open the latest run's summary.html
+security-council scan . --open        # same, straight after a scan
+cat .security-council/runs/latest/summary.md   # `latest` always points at the newest run
+```
+
+`report` with no run directory means the latest one; `--out DIR` on `scan`
+puts a run somewhere other than the repo's hidden folder.
 
 Re-render or export any prior run without rescanning:
 

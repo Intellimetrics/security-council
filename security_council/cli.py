@@ -164,6 +164,8 @@ def cmd_scan(args) -> int:
                    analysis_arms=analysis_arms, fix_spec=fix_spec,
                    vendor_validate=bool(getattr(args, "vendor_validate", False)),
                    verify_patch=verify_patch)
+    if getattr(args, "open", False):
+        _open_report(run.out_dir)
     if args.json:
         print(json.dumps({"run_id": run.run_id, "out_dir": str(run.out_dir),
                           "exit_code": run.exit_code, "counts": run.manifest["counts"],
@@ -302,7 +304,83 @@ def _report_bundle(args, m: dict) -> int:
     return 0
 
 
+def _open_report(run_dir: Path) -> int:
+    """Render (or refresh) summary.html for a run and open it in the browser."""
+    import webbrowser
+    from .export import html_export
+    mf = run_dir / "manifest.json"
+    if not mf.is_file():
+        print(f"error: no manifest.json in {run_dir}", file=sys.stderr)
+        return EXIT_USAGE
+    m = json.load(open(mf))
+    page = run_dir / "summary.html"
+    md = run_dir / "summary.md"
+    page.write_text(html_export.to_html(
+        _load_findings(run_dir), m, scores=_load_scores(run_dir) or None, run_dir=run_dir,
+        markdown_text=md.read_text() if md.is_file() else None))
+    print(f"report: {page}")
+    if not webbrowser.open(page.resolve().as_uri()):
+        print("note: no browser could be opened here; open the path above by hand",
+              file=sys.stderr)
+    return 0
+
+
+def cmd_runs(args) -> int:
+    """List a target's runs, newest first — the answer to 'where did it go?'."""
+    target = Path(args.target).resolve()
+    dirs = run_dirs(target)
+    rows = []
+    for d in dirs:
+        try:
+            m = json.loads((d / "manifest.json").read_text())
+        except (OSError, ValueError):
+            continue
+        sev = (m.get("counts") or {}).get("by_severity") or {}
+        rows.append({"run_id": d.name, "path": str(d), "started_at": m.get("started_at"),
+                     "exit_code": m.get("exit_code"), "total": (m.get("counts") or {}).get("total"),
+                     "by_severity": sev, "arms": [a.get("name") for a in m.get("arms") or []],
+                     "failed_arms": [a.get("name") for a in m.get("arms") or [] if not a.get("ok")],
+                     "scope": (m.get("scan_scope") or {}).get("kind", "full"),
+                     "degradations": len(m.get("degradations") or []),
+                     "summary_html": str(d / "summary.html") if (d / "summary.html").is_file()
+                     else None})
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    if not rows:
+        print(f"no runs under {target / '.security-council' / 'runs'}", file=sys.stderr)
+        return 1
+    from .export.markdown import EXIT_LABELS
+    link = target / ".security-council" / "runs" / "latest"
+    tail = f"; latest -> {link.resolve().name}" if link.is_symlink() else ""
+    print(f"runs under {target / '.security-council' / 'runs'} (newest first{tail}):")
+    for r in rows:
+        sev = " ".join(f"{k}={v}" for k, v in r["by_severity"].items())
+        flags = []
+        if r["scope"] != "full":
+            flags.append(f"partial:{r['scope']}")
+        if r["failed_arms"]:
+            flags.append("failed:" + ",".join(r["failed_arms"]))
+        if r["degradations"]:
+            flags.append(f"degr={r['degradations']}")
+        print(f"  {r['run_id']}  exit {r['exit_code']}  {EXIT_LABELS.get(r['exit_code'], ''):<34} "
+              f"{str(r['total']):>3} findings  {sev:<30} arms={','.join(r['arms'])}"
+              + (f"  [{' '.join(flags)}]" if flags else ""))
+    print(f"open the newest: security-council report --open   "
+          f"(or {dirs[0] / 'summary.html'})")
+    return 0
+
+
 def cmd_report(args) -> int:
+    if not args.run_dir:
+        d = latest_run(Path(args.target).resolve(), need_findings=False)
+        if d is None:
+            print(f"error: no runs under {Path(args.target).resolve() / '.security-council' / 'runs'}"
+                  " (pass a run directory)", file=sys.stderr)
+            return EXIT_USAGE
+        args.run_dir = str(d)
+    if getattr(args, "open", False):
+        return _open_report(Path(args.run_dir))
     mf = Path(args.run_dir) / "manifest.json"
     if not mf.is_file():
         print(f"error: no manifest.json in {args.run_dir}", file=sys.stderr)
@@ -316,8 +394,11 @@ def cmd_report(args) -> int:
         return 0
     if args.format == "html":
         from .export import html_export
+        md = Path(args.run_dir) / "summary.md"
         print(html_export.to_html(_load_findings(args.run_dir), m,
-                                  scores=_load_scores(args.run_dir) or None))
+                                  scores=_load_scores(args.run_dir) or None,
+                                  run_dir=Path(args.run_dir),
+                                  markdown_text=md.read_text() if md.is_file() else None))
         return 0
     if args.format == "cklb":
         from .export import cklb
@@ -440,10 +521,28 @@ def _run_dir(args) -> Path | None:
     if getattr(args, "run", None):
         d = Path(args.run)
         return d if (d / "findings.json").is_file() else None
-    runs = Path(args.target).resolve() / ".security-council" / "runs"
-    cands = sorted(d for d in runs.iterdir()
-                   if (d / "findings.json").is_file()) if runs.is_dir() else []
-    return cands[-1] if cands else None
+    return latest_run(Path(args.target).resolve())
+
+
+def run_dirs(target: Path) -> list[Path]:
+    """Completed run directories under the target, newest first. The `latest`
+    symlink is skipped (it is one of the others) and so is anything that is
+    not shaped like a run id."""
+    import re
+    runs = target / ".security-council" / "runs"
+    if not runs.is_dir():
+        return []
+    out = [d for d in runs.iterdir()
+           if d.is_dir() and not d.is_symlink() and re.fullmatch(r"\d{8}_\d{6}", d.name)
+           and (d / "manifest.json").is_file()]
+    return sorted(out, key=lambda d: d.name, reverse=True)
+
+
+def latest_run(target: Path, *, need_findings: bool = True) -> Path | None:
+    for d in run_dirs(target):
+        if not need_findings or (d / "findings.json").is_file():
+            return d
+    return None
 
 
 def _find_row(run_dir: Path, finding_id: str) -> dict | None:
@@ -785,6 +884,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fail-on-severity", choices=["critical", "high", "medium", "low", "info"])
     s.add_argument("--gate-baseline", choices=["all", "new"],
                    help='"new" gates only findings absent from the operator-set baseline')
+    s.add_argument("--open", action="store_true",
+                   help="open the run's summary.html in a browser when the scan finishes")
     s.add_argument("--require-signatures", choices=["off", "warn", "enforce", "auto"],
                    help="decision-signature policy for this run (docs/signing.md); the CI "
                         "templates pass `enforce` so a committed store cannot lower it")
@@ -855,8 +956,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("doctor", help="check arm availability")
     d.set_defaults(fn=cmd_doctor)
-    r = sub.add_parser("report", help="summarize or export a previous run directory")
-    r.add_argument("run_dir")
+    ru = sub.add_parser("runs", help="list a target's scan runs, newest first, with exit code "
+                                     "and counts — where the reports are")
+    ru.add_argument("--target", default=".")
+    ru.add_argument("--json", action="store_true")
+    ru.set_defaults(fn=cmd_runs)
+
+    r = sub.add_parser("report", help="summarize or export a run directory (default: the "
+                                      "latest run under --target)")
+    r.add_argument("run_dir", nargs="?", help="run directory (default: latest run)")
+    r.add_argument("--target", default=".", help="repo whose latest run to use when run_dir "
+                                                 "is omitted")
+    r.add_argument("--open", action="store_true",
+                   help="write summary.html into the run directory and open it in a browser")
     r.add_argument("--format",
                    choices=["json", "md", "html", "csv", "emass", "cklb", "cyclonedx",
                             "gitlab-sast", "gitlab-codequality",

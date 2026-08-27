@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from . import __version__, calibration as calibration_mod, decisions as decision
 from .arms.base import Arm, ArmResult
 from .artifacts import findings_digest
 from .cluster import cluster_findings, merge_cluster
-from .export import markdown, sarif
+from .export import html_export, markdown, sarif
 from .jsonio import dumps, to_dict
 from .manifest import build_manifest
 from .model import Finding
@@ -31,6 +32,31 @@ class ScanRun:
     manifest: dict
     exit_code: int
     degradations: list[dict] = field(default_factory=list)
+
+
+
+def _write_summaries(out_dir: Path, findings: list[Finding], manifest: dict, *, scores) -> None:
+    """summary.md is the system of record; summary.html is rendered FROM that
+    exact text (plus a computed dashboard), so the page cannot lag the markdown."""
+    md = markdown.to_markdown(findings, manifest, scores=scores)
+    (out_dir / "summary.md").write_text(md)
+    (out_dir / "summary.html").write_text(html_export.to_html(
+        findings, manifest, scores=scores, run_dir=out_dir, markdown_text=md))
+
+
+def _point_latest(out_dir: Path) -> None:
+    """`<runs>/latest` -> this run (a relative symlink, replaced each scan) so a
+    human or a script can open the newest report without knowing the run id.
+    Best-effort: a filesystem without symlinks just goes without."""
+    link = out_dir.parent / "latest"
+    try:
+        if link.is_symlink() or link.exists():
+            if link.is_dir() and not link.is_symlink():
+                return                      # a real directory named latest: leave it alone
+            link.unlink()
+        os.symlink(out_dir.name, link)
+    except OSError:
+        pass
 
 
 def _utc_stamp() -> tuple[str, str]:
@@ -301,8 +327,9 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             started_at=collected_at, finished_at=finished_at, git={}, degradations=degr,
             exit_code=code, scan_scope=scan_scope,
             reports=[{"path": str(out_dir / n), "format": fmt}
-                     for n, fmt in (("summary.md", "markdown"), ("manifest.json", "json"))])
-        (out_dir / "summary.md").write_text(markdown.to_markdown([], manifest))
+                     for n, fmt in (("summary.md", "markdown"), ("summary.html", "html"),
+                                    ("manifest.json", "json"))])
+        _write_summaries(out_dir, [], manifest, scores=None)
         (out_dir / "manifest.json").write_text(dumps(manifest))
         return ScanRun(run_id=run_id, out_dir=out_dir, findings=[], arm_results=[],
                        manifest=manifest, exit_code=code, degradations=degr)
@@ -608,11 +635,13 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             verify_fix=verify_fix,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
                      (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
-                      ("summary.md", "markdown"), ("manifest.json", "json"),
+                      ("summary.md", "markdown"), ("summary.html", "html"),
+                      ("manifest.json", "json"),
                       ("policy.json", "json"))])
-        (out_dir / "summary.md").write_text(markdown.to_markdown(
-            merged, manifest, scores=calibration_mod.fitted_scores(policy_rows) or None))
+        _write_summaries(out_dir, merged, manifest,
+                         scores=calibration_mod.fitted_scores(policy_rows) or None)
         (out_dir / "manifest.json").write_text(dumps(manifest))
+        _point_latest(out_dir)
     finally:
         ws.cleanup()
 
