@@ -227,9 +227,20 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
     meta.append(f"security-council {_e(tool)}")
     if scope != "full":
         meta.append(f"<strong>⚠ partial — {_e(scope)} scan</strong>")
-    if src.get("kind") == "repository":
-        meta.append("<strong>⚠ config loaded from the scanned repository</strong>")
     out.append(f'<p class="meta">{" · ".join(meta)}</p>')
+    pol = manifest.get("policy") or {}
+    line2 = [f"policy: fail on ≥ <code>{_e(pol.get('fail_on_severity', 'high'))}</code>"
+             f" · min arms ok <code>{_e(pol.get('min_arms_ok', 1))}</code>"
+             f" · auto-suppress {'on' if pol.get('auto_suppress') else 'off'}"
+             + (" · gate only new vs baseline" if pol.get("gate_baseline") == "new" else "")]
+    if src.get("kind") == "repository":
+        line2.append(f"config <code>{_e(src.get('path'))}</code> — <strong>⚠ loaded from the "
+                     "scanned repository</strong> (in CI pass <code>--ignore-repo-config</code>)")
+    elif src.get("kind") == "explicit":
+        line2.append(f"config <code>{_e(src.get('path'))}</code> (operator-supplied)")
+    else:
+        line2.append("config: defaults" + (f" ({_e(src.get('note'))})" if src.get("note") else ""))
+    out.append(f'<p class="meta">{" · ".join(line2)}</p>')
     out.append(f'<div class="gate {cls}">GATE: {_e(label)} (exit {_e(exit_code)})</div>')
     out.append(_next_steps(exit_code, gating, manifest))
 
@@ -271,9 +282,12 @@ def to_html(findings: list[Finding], manifest: dict, *, scores: dict | None = No
     link the real `raw/` bundles and `exports/`."""
     md = markdown_text if markdown_text is not None else _markdown.to_markdown(
         findings, manifest, scores=scores)
-    # the dashboard already carries the title; the body starts at the metadata
+    # the dashboard already carries the title and the metadata bullets
+    # (target, config source, run window, policy, gate) — the body starts at
+    # the first section
     if md.startswith("# "):
-        md = md.split("\n", 1)[1] if "\n" in md else ""
+        cut = md.find("\n## ")
+        md = md[cut + 1:] if cut != -1 else ""
     body, headings = mdrender.render(md)
     toc = "".join(f'<a href="#{_e(hid)}">{mdrender.inline(text)}</a>'
                   for level, hid, text in headings if level == 2)

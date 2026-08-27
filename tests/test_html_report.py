@@ -104,6 +104,9 @@ def test_page_carries_every_markdown_section_heading_for_heading():
     assert "Suppressions reapplied from the decision store" in page
     assert "Decision signatures" in page and "Analysis artifacts" in page
     assert page.count("<h2") == md.count("\n## ") + 2      # md h2s + Degradations + Where to look
+    # the metadata bullets before the first section are not repeated in the body
+    assert "<strong>Target:</strong>" not in page and "<strong>Policy:</strong>" not in page
+    assert page.count("security-council report — run") == 1
 
 
 def test_page_is_hardened_and_self_contained():
@@ -139,6 +142,9 @@ def test_dashboard_gate_tiles_next_steps_and_where_to_look(tmp_path):
     (tmp_path / "exports").mkdir()
     page = _page([a], mf, run_dir=tmp_path)
     assert 'class="gate fail">GATE: FAIL' in page and "(exit 1)" in page
+    assert "policy: fail on ≥ <code>high</code>" in page and "config: defaults" in page
+    repo_cfg = _page([a], dict(mf, config_source={"kind": "repository", "path": "/r/.security-council.yaml"}))
+    assert "loaded from the scanned repository" in repo_cfg and "/r/.security-council.yaml" in repo_cfg
     assert "1 finding(s) fail the gate" in page and "1 high" in page
     assert "security-council suppress" in page and "baseline set" in page
     assert '<div class="k">gating</div><div class="v">1</div>' in page
