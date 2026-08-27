@@ -41,7 +41,17 @@ ingest their richest native output rather than a lossy projection:
   parsed from its stderr progress stream (the CLI writes nothing to stdout)
   and a `--max-cost` stop is surfaced as `cost_stopped` in the manifest.
   The default $5 fuse can cut its final "attack paths" phase — give it
-  `max_cost_usd: 8` if you want that phase.
+  `max_cost_usd: 8` if you want that phase. **What the dollars mean depends on
+  how you signed in.** With an API key (`OPENAI_API_KEY`, or `login
+  --with-api-key`) the estimate tracks real API billing. With a **ChatGPT
+  sign-in** (`npx @openai/codex-security login`, the local default — `login
+  status` says "Logged in using ChatGPT") nothing is billed per token: the
+  CLI still reports an *estimated* cost at standard API prices, and the run
+  draws on your ChatGPT plan's Codex usage limits instead. The fuse is then a
+  cap on token volume, not on money — a standard scan of the 9-file fixture
+  needs ≥ $8 of "estimated" cost (~2.2M input tokens, mostly cached) to reach
+  its findings, and a $4 fuse stops it in the validation phase with nothing
+  emitted (reported honestly as `cost_stopped`, coverage `none`, exit 3).
 
 Per-arm options go in `.security-council.yaml` under `arms.options.<name>`
 (they are constructor kwargs — see each arm's module docstring).
