@@ -311,3 +311,133 @@ def test_mcp_serve_start_status_stop(tmp_path, monkeypatch):
     finally:
         assert srv_mod.sc_serve({"action": "stop"})["stopped"] is True
     assert srv_mod.sc_serve({"action": "status"}) == {"running": False}
+
+
+# --------------------------------------------------------------------- #
+# R14a (claude + antigravity): Host, "", confined root reads, stored HTML,
+# content types, root-level dual-use, fail-closed manifest, zip cap, logs
+# --------------------------------------------------------------------- #
+
+def _get_host(url, host):
+    req = urllib.request.Request(url)
+    req.add_header("Host", host)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def test_host_header_must_be_localhost_or_an_ip_literal(viewer):
+    """S1 — DNS rebinding: a name that resolves to us is refused."""
+    srv, base, target, runs = viewer
+    assert serve.host_ok("localhost") and serve.host_ok("LOCALHOST:8642")
+    assert serve.host_ok("127.0.0.1") and serve.host_ok("127.0.0.1:8642")
+    assert serve.host_ok("192.168.1.5:80") and serve.host_ok("[::1]:8642") and serve.host_ok("[::1]")
+    for bad in ("attacker.example", "attacker.example:8642", "localhost.evil", "", None,
+                "127.0.0.1:abc", "[::1", "a b", "127.0.0.1.nip.io"):
+        assert not serve.host_ok(bad), bad
+    assert _get_host(base, "attacker.example:8642") == 421
+    assert _get_host(base, "localhost") == 200
+    assert _get_host(base, f"127.0.0.1:{srv.port}") == 200
+
+
+def test_empty_bind_is_all_interfaces_not_loopback():
+    """S2 — `""` binds INADDR_ANY; it must be treated like 0.0.0.0."""
+    assert not serve.is_loopback("") and serve.needs_token("")
+    with pytest.raises(serve.ServeRefused, match="token is required"):
+        serve.check_bind("", None)
+
+
+def test_run_root_reads_are_confined_and_stored_html_is_never_served(viewer, tmp_path):
+    """S3/S5 — symlinked manifest/summary.md are not followed; a stored
+    summary.html (ours or a hostile one) is never served as HTML."""
+    srv, base, target, runs = viewer
+    run = runs[-1]
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"run_id": "LEAK", "counts": {}, "arms": [], "exit_code": 0}))
+    (run.out_dir / "manifest.json").rename(run.out_dir / "manifest.real")
+    (run.out_dir / "manifest.json").symlink_to(outside)
+    status, _, body = _get(base + f"runs/{run.run_id}/")
+    assert b"LEAK" not in body and status in (200, 404)
+    _, _, index = _get(base)
+    assert b"LEAK" not in index
+    (run.out_dir / "manifest.json").unlink()
+    (run.out_dir / "manifest.real").rename(run.out_dir / "manifest.json")
+    # a hostile stored summary.html is never what /runs/<id>/ returns
+    (run.out_dir / "summary.html").write_text("<script>alert('planted')</script>")
+    status, headers, body = _get(base + f"runs/{run.run_id}/")
+    assert status == 200 and b"planted" not in body and b"<h1>security-council report" in body
+    status, headers, body = _get(base + f"runs/{run.run_id}/summary.html")
+    assert status == 200 and headers["Content-Type"].startswith("text/plain")
+
+
+def test_document_types_are_text_or_downloads(viewer):
+    srv, base, target, runs = viewer
+    run = runs[-1]
+    (run.out_dir / "raw" / "v").mkdir(parents=True, exist_ok=True)
+    for name, content in (("summary.html", "<b>x</b>"), ("a.xhtml", "<x/>"), ("a.svg", "<svg/>"),
+                          ("a.xml", "<a/>"), ("a.htm", "<p>")):
+        (run.out_dir / "raw" / "v" / name).write_text(content)
+        status, headers, _ = _get(base + f"runs/{run.run_id}/raw/v/{name}")
+        assert status == 200 and headers["Content-Type"].startswith("text/plain"), name
+    (run.out_dir / "raw" / "v" / "blob.bin").write_bytes(b"\x00\x01")
+    status, headers, _ = _get(base + f"runs/{run.run_id}/raw/v/blob.bin")
+    assert status == 200 and headers["Content-Type"] == "application/octet-stream"
+    assert "attachment" in headers["Content-Disposition"]
+
+
+def test_root_level_dual_use_and_unreadable_manifest_fail_closed(tmp_path):
+    target, runs = _target(tmp_path)
+    run = runs[0]
+    (run.out_dir / "writeup.md").write_text("# w\n")
+    (run.out_dir / "raw" / "x").mkdir(parents=True)
+    (run.out_dir / "raw" / "x" / "log.txt").write_text("l")
+    m = json.loads((run.out_dir / "manifest.json").read_text())
+    m["artifacts"] = [{"kind": "writeup", "producer": "house:claude", "dual_use": True,
+                       "export_excluded": True, "path": "writeup.md"}]
+    (run.out_dir / "manifest.json").write_text(json.dumps(m))
+    srv = serve.ReportServer(target, port=0)
+    base = srv.start()
+    try:
+        assert _get(base + f"runs/{run.run_id}/writeup.md")[0] == 403      # antigravity: root-level
+        assert _get(base + f"runs/{run.run_id}/summary.md")[0] == 200      # siblings unaffected
+        assert _get(base + f"runs/{run.run_id}/raw/x/log.txt")[0] == 200
+        (run.out_dir / "manifest.json").write_text("{not json")
+        assert _get(base + f"runs/{run.run_id}/raw/x/log.txt")[0] == 403  # fail closed on raw/
+        assert _get(base + f"runs/{run.run_id}/summary.md")[0] == 200
+        assert _get(base + f"runs/{run.run_id}/")[0] == 404                # no manifest, no page
+    finally:
+        srv.stop()
+
+
+def test_zip_size_cap_and_log_redaction(viewer, monkeypatch, capsys):
+    srv, base, target, runs = viewer
+    run = runs[-1]
+    monkeypatch.setattr(serve, "ZIP_MAX_BYTES", 10)
+    status, _, body = _get(base + f"runs/{run.run_id}.zip")
+    assert status == 413 and b"download its files individually" in body
+    monkeypatch.setenv("SECURITY_COUNCIL_SERVE_LOG", "1")
+
+    class _H(serve._Handler):
+        def __init__(self):
+            self.client_address = ("127.0.0.1", 1)
+            self.requestline = "GET /?token=SECRETTOKEN HTTP/1.1"
+        def address_string(self):
+            return "127.0.0.1"
+        def log_date_time_string(self):
+            return "now"
+    _H().log_message('"%s" %s %s', "GET /?token=SECRETTOKEN HTTP/1.1", "200", "-")
+    err = capsys.readouterr().err
+    assert "SECRETTOKEN" not in err and "token=REDACTED" in err
+
+
+def test_safe_href_and_docs_root_guard(tmp_path):
+    from security_council.export import mdrender
+    for bad in ("mailto:x@y", "file:/etc/passwd", "ftp://x", "javascript:alert(1)", "data:x",
+                "//evil", "\\\\host\\x", "JAVASCRIPT:x", "custom+scheme:y"):
+        assert mdrender._safe_href(bad) is None, bad
+    for ok in ("guide.md", "../other.md", "http://example.org/x", "HTTPS://example.org", "#anchor", "a:b/c"):
+        assert mdrender._safe_href(ok) == ok or ok == "a:b/c", ok
+    assert mdrender._safe_href("a:b/c") is None                      # scheme-shaped: text
+    assert serve._default_docs_root() is not None                    # this IS the checkout

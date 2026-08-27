@@ -3,7 +3,7 @@
 What it serves (stdlib `http.server`, no dependency, no JavaScript):
 
     /                         index: every run newest-first (the `runs` listing)
-    /runs/<id>/               that run's summary.html (rendered in memory if absent)
+    /runs/<id>/               that run's page, always rendered in memory (never a stored file)
     /runs/<id>/<file>         any file in the run directory (SARIF, findings, raw/…)
     /runs/<id>.zip            the run directory as one download
     /runs/latest/…            redirects to the newest run
@@ -28,8 +28,12 @@ turning "files on disk" into "a socket" widens the data boundary
   exporters apply.
 - **Hardened responses.** `Content-Security-Policy: default-src 'none';
   style-src 'unsafe-inline'`, `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: no-referrer`, `Cache-Control: no-store`; markdown and JSON
-  are served as text, never sniffed into HTML.
+  `Referrer-Policy: no-referrer`, `Cache-Control: no-store`; only a fixed set
+  of text types is ever served, every `.html`/`.svg`/`.xml` in a run comes back
+  as plain text, unknown types are downloads, and the run page itself is
+  always rendered in memory — a stored HTML file is never served as HTML.
+- **Host-checked.** A `Host` that is not `localhost` or an IP literal is
+  refused (421): DNS rebinding is how a web page reaches a loopback service.
 - **A viewer, not a portal.** No accounts, no persistence, no uploads; it
   dies with the process (the MCP `sc_serve` lifetime is the assistant's
   session — for a team portal run the CLI under a supervisor, or publish
@@ -43,8 +47,8 @@ import html
 import io
 import ipaddress
 import json
-import mimetypes
 import os
+import re
 import secrets
 import threading
 import zipfile
@@ -57,13 +61,22 @@ from .export import mdrender
 
 DEFAULT_PORT = 8642
 COOKIE = "sc_token"
+# The ONLY content types a run file is ever served with. Anything that a
+# browser would render as a document (.html/.htm/.xhtml/.svg/.xml) is text;
+# anything not listed is a download (R14 S5). Our own page is never a stored
+# file: /runs/<id>/ is always rendered in memory from findings + manifest.
 _TEXT_TYPES = {".md": "text/markdown; charset=utf-8", ".sarif": "application/json",
                ".json": "application/json", ".txt": "text/plain; charset=utf-8",
                ".log": "text/plain; charset=utf-8", ".patch": "text/plain; charset=utf-8",
-               ".diff": "text/plain; charset=utf-8", ".html": "text/html; charset=utf-8",
+               ".diff": "text/plain; charset=utf-8", ".html": "text/plain; charset=utf-8",
+               ".htm": "text/plain; charset=utf-8", ".xhtml": "text/plain; charset=utf-8",
+               ".svg": "text/plain; charset=utf-8", ".xml": "text/plain; charset=utf-8",
                ".csv": "text/csv; charset=utf-8", ".yaml": "text/plain; charset=utf-8",
                ".yml": "text/plain; charset=utf-8", ".toml": "text/plain; charset=utf-8",
-               ".cklb": "application/json", ".xml": "text/plain; charset=utf-8"}
+               ".cklb": "application/json", ".py": "text/plain; charset=utf-8",
+               ".js": "text/plain; charset=utf-8", ".ts": "text/plain; charset=utf-8"}
+ZIP_MAX_BYTES = 256 * 1024 * 1024        # a run bigger than this is downloaded file by file
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,253}$")
 
 _CSS = """
 body{margin:0;color:#1a1f27;background:#fff;font:15px/1.5 system-ui,sans-serif}
@@ -79,8 +92,11 @@ pre{padding:.7rem .9rem;overflow-x:auto}.mut{color:#6b7480;font-size:.9rem}
 
 
 def is_loopback(bind: str) -> bool:
-    if bind in ("localhost", ""):
+    """`""` and `0.0.0.0`/`::` are ALL interfaces, never loopback (R14 S2)."""
+    if bind == "localhost":
         return True
+    if bind in ("", "0.0.0.0", "::"):
+        return False
     try:
         return ipaddress.ip_address(bind).is_loopback
     except ValueError:
@@ -104,6 +120,37 @@ def check_bind(bind: str, token: str | None) -> None:
         if not token:
             raise ServeRefused(f"binding {bind!r} exposes the reports beyond this machine; a "
                                "token is required (--token auto generates one)")
+
+
+def host_ok(host_header: str | None) -> bool:
+    """R14 S1 — DNS rebinding: a page at attacker.example that re-points the
+    name at 127.0.0.1 makes the browser send same-origin requests to us, and
+    "loopback needs no token" is only safe while the origin check holds. We
+    never serve by DNS name, so a Host that is not `localhost` or an IP
+    literal is refused (421). Applies with or without a token."""
+    if not host_header:
+        return False
+    h = host_header.strip()
+    if h.startswith("["):                       # [v6]:port
+        end = h.find("]")
+        if end == -1:
+            return False
+        name, rest = h[1:end], h[end + 1:]
+        if rest and not (rest.startswith(":") and rest[1:].isdigit()):
+            return False
+    else:
+        name, _, port = h.partition(":")
+        if port and not port.isdigit():
+            return False
+    if not name or not _HOSTNAME_RE.match(name):
+        return False
+    if name.lower() == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        return False
 
 
 def _e(v: object) -> str:
@@ -171,39 +218,84 @@ class ReportServer:
         return base + (f"?token={self.token}" if self.token else "")
 
     # -- policy helpers used by the handler --------------------------------
-    def excluded_dirs(self, run_dir: Path) -> list[Path]:
-        """RESOLVED directories holding dual-use (export_excluded) artifacts,
-        from the run's manifest. Compared as resolved paths, never as request
-        strings — a symlink alias or a case-insensitive filesystem would
-        otherwise walk around a prefix check (R14 own pass). Read per request:
-        manifests are small and a run can be re-rendered while the viewer is up."""
+    def read_json(self, run_dir: Path, name: str) -> dict | list | None:
+        """A run-root file, read ONLY through `_confine` (R14 S3: the fixed
+        names used to be read directly, so a symlinked manifest.json or
+        summary.md was followed out of the runs root)."""
+        p = _confine(run_dir, name)
+        if p is None or not p.is_file():
+            return None
+        try:
+            return json.loads(p.read_text())
+        except (OSError, ValueError):
+            return None
+
+    def excluded_paths(self, run_dir: Path) -> list[Path] | None:
+        """RESOLVED paths that hold dual-use (export_excluded) artifacts: the
+        artifact file itself and, when it sits below the run root, its
+        directory. ``None`` means the manifest could not be read — the caller
+        must then withhold everything under raw/ (fail closed, R14 S4)."""
         if self.include_dual_use:
             return []
-        try:
-            m = json.loads((run_dir / "manifest.json").read_text())
-        except (OSError, ValueError):
-            return []
+        m = self.read_json(run_dir, "manifest.json")
+        if not isinstance(m, dict):
+            return None
         out: list[Path] = []
+        root = run_dir.resolve()
         for a in m.get("artifacts") or []:
-            if a.get("export_excluded") and a.get("path"):
-                d = _confine(run_dir, str(a["path"]).strip("/").rsplit("/", 1)[0]
-                             if "/" in str(a["path"]) else "")
-                if d is not None and d != run_dir.resolve():
+            if not (a.get("export_excluded") and a.get("path")):
+                continue
+            rel = str(a["path"]).strip("/")
+            f = _confine(run_dir, rel)
+            if f is not None and f != root:
+                out.append(f)
+            if "/" in rel:
+                d = _confine(run_dir, rel.rsplit("/", 1)[0])
+                if d is not None and d != root:
                     out.append(d)
         return out
 
     @staticmethod
-    def is_excluded(path: Path, excluded: list[Path]) -> bool:
+    def is_excluded(path: Path, excluded: list[Path] | None, run_dir: Path) -> bool:
+        """Inode comparison (`samestat`) of the path and each of its parents
+        against the excluded set — string/Path equality misses a
+        case-insensitive filesystem or an alias (R14 S4)."""
         try:
             r = path.resolve(strict=True)
         except OSError:
             return False
-        return any(r == d or d in r.parents for d in excluded)
+        if excluded is None:
+            raw = run_dir.resolve() / "raw"
+            excluded = [raw] if raw.exists() else []
+        stats = []
+        for d in excluded:
+            try:
+                stats.append(d.stat())
+            except OSError:
+                continue
+        for cand in (r, *r.parents):
+            try:
+                st = cand.stat()
+            except OSError:
+                return False
+            if any(os.path.samestat(st, x) for x in stats):
+                return True
+            if cand == run_dir.resolve():
+                break
+        return False
 
 
 def _default_docs_root() -> Path | None:
-    cand = Path(__file__).resolve().parents[1] / "docs"
-    return cand if (cand / "README.md").is_file() else None
+    """The checkout's docs/ — only when this really is the checkout (R14: from
+    a wheel, parents[1] is site-packages and a foreign `docs/` there would be
+    mounted with links allowed)."""
+    root = Path(__file__).resolve().parents[1]
+    cand = root / "docs"
+    try:
+        marker = (root / "pyproject.toml").read_text()
+    except OSError:
+        return None
+    return cand if 'name = "security-council"' in marker and (cand / "README.md").is_file() else None
 
 
 def _lan_address() -> str | None:
@@ -241,10 +333,13 @@ class _Handler(BaseHTTPRequestHandler):
     srv: ReportServer
     server_version = "security-council-serve"
     sys_version = ""
+    timeout = 30                      # a stalled client cannot hold a thread forever (R14 D1)
 
     # -- plumbing ---------------------------------------------------------
     def log_message(self, fmt, *args):  # noqa: D401 - quiet by default
         if os.environ.get("SECURITY_COUNCIL_SERVE_LOG"):
+            # the request line carries ?token= on the first visit (R14 E1)
+            args = tuple(re.sub(r"token=[^&\s]*", "token=REDACTED", str(a)) for a in args)
             super().log_message(fmt, *args)
 
     def _send(self, status: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
@@ -291,6 +386,10 @@ class _Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self):  # noqa: N802
+        if not host_ok(self.headers.get("Host")):
+            self._extra = {}
+            return self._err(HTTPStatus.MISDIRECTED_REQUEST,
+                             "this viewer answers only to localhost or an IP address")
         url = urlsplit(self.path)
         query = parse_qs(url.query)
         ok, extra = self._authorized(query)
@@ -316,9 +415,8 @@ class _Handler(BaseHTTPRequestHandler):
     def _index(self) -> None:
         rows = []
         for d in self._run_dirs(self.srv.target):
-            try:
-                m = json.loads((d / "manifest.json").read_text())
-            except (OSError, ValueError):
+            m = self.srv.read_json(d, "manifest.json")
+            if not isinstance(m, dict):
                 continue
             code = m.get("exit_code")
             cls = {0: "pass", 1: "fail"}.get(code, "warn")
@@ -357,36 +455,36 @@ class _Handler(BaseHTTPRequestHandler):
         if run_dir is None or not run_dir.is_dir() or run_dir == self.srv.runs_root.resolve():
             return self._err(HTTPStatus.NOT_FOUND, "no such run")
         if not inner:
-            # R14 (codex): the page path must go through the same confinement as
-            # every other file — a symlinked summary.html must not be followed out
-            page = _confine(run_dir, "summary.html")
-            body = (page.read_bytes() if page is not None and page.is_file()
-                    else self._render_summary(run_dir))
+            # ALWAYS rendered in memory from findings + manifest: a stored
+            # summary.html (or one a hostile target committed) is never served
+            # as HTML (R14 S3/S5)
+            body = self._render_summary(run_dir)
             if body is None:
-                return self._err(HTTPStatus.NOT_FOUND, "this run has no summary")
+                return self._err(HTTPStatus.NOT_FOUND, "this run has no readable manifest")
             return self._send(200, body, "text/html; charset=utf-8", self._extra)
         target = _confine(run_dir, inner)
         if target is None:
             return self._err(HTTPStatus.NOT_FOUND, "no such file")
-        if self.srv.is_excluded(target, self.srv.excluded_dirs(run_dir)):
+        if self.srv.is_excluded(target, self.srv.excluded_paths(run_dir), run_dir):
             return self._err(HTTPStatus.FORBIDDEN, "dual-use artifact: not served (start with "
                                                    "--include-dual-use to allow it)")
         if target.is_dir():
             return self._listing(run_dir, target, inner)
         if not target.is_file():
             return self._err(HTTPStatus.NOT_FOUND, "no such file")
-        ctype = _TEXT_TYPES.get(target.suffix.lower()) or \
-            (mimetypes.guess_type(target.name)[0] or "application/octet-stream")
-        if ctype.startswith("text/html") and target.name != "summary.html":
-            ctype = "text/plain; charset=utf-8"          # only OUR page renders as HTML
-        self._send(200, target.read_bytes(), ctype, self._extra)
+        ctype = _TEXT_TYPES.get(target.suffix.lower())
+        extra = dict(self._extra)
+        if ctype is None:
+            ctype = "application/octet-stream"
+            extra["Content-Disposition"] = f'attachment; filename="{_e(target.name)}"'
+        self._send(200, target.read_bytes(), ctype, extra)
 
     def _listing(self, run_dir: Path, d: Path, inner: str) -> None:
-        excluded = self.srv.excluded_dirs(run_dir)
+        excluded = self.srv.excluded_paths(run_dir)
         items = []
         for p in sorted(d.iterdir(), key=lambda x: (not x.is_dir(), x.name)):
             rel = f"{inner.rstrip('/')}/{p.name}".strip("/")
-            if self.srv.is_excluded(p, excluded):
+            if self.srv.is_excluded(p, excluded, run_dir):
                 items.append(f"<li>{_e(p.name)} <span class='mut'>(dual-use, not served)</span></li>")
                 continue
             if _confine(run_dir, rel) is None:
@@ -399,33 +497,51 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(200, _page(inner, body), "text/html; charset=utf-8", self._extra)
 
     def _render_summary(self, run_dir: Path) -> bytes | None:
-        """Render a run's page IN MEMORY when summary.html is missing (older
-        runs). The viewer never writes into a run directory."""
+        """Render a run's page IN MEMORY from its confined manifest/findings/
+        summary.md. The viewer never writes into a run directory and never
+        serves a stored HTML file."""
         try:
-            from .cli import _load_findings, _load_scores
             from .export import html_export
-            m = json.loads((run_dir / "manifest.json").read_text())
-            md = run_dir / "summary.md"
-            return html_export.to_html(
-                _load_findings(run_dir), m, scores=_load_scores(run_dir) or None, run_dir=run_dir,
-                markdown_text=md.read_text() if md.is_file() else None).encode()
-        except (OSError, ValueError):
+            from .jsonio import finding_from_dict
+            m = self.srv.read_json(run_dir, "manifest.json")
+            if not isinstance(m, dict):
+                return None
+            rows = self.srv.read_json(run_dir, "findings.json")
+            findings = [finding_from_dict(d) for d in rows] if isinstance(rows, list) else []
+            pj = self.srv.read_json(run_dir, "policy.json")
+            scores = None
+            if isinstance(pj, list):
+                from . import calibration as cal_mod
+                scores = cal_mod.fitted_scores(pj) or None
+            md_path = _confine(run_dir, "summary.md")
+            md = md_path.read_text() if md_path is not None and md_path.is_file() else None
+            return html_export.to_html(findings, m, scores=scores, run_dir=run_dir,
+                                       markdown_text=md).encode()
+        except (OSError, ValueError, KeyError, TypeError):
             return None
 
     def _zip(self, run_id: str) -> None:
         run_dir = _confine(self.srv.runs_root, run_id)
         if run_dir is None or not run_dir.is_dir() or run_dir == self.srv.runs_root.resolve():
             return self._err(HTTPStatus.NOT_FOUND, "no such run")
-        excluded = self.srv.excluded_dirs(run_dir)
+        excluded = self.srv.excluded_paths(run_dir)
+        files: list[tuple[Path, str]] = []
+        total = 0
+        for p in sorted(run_dir.rglob("*")):
+            if not p.is_file() or p.is_symlink():
+                continue
+            rel = p.relative_to(run_dir).as_posix()
+            if _confine(run_dir, rel) is None or self.srv.is_excluded(p, excluded, run_dir):
+                continue
+            total += p.stat().st_size
+            if total > ZIP_MAX_BYTES:
+                return self._err(HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                                 f"this run is larger than {ZIP_MAX_BYTES // (1024 * 1024)} MB; "
+                                 "download its files individually")
+            files.append((p, rel))
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for p in sorted(run_dir.rglob("*")):
-                if not p.is_file() or p.is_symlink():
-                    continue
-                rel = p.relative_to(run_dir).as_posix()
-                # symlinked DIRECTORIES are walked by rglob: confine each file
-                if _confine(run_dir, rel) is None or self.srv.is_excluded(p, excluded):
-                    continue
+            for p, rel in files:
                 zf.write(p, f"{run_dir.name}/{rel}")
         self._send(200, buf.getvalue(), "application/zip",
                    {"Content-Disposition": f'attachment; filename="{run_dir.name}.zip"', **self._extra})

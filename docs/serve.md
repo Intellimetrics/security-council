@@ -62,12 +62,25 @@ secret-adjacent strings**. Serving it turns "files on my disk" into
   the same rule the exporters apply — unless you start with
   `--include-dual-use`.
 - **Hardened responses.** No script anywhere (`Content-Security-Policy:
-  default-src 'none'`), `nosniff`, no referrer, no caching; only our own
-  `summary.html` is served as HTML — a vendor's `.html` in `raw/` comes back
-  as plain text.
+  default-src 'none'`), `nosniff`, no referrer, no caching. The run page is
+  always rendered in memory from the run's data — a stored HTML file is never
+  served as HTML: every `.html`/`.svg`/`.xml` in a run comes back as plain
+  text, and unknown file types are downloads.
+- **Answers only to `localhost` or an IP address.** A request whose `Host`
+  is a DNS name is refused (421). That is what stops a web page you happen
+  to have open from reaching the viewer through DNS rebinding, which is the
+  known way to attack a loopback service that needs no token.
 - **The token is the whole lock.** Anyone who has it can read every report of
   that target; it travels in a URL, so treat the link like the reports
-  themselves. Restart the viewer to rotate it.
+  themselves — it lands in browser history, and in the assistant's transcript
+  when started over MCP. Restart the viewer to rotate it. Two things HTTP
+  itself gives you no way around: the cookie has no `Secure` flag (plain
+  HTTP), and browsers do not scope cookies by port, so on a LAN bind the
+  token cookie is also sent to any other HTTP service on the same host
+  address — don't co-host the viewer with untrusted services.
+- **Bounded.** Whole-run zips are capped at 256 MB (larger runs: download the
+  files individually); a stalled client is dropped after 30 s. It is still
+  one process with one thread per request — a viewer, not a hardened server.
 - **Not a portal.** It has no TLS and no users. For a team-wide, always-on
   report site, publish `summary.html` and `exports/` as CI artifacts (the
   shipped templates already do), or run `serve` behind your own

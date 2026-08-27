@@ -217,6 +217,23 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
     referrer, no-store; a vendor `.html` under raw/ is served as text. MCP `sc_serve`
     start|stop|status (lifetime = the MCP session). 9 tests in `tests/test_serve.py`. Not
     built: TLS/auth (use a reverse proxy), token rotation without restart.
+    **R14 council (2026-08-27; first round 0/3 — prompt too big at 55k chars + codex tripped
+    OpenAI's cyber filter on "find a bypass" phrasing; R14a 4.5k chars: claude + antigravity NO,
+    codex timeout).** Found and fixed same day: S1 Host-blind loopback ⇒ DNS rebinding reads
+    every report on the default config (now 421 for any non-localhost/non-IP Host); S2 `""`
+    classed loopback but binds INADDR_ANY; S3 run-root reads (`summary.html`, `manifest.json`,
+    `summary.md`) skipped `_confine` ⇒ symlink escape (+ a hostile repo can COMMIT
+    `.security-council/runs/<id>/` — `run_dirs` indexes it) — now every read confined and the
+    page is ALWAYS rendered in memory, never a stored file; S4 dual-use compare by Path missed
+    case-insensitive FS/aliases and failed OPEN on a bad manifest — now inode `samestat` over
+    parents, fail closed on raw/; antigravity: root-level dual-use artifact skipped (`rsplit`
+    dropped it), `raw/x/summary.html` served as text/html, `?token=` in opt-in logs, zip in RAM
+    (now 256 MB cap + 30 s handler timeout); R1 manifest artifact `path` became an href
+    (`_safe_rel`); mdrender `_safe_href` rejected only some schemes (now http(s) or scheme-less);
+    `_default_docs_root` would mount site-packages/docs from a wheel. Residuals documented in
+    docs/serve.md: cookie not port-scoped, no Secure flag over http, token in history/MCP output.
+    Lesson for council prompts: keep them < 10k chars, no inline context files, and phrase as
+    "verify the control" not "find a bypass" (codex's provider filter).
 9. **gitleaks/osv can't path-exclude via CLI** — isolation (scratch copy excluding runtime dirs) is what keeps scans clean; don't remove it.
 10. **`coverage.CATEGORY_POLICY` is keyed by arm name** (`POLICY_ALIASES` maps `claude`/`codex` → `house`). A new arm without an entry/alias is `unknown` for every family → never eligible → its findings mislabel as singleton/uncovered. Add a policy row when adding an arm.
 

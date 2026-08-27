@@ -93,6 +93,17 @@
   artifacts withheld unless `--include-dual-use`; CSP `default-src 'none'`,
   `nosniff`, no referrer, no caching; only our own `summary.html` is served
   as HTML. `docs/serve.md`.
+- Council R14 hardening of the viewer: `Host` must be `localhost` or an IP
+  literal (DNS-rebinding defence for the token-less loopback mode); `""` is
+  all-interfaces, not loopback; every run-root read is confined (a symlinked
+  `manifest.json`/`summary.md` is not followed); the run page is always
+  rendered in memory and no stored HTML is ever served as HTML; only a fixed
+  set of text types is served, `.html/.svg/.xml` as text, unknown types as
+  downloads; dual-use exclusion compares inodes (case-insensitive
+  filesystems, aliases), covers root-level artifacts, and fails closed on an
+  unreadable manifest; manifest paths are linked only when they are plain
+  relative paths; `?token=` is redacted from logs; zip capped at 256 MB;
+  30 s request timeout; docs mounted only from a real checkout.
 
 ### Added — deterministic verify-fix
 

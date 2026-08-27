@@ -45,7 +45,9 @@ def _safe_href(href: str) -> str | None:
     low = h.lower()
     if low.startswith(("http://", "https://")):
         return h
-    if "://" in low or low.startswith(("//", "javascript", "data:", "vbscript")):
+    # anything scheme-shaped that is not http(s) — mailto:, file:, data:,
+    # javascript:, `//host` — is text, not a link (R14)
+    if low.startswith(("//", "\\\\")) or re.match(r"^[a-z][a-z0-9+.\-]*:", low):
         return None
     return h
 
