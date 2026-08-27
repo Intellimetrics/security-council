@@ -124,7 +124,8 @@ def test_sc_doctor_reports_every_arm_without_raising(root, monkeypatch):
 def test_tool_registry_schemas_are_complete(root):
     names = [t[0] for t in srv.TOOLS]
     assert names == ["sc_scan", "sc_doctor", "sc_report", "sc_last_run", "sc_baseline",
-                     "sc_suppress", "sc_outcome_mark", "sc_decisions_verify", "sc_config"]
+                     "sc_suppress", "sc_outcome_mark", "sc_decisions_verify", "sc_serve",
+                     "sc_config"]
     for name, desc, schema, fn in srv.TOOLS:
         assert desc and schema["type"] == "object"
         assert schema["additionalProperties"] is False

@@ -36,12 +36,35 @@ def e(text: object) -> str:
     return html.escape("" if text is None else str(text), quote=True)
 
 
-def inline(text: str) -> str:
-    """Render inline markup. Escapes (`\\X`) win over every marker."""
+_LINK_RE = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
+
+
+def _safe_href(href: str) -> str | None:
+    """Relative paths and http(s) only; everything else is rendered as text."""
+    h = href.strip()
+    low = h.lower()
+    if low.startswith(("http://", "https://")):
+        return h
+    if "://" in low or low.startswith(("//", "javascript", "data:", "vbscript")):
+        return None
+    return h
+
+
+def inline(text: str, *, allow_links: bool = False) -> str:
+    """Render inline markup. Escapes (`\\X`) win over every marker.
+    ``allow_links`` renders `[text](href)` — for TRUSTED documentation only;
+    reports never set it (a hostile repo must not plant links in a report)."""
     out: list[str] = []
     i, n, bold = 0, len(text), False
     while i < n:
         c = text[i]
+        if allow_links and c == "[":
+            m = _LINK_RE.match(text, i)
+            href = _safe_href(m.group(2)) if m else None
+            if m and href is not None:
+                out.append(f'<a href="{e(href)}">{inline(m.group(1))}</a>')
+                i = m.end()
+                continue
         if c == "\\" and i + 1 < n:
             out.append(e(text[i + 1]))
             i += 2
@@ -120,25 +143,25 @@ def _cells(row: str) -> list[str]:
     return [c.strip() for c in _CELL_SPLIT_RE.split(body)]
 
 
-def _table(rows: list[str]) -> str:
+def _table(rows: list[str], inl=inline) -> str:
     parsed = [_cells(r) for r in rows]
     has_header = len(rows) >= 2 and bool(_TABLE_SEP_RE.match(rows[1]))
     out = ['<div class="tbl"><table>']
     body = parsed
     if has_header:
-        out.append("<thead><tr>" + "".join(f"<th>{inline(c)}</th>" for c in parsed[0])
+        out.append("<thead><tr>" + "".join(f"<th>{inl(c)}</th>" for c in parsed[0])
                    + "</tr></thead>")
         body = parsed[2:]
     if body:
         out.append("<tbody>")
         for r in body:
-            out.append("<tr>" + "".join(f"<td>{inline(c)}</td>" for c in r) + "</tr>")
+            out.append("<tr>" + "".join(f"<td>{inl(c)}</td>" for c in r) + "</tr>")
         out.append("</tbody>")
     out.append("</table></div>")
     return "".join(out)
 
 
-def _list(items: list[tuple[int, str]]) -> str:
+def _list(items: list[tuple[int, str]], inl=inline) -> str:
     """Nested <ul> from (depth, text) items; depth = indent // 2."""
     out: list[str] = []
     depth = -1
@@ -155,16 +178,18 @@ def _list(items: list[tuple[int, str]]) -> str:
             out.append("</li>")
         elif out and out[-1].endswith("</ul>"):
             out.append("</li>")
-        out.append(f"<li>{inline(text)}")
+        out.append(f"<li>{inl(text)}")
     while depth >= 0:
         out.append("</li></ul>")
         depth -= 1
     return "".join(out)
 
 
-def render(md: str) -> tuple[str, list[tuple[int, str, str]]]:
+def render(md: str, *, allow_links: bool = False) -> tuple[str, list[tuple[int, str, str]]]:
     """Render a whole document. Returns (html_body, headings) where headings
-    is a list of (level, id, text) for a table of contents."""
+    is a list of (level, id, text) for a table of contents. ``allow_links``
+    is for trusted documentation only (see `inline`)."""
+    _inl = (lambda t: inline(t, allow_links=True)) if allow_links else inline
     lines = md.split("\n")
     out: list[str] = []
     headings: list[tuple[int, str, str]] = []
@@ -174,7 +199,7 @@ def render(md: str) -> tuple[str, list[tuple[int, str, str]]]:
 
     def flush() -> None:
         if para:
-            out.append("<p>" + inline(" ".join(para)) + "</p>")
+            out.append("<p>" + _inl(" ".join(para)) + "</p>")
             para.clear()
 
     while i < len(lines):
@@ -205,7 +230,7 @@ def render(md: str) -> tuple[str, list[tuple[int, str, str]]]:
             level, text = len(m.group(1)), m.group(2).strip()
             hid = _slug(text, seen)
             headings.append((level, hid, text))
-            out.append(f'<h{level} id="{hid}">{inline(text)}</h{level}>')
+            out.append(f'<h{level} id="{hid}">{_inl(text)}</h{level}>')
             i += 1
             continue
         if ln.lstrip().startswith("|"):
@@ -214,7 +239,7 @@ def render(md: str) -> tuple[str, list[tuple[int, str, str]]]:
             while i < len(lines) and lines[i].lstrip().startswith("|"):
                 rows.append(lines[i])
                 i += 1
-            out.append(_table(rows))
+            out.append(_table(rows, _inl))
             continue
         m = _LIST_RE.match(ln)
         if m:
@@ -226,7 +251,7 @@ def render(md: str) -> tuple[str, list[tuple[int, str, str]]]:
                     break
                 items.append((len(lm.group(1)) // 2, lm.group(2)))
                 i += 1
-            out.append(_list(items))
+            out.append(_list(items, _inl))
             continue
         if ln.startswith("> "):
             flush()
@@ -234,7 +259,7 @@ def render(md: str) -> tuple[str, list[tuple[int, str, str]]]:
             while i < len(lines) and lines[i].startswith("> "):
                 q.append(lines[i][2:])
                 i += 1
-            out.append("<blockquote><p>" + inline(" ".join(q)) + "</p></blockquote>")
+            out.append("<blockquote><p>" + _inl(" ".join(q)) + "</p></blockquote>")
             continue
         para.append(ln.strip())
         i += 1

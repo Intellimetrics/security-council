@@ -82,6 +82,18 @@
   and open the page; `runs/latest` symlink points at the newest run. MCP
   `sc_report` accepts `format: html`.
 
+### Added — report viewer (`security-council serve`, MCP `sc_serve`)
+
+- A stdlib, read-only web viewer over a target's runs: index of runs, each
+  run's `summary.html`, every run file, whole-run zip download, `latest`
+  redirect, and the user docs rendered at `/docs/`. Loopback by default; a
+  non-loopback bind requires a token (auto-generated and printed once;
+  query once, cookie thereafter); `DEPLOY_MODE=secret` refuses non-loopback.
+  Confined to the runs/docs roots after symlink resolution; dual-use
+  artifacts withheld unless `--include-dual-use`; CSP `default-src 'none'`,
+  `nosniff`, no referrer, no caching; only our own `summary.html` is served
+  as HTML. `docs/serve.md`.
+
 ### Added — deterministic verify-fix
 
 - `scan <path> --verify-patch FILE [--for IDS]` verifies a patch the way the

@@ -325,6 +325,44 @@ def _open_report(run_dir: Path) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    """Read-only viewer for a target's runs (and the docs), loopback by default."""
+    import time
+    import webbrowser
+    from .serve import ReportServer, ServeRefused, needs_token
+    token = args.token
+    if token is None and needs_token(args.bind):
+        token = "auto"
+    try:
+        srv = ReportServer(args.target, bind=args.bind, port=args.port, token=token,
+                           include_dual_use=args.include_dual_use, docs_root=args.docs)
+        url = srv.start()
+    except ServeRefused as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    except OSError as e:
+        print(f"error: cannot bind {args.bind}:{args.port}: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    exposure = ("loopback only — this machine" if not needs_token(args.bind)
+                else f"LAN-exposed on {args.bind} — anyone with the token can read every report")
+    print(f"security-council viewer: {url}\n  {exposure}\n  read-only · GET only · "
+          f"dual-use artifacts {'INCLUDED' if args.include_dual_use else 'withheld'} · "
+          f"docs {'mounted' if srv.docs_root else 'not found'}\n  Ctrl-C to stop")
+    if args.open:
+        webbrowser.open(url)
+    if getattr(args, "_once", False):            # tests
+        srv.stop()
+        return 0
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.stop()
+    return 0
+
+
 def cmd_runs(args) -> int:
     """List a target's runs, newest first — the answer to 'where did it go?'."""
     target = Path(args.target).resolve()
@@ -956,6 +994,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("doctor", help="check arm availability")
     d.set_defaults(fn=cmd_doctor)
+    sv = sub.add_parser("serve", help="read-only web viewer for a target's run reports (and "
+                                      "the docs); loopback by default, LAN with a token")
+    sv.add_argument("--target", default=".")
+    sv.add_argument("--bind", default="127.0.0.1",
+                    help="address to listen on; anything but loopback requires a token "
+                         "(default 127.0.0.1; use 0.0.0.0 or your LAN IP to expose)")
+    sv.add_argument("--port", type=int, default=8642)
+    sv.add_argument("--token", help="access token for non-loopback binds; `auto` generates "
+                                    "one and prints it (the default when exposing)")
+    sv.add_argument("--include-dual-use", action="store_true",
+                    help="also serve dual-use analysis artifacts (attack paths, write-ups)")
+    sv.add_argument("--docs", help="directory of user docs to mount at /docs (default: the "
+                                   "checkout's docs/ if present)")
+    sv.add_argument("--open", action="store_true", help="open the viewer in a browser")
+    sv.set_defaults(fn=cmd_serve)
+
     ru = sub.add_parser("runs", help="list a target's scan runs, newest first, with exit code "
                                      "and counts — where the reports are")
     ru.add_argument("--target", default=".")

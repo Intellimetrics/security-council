@@ -310,6 +310,45 @@ def sc_outcome_mark(arguments: dict) -> dict:
             "signed": signer is not None}
 
 
+_SERVER: dict[str, Any] = {}
+
+
+def sc_serve(arguments: dict) -> dict:
+    """start | stop | status of the read-only report viewer. The server lives
+    as long as this MCP process (the assistant's session); loopback unless a
+    bind is given, in which case a token is generated and returned."""
+    from .serve import ReportServer, ServeRefused, needs_token
+    action = arguments.get("action") or "status"
+    cur = _SERVER.get("server")
+    if action == "status":
+        return ({"running": True, "url": cur.url, "bind": cur.bind, "port": cur.port,
+                 "target": str(cur.target)} if cur and cur.running else {"running": False})
+    if action == "stop":
+        if cur:
+            cur.stop()
+            _SERVER.clear()
+            return {"running": False, "stopped": True}
+        return {"running": False}
+    if action != "start":
+        raise ValueError(f"unknown action {action!r} (start|stop|status)")
+    if cur and cur.running:
+        return {"running": True, "url": cur.url, "note": "already running; stop it first to change"}
+    target = _resolve_dir(arguments, "target")
+    bind = arguments.get("bind") or "127.0.0.1"
+    token = arguments.get("token") or ("auto" if needs_token(bind) else None)
+    try:
+        srv = ReportServer(target, bind=bind, port=int(arguments.get("port") or 8642),
+                           token=token, include_dual_use=bool(arguments.get("include_dual_use")))
+        url = srv.start()
+    except ServeRefused as e:
+        raise ValueError(str(e)) from e
+    _SERVER["server"] = srv
+    return {"running": True, "url": url, "bind": bind, "port": srv.port, "target": str(target),
+            "exposure": "loopback only" if not needs_token(bind) else
+            "LAN: anyone with the token can read every report",
+            "lifetime": "this MCP session"}
+
+
 def sc_config(arguments: dict) -> dict:
     target = _resolve_dir(arguments, "target")
     return {"target": str(target), "config": load_config(target)}
@@ -392,6 +431,13 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
      "which the effective require_signatures policy would refuse.",
      _obj({"target": _target_prop(), "policy": {"enum": ["off", "warn", "enforce"]}}),
      sc_decisions_verify),
+    ("sc_serve",
+     "Start, stop or query the read-only web viewer for a target's reports (loopback by "
+     "default; a non-loopback bind gets a generated token). Lives for this session.",
+     _obj({"target": _target_prop(), "action": {"enum": ["start", "stop", "status"]},
+           "bind": {"type": "string"}, "port": {"type": "integer"},
+           "token": {"type": "string"}, "include_dual_use": {"type": "boolean"}}),
+     sc_serve),
     ("sc_config", "Effective merged configuration for a target.",
      _obj({"target": _target_prop()}), sc_config),
 ]

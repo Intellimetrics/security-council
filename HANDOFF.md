@@ -22,6 +22,7 @@ python3 -m security_council.cli scan tests/fixtures/seedrepo --arms claude,semgr
 python3 -m security_council.cli scan tests/fixtures/seedrepo --validate --validate-max 2
 python3 -m security_council.cli scan . --arms claude-security --diff origin/main   # change-scoped (M-V1)
 python3 -m security_council.cli runs; report --open              # list runs / open the latest summary.html (2026-08-27)
+python3 -m security_council.cli serve [--bind 0.0.0.0 --token auto]   # read-only viewer; LAN needs a token (2026-08-27)
 python3 -m security_council.cli report <run_dir> --format md      # print summary md (stdout)
 python3 -m security_council.cli eval                              # replay eval gate (deterministic, $0)
 python3 -m security_council.cli calibrate .corpora/BenchmarkJava  # fit calibration record from a Benchmark scan (R7)
@@ -203,6 +204,19 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
    `tests/test_html_report.py`; the R8 hardening tests still pass unchanged. `runs`, `report`
    default-to-latest, `--open` (scan + report), `runs/latest` symlink (skipped by every
    run-dir lister), MCP `sc_report format=html`.
+
+10. **Report viewer (2026-08-27, user: "it should expose on LAN if needed").** `serve.py`:
+    stdlib `ThreadingHTTPServer`, GET/HEAD only; index / run page / any run file / run zip /
+    `latest` redirect / `docs/` rendered via `mdrender(allow_links=True)` (links only for
+    TRUSTED docs — reports never render links). Policy in ONE place (`check_bind`): loopback
+    needs nothing; any other bind needs a token (`--token auto` → `secrets.token_urlsafe`,
+    printed once; `?token=` sets an HttpOnly SameSite=Strict cookie); `DEPLOY_MODE=secret`
+    refuses non-loopback. `_confine()` resolves symlinks and rejects `..`/absolute/escapes;
+    the store files sit outside `runs/` and are unreachable; `export_excluded` artifact dirs
+    are 403 + zip-excluded unless `--include-dual-use`; CSP default-src none, nosniff, no
+    referrer, no-store; a vendor `.html` under raw/ is served as text. MCP `sc_serve`
+    start|stop|status (lifetime = the MCP session). 9 tests in `tests/test_serve.py`. Not
+    built: TLS/auth (use a reverse proxy), token rotation without restart.
 9. **gitleaks/osv can't path-exclude via CLI** — isolation (scratch copy excluding runtime dirs) is what keeps scans clean; don't remove it.
 10. **`coverage.CATEGORY_POLICY` is keyed by arm name** (`POLICY_ALIASES` maps `claude`/`codex` → `house`). A new arm without an entry/alias is `unknown` for every family → never eligible → its findings mislabel as singleton/uncovered. Add a policy row when adding an arm.
 

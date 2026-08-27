@@ -80,6 +80,7 @@ Each scan writes `.security-council/runs/<timestamp>/`:
 security-council runs                 # every run, newest first, with exit code and counts
 security-council report --open        # render + open the latest run's summary.html
 security-council scan . --open        # same, straight after a scan
+security-council serve [--bind 0.0.0.0]   # browse every run in a browser; LAN needs a token (docs/serve.md)
 cat .security-council/runs/latest/summary.md   # `latest` always points at the newest run
 ```
 

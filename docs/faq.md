@@ -86,6 +86,12 @@ positive gets buried. [safety-model.md](safety-model.md).
 points at the newest. `summary.html` has a "Where to look" block linking the
 SARIF, `findings.json`, each scanner's raw bundle and any analysis documents.
 
+**Can my teammates see the reports without cloning anything?**
+`security-council serve --bind 0.0.0.0` hosts a read-only viewer on your
+LAN and prints a link with a token; anyone with the link can browse and
+download every run. Loopback-only without `--bind`; refused entirely under
+`DEPLOY_MODE=secret`. [serve.md](serve.md).
+
 **Is my repo's scan data stored anywhere?**
 Only on your machine: run outputs and decisions live under
 `<your-repo>/.security-council/` (gitignored by default). If you use the

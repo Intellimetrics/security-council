@@ -22,7 +22,8 @@ existing repo's backlog manageable (`baseline set`).
 [triage.md](triage.md) → [signing.md](signing.md) to sign those decisions
 with your SSH key so CI can verify who made them →
 [verify-fix.md](verify-fix.md) to check a patch against the scanners before
-you open the pull request
+you open the pull request →
+[serve.md](serve.md) to browse and share the reports in a browser
 
 **"I want the AI reviewers"**
 [arms.md](arms.md) for setup and costs — but read
@@ -53,6 +54,7 @@ the council design reviews under [reviews/](reviews/)
 | [data-boundaries.md](data-boundaries.md) | Exactly what leaves your machine, per arm |
 | [triage.md](triage.md) | Baselines, suppressions, outcome marks, shadow mode, team sharing |
 | [signing.md](signing.md) | Sign decisions with your SSH key; what `enforce`/`warn` do; what signing does and does not buy |
+| [serve.md](serve.md) | `security-council serve`: browse and download reports (loopback by default; LAN with a token) |
 | [verify-fix.md](verify-fix.md) | `--verify-patch`: apply your patch to a scratch copy, re-run the scanners, get fixed / not fixed / unproven as evidence |
 | [ci/](ci/) | GitHub · Azure DevOps Server · GitLab guides |
 | [compliance/emass.md](compliance/emass.md) | DoD eMASS static-code-scans export |
