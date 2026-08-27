@@ -195,6 +195,19 @@ def test_dual_use_artifacts_are_withheld_unless_asked(tmp_path):
         srv.stop()
 
 
+def test_summary_page_is_confined_too(viewer, tmp_path):
+    """R14 (codex): the page path took a shortcut around _confine."""
+    srv, base, target, runs = viewer
+    run = runs[-1]
+    secret = tmp_path / "outside.html"
+    secret.write_text("<h1>SECRET</h1>")
+    (run.out_dir / "summary.html").unlink()
+    (run.out_dir / "summary.html").symlink_to(secret)
+    status, _, body = _get(base + f"runs/{run.run_id}/")
+    assert b"SECRET" not in body                      # rendered in memory instead, or 404
+    assert status in (200, 404)
+
+
 def test_viewer_never_writes_into_a_run(viewer):
     srv, base, target, runs = viewer
     run = runs[-1]

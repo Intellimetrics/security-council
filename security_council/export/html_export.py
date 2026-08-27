@@ -158,11 +158,31 @@ def _next_steps(exit_code, gating: list[Finding], manifest: dict) -> str:
     return f'<div class="next">{msg}</div>'
 
 
+def _safe_rel(path: object) -> str | None:
+    """A manifest-supplied path is only ever linked if it is a plain RELATIVE
+    path inside the run directory — no scheme, no `//`, no `..`, no leading
+    `/`, no backslash, nothing that a browser could read as a URL to
+    somewhere else (R14, codex: escaping made it inert as text but not as an
+    href). Anything else is rendered as text, not a link."""
+    s = "" if path is None else str(path).strip()
+    if not s or len(s) > 400 or "\\" in s or "\x00" in s or ":" in s:
+        return None
+    if s.startswith(("/", "//", "#", "?")):
+        return None
+    parts = s.split("/")
+    if any(part in ("..", "") for part in parts[:-1]) or parts[-1] == "..":
+        return None
+    return s
+
+
 def _where_to_look(manifest: dict, run_dir: Path | None) -> str:
     rows: list[str] = []
 
     def link(rel: str, label: str, note: str = "") -> None:
-        rows.append(f'<li><a href="{_e(rel)}"><code>{_e(rel)}</code></a> — {_e(label)}'
+        safe = _safe_rel(rel)
+        shown = f'<a href="{_e(safe)}"><code>{_e(safe)}</code></a>' if safe else \
+            f'<code>{_e(rel)}</code> <span class="meta">(not linked: not a path in this run)</span>'
+        rows.append(f"<li>{shown} — {_e(label)}"
                     + (f' <span class="meta">{_e(note)}</span>' if note else "") + "</li>")
 
     link("summary.md", "this report as markdown (the system of record for the page)")

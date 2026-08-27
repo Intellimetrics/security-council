@@ -166,6 +166,29 @@ def test_dashboard_gate_tiles_next_steps_and_where_to_look(tmp_path):
     assert "DEGRADED" in degraded and "NOT a clean bill" in degraded
 
 
+def test_manifest_paths_are_linked_only_when_they_are_relative_run_paths():
+    """R14 (codex): an artifact path from a (tamperable) manifest was escaped
+    as text but still became an href — active in a file:// report."""
+    a = mk(path="app/x.py", cwe="CWE-89", family="injection", source_id="semgrep",
+           source_kind="scanner", vendor="semgrep")
+    bad = ["http://evil.example/x", "javascript:alert(1)", "//evil.example/x",
+           "/etc/passwd", "../../outside.md", "raw/../../x", "C:\\x", "data:text/html,hi"]
+    mf = dict(MANIFEST, artifacts=[{"kind": "threat-model", "producer": "house:claude",
+                                    "path": p, "export_excluded": False} for p in bad]
+              + [{"kind": "threat-model", "producer": "house:claude",
+                  "path": "raw/claude-analysis_threat-model/threat-model.md",
+                  "export_excluded": False}])
+    page = _page([a], mf)
+    for p in bad:
+        assert f'href="{html_export._e(p)}"' not in page, p
+    assert 'href="raw/claude-analysis_threat-model/threat-model.md"' in page
+    assert page.count("not linked: not a path in this run") == len(bad)
+    assert "http://" not in page.replace("http://evil.example/x", "")  # only as escaped text
+    for p in bad:
+        assert html_export._safe_rel(p) is None, p
+    assert html_export._safe_rel("raw/x/y.md") == "raw/x/y.md"
+
+
 def test_existing_r8_expectations_still_hold():
     f = mk(path="src/A.java", cwe="CWE-79", family="xss", source_id="semgrep",
            source_kind="scanner", vendor="semgrep")

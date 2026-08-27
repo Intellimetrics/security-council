@@ -357,8 +357,11 @@ class _Handler(BaseHTTPRequestHandler):
         if run_dir is None or not run_dir.is_dir() or run_dir == self.srv.runs_root.resolve():
             return self._err(HTTPStatus.NOT_FOUND, "no such run")
         if not inner:
-            page = run_dir / "summary.html"
-            body = page.read_bytes() if page.is_file() else self._render_summary(run_dir)
+            # R14 (codex): the page path must go through the same confinement as
+            # every other file — a symlinked summary.html must not be followed out
+            page = _confine(run_dir, "summary.html")
+            body = (page.read_bytes() if page is not None and page.is_file()
+                    else self._render_summary(run_dir))
             if body is None:
                 return self._err(HTTPStatus.NOT_FOUND, "this run has no summary")
             return self._send(200, body, "text/html; charset=utf-8", self._extra)
