@@ -161,3 +161,18 @@ def test_report_bundle_gov_without_app_identity_skips_emass_loudly(tmp_path, cap
     assert "emass.json skipped" in captured.err
     assert not (run / "exports" / "emass.json").exists()
     assert (run / "exports" / "checklist.cklb").exists()          # rest still written
+
+
+def test_cheat_sheet_has_no_checkout_only_paths_and_follows_the_version():
+    """A pip/wheel install has no docs/ or templates/ beside it; the cheat sheet
+    must point at the published tree and the action tag must track the version
+    (it was hard-coded to v0.1.0)."""
+    from security_council import __version__
+    detected = {"languages": ["Python"], "git": True, "config": None,
+                "ci": ["github", "gitlab", "azure-devops"]}
+    sheet = sw.cheat_sheet("quick", detected)
+    assert f"security-council@v{__version__}" in sheet
+    assert sw.REPO_URL + "/docs/triage.md" in sheet
+    assert sw.REPO_URL + "/templates/security-council.gitlab-ci.yml" in sheet
+    for line in sheet.splitlines():
+        assert " docs/" not in line and " templates/" not in line, line   # bare relative paths

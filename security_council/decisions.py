@@ -806,7 +806,11 @@ class DecisionStore:
                     "context_hash": (f.get("fingerprints") or {}).get("context_hash"),
                     "path_cwe_sink": (f.get("fingerprints") or {}).get("path_cwe_sink"),
                     "severity": (f.get("severity") or {}).get("label"),
-                    "uri": ((f.get("locations") or [{}])[0]).get("uri")}
+                    "uri": ((f.get("locations") or [{}])[0]).get("uri"),
+                    # every file the cluster touched, so a later copy of the
+                    # same root cause in a NEW file is `new`, not `unchanged`
+                    "uris": sorted({loc.get("uri") for loc in (f.get("locations") or [])
+                                    if loc.get("uri")})}
                    for f in findings]
         payload = {"schema_version": SCHEMA_VERSION, "run_id": run_id,
                    "set_at": now_iso, "operator": operator, "findings": entries,
@@ -947,9 +951,16 @@ def _applies(status: str, signature_policy: str) -> bool:
 
 
 def baseline_content_sha256(entries: list[dict]) -> str:
-    """Digest over the identity-bearing baseline fields, order-independent."""
-    keyed = sorted(json.dumps({k: e.get(k) for k in
-                               ("id", "root_cause", "context_hash", "path_cwe_sink")},
+    """Digest over the identity-bearing baseline fields, order-independent.
+
+    `uris` decides whether a matched root cause is `unchanged` or `new`, so it
+    is identity too: an entry that carries it is digested WITH it (adding a
+    file to the list, or dropping the list, is tampering). Entries written
+    before per-location tracking have no `uris` key and keep their original
+    digest, so an existing signed baseline still verifies after upgrade."""
+    keyed = sorted(json.dumps({**{k: e.get(k) for k in
+                                  ("id", "root_cause", "context_hash", "path_cwe_sink")},
+                               **({"uris": e.get("uris")} if "uris" in e else {})},
                               sort_keys=True) for e in entries)
     return hashlib.sha256("\x00".join(keyed).encode()).hexdigest()
 
@@ -965,13 +976,31 @@ def annotate_baseline(findings: list[Finding], baseline: dict, *, partial: bool 
     entries = list(baseline.get("findings") or [])
     unmatched = {i: e for i, e in enumerate(entries)}
     resolved: dict[str, str] = {}
+    counters = {"new_location": 0, "legacy_entries": 0}
 
     def _take(f: Finding, key: str, equal_unchanged: bool) -> bool:
         want = getattr(f.fingerprints, key)
         for i, e in unmatched.items():
             if e.get(key) and e[key] == want:
                 same_ctx = e.get("context_hash") == f.fingerprints.context_hash
-                resolved[f.id] = "unchanged" if (equal_unchanged and same_ctx) else "updated"
+                state = "unchanged" if (equal_unchanged and same_ctx) else "updated"
+                # Root-cause fingerprints are deliberately path-free, so a
+                # copy-pasted vulnerable function clusters WITH the original and
+                # matched here as `unchanged` — under `gate_baseline: new` the
+                # copy passed the gate silently (found in the 0.2.0 release
+                # rehearsal, reproduced live). A baselined root cause that now
+                # also appears in a file the baseline never covered is a new
+                # instance. Entries written before per-location tracking have no
+                # `uris`; they keep the old semantics and are counted so the run
+                # can tell the operator to re-set the baseline.
+                if "uris" not in e:
+                    counters["legacy_entries"] += 1
+                else:
+                    known = set(e.get("uris") or [])
+                    if any(loc.uri not in known for loc in f.locations):
+                        state = "new"
+                        counters["new_location"] += 1
+                resolved[f.id] = state
                 del unmatched[i]
                 return True
         return False
@@ -988,6 +1017,6 @@ def annotate_baseline(findings: list[Finding], baseline: dict, *, partial: bool 
     # a partial (diff) scan cannot conclude anything about findings it didn't look for
     absent = ([] if partial
               else [{"id": e.get("id"), "title": e.get("title")} for e in unmatched.values()])
-    return {"baseline_run": baseline.get("run_id"), **counts, "partial": partial,
+    return {"baseline_run": baseline.get("run_id"), **counts, **counters, "partial": partial,
             "absent": len(absent), "absent_findings": absent,
             "out_of_scope": len(unmatched) if partial else 0}

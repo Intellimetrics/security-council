@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Fixed — found in the 0.2.0 release rehearsal
+
+The rehearsal: build the wheel, install it into a fresh venv (no `-e`, no dev
+extras), and from a directory *outside* the checkout run every subcommand a
+user would — `doctor`, `setup`, default-arm `scan` on docker scanners, all
+twelve `report` formats and the bundles, `runs`, `serve`, the MCP stdio
+handshake, the ADO/GitLab local halves, `--sbom`, the signed decision lane,
+`--verify-patch`, `--gate-baseline new`, and `--validate` with and without
+its backend. Two defects and three papercuts came out of it; both defects
+were reproduced live before the fix and again after it.
+
+- **`gate_baseline: new` let a copy of a baselined finding through (exit 0).**
+  Root-cause fingerprints are path-free by design, so a copy-pasted
+  vulnerable function clusters with the original and the baseline delta
+  called the cluster `unchanged`. The baseline now records every file a
+  cluster touched (`uris`, part of the integrity digest the signature
+  covers — editing the list is tampering and the baseline is refused), and a
+  baselined root cause that also appears in a file the baseline never
+  covered is `new` (delta `new_location`, named in the summary). Baselines
+  written by 0.1.x carry no `uris`: they keep the old semantics, and every
+  such run reports `baseline_legacy_entries` until `baseline set` is re-run.
+- **`--validate` with no `llm-council` on PATH reported "1 cross-examined"
+  and no degradation.** The findings were left `needs_human` (fail-safe;
+  nothing was demoted), but nothing said the panel never convened. Now a
+  `validator_unavailable` (no panel convened) or `validator_failed` (some)
+  degradation carries the backend's error, the summary counts only convened
+  panels as cross-examined and flags the rest, and `doctor` reports the
+  `llm-council` backend.
+- The `setup` cheat sheet pointed at `docs/…` and `templates/…` paths that
+  exist only in a checkout and hard-coded `@v0.1.0` for the GitHub Action;
+  it now links the published tree and follows the installed version. The
+  scan footer names `summary.html`.
+
 ### Added — signed decisions (R9 signing lane)
 
 - Suppressions, accepted-risk decisions, outcome marks and baselines can be

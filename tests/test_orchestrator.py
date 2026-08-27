@@ -244,3 +244,31 @@ def test_manifest_records_the_policy_that_actually_ran(tmp_path):
     run = _run(arms, tmp_path, min_arms_ok=1, auto_suppress=True,
                accept_suppression_risk=True)
     assert run.manifest["policy"]["auto_suppress"] is False
+
+
+def test_validate_without_a_backend_is_a_visible_degradation(tmp_path, monkeypatch):
+    """0.2.0 release rehearsal, reproduced live from the wheel: `scan --validate`
+    with no `llm-council` on PATH produced no degradation and a summary line
+    claiming "1 cross-examined". Fail-safe was already true (needs_human, never
+    demoted); this pins the visibility."""
+    from security_council import proc
+    from security_council.validate import council_client
+
+    def not_found(cmd, **kw):
+        return proc.ProcResult(False, None, "", "[not found] No such file: 'llm-council'", 0.0, False)
+    monkeypatch.setattr(council_client.proc, "run_command", not_found)
+    f = _finding(source_id="semgrep", kind="scanner", vendor="semgrep")
+    cfg = {**DEFAULT_CONFIG, "policy": {**DEFAULT_CONFIG["policy"]},
+           "decisions": {**DEFAULT_CONFIG["decisions"], "require_signatures": "warn"}}
+    run = run_scan(tmp_path, [FakeArm("semgrep", "scanner", "semgrep", [f])], cfg,
+                   out_dir=tmp_path / "out", validate=True, validate_max_findings=1)
+    kinds = [d["kind"] for d in run.degradations]
+    assert "validator_unavailable" in kinds
+    detail = next(d["detail"] for d in run.degradations if d["kind"] == "validator_unavailable")
+    assert "not found" in detail and "llm-council" in detail
+    out = [x for x in run.findings if x.validation is not None]
+    assert len(out) == 1 and out[0].validation.verdict == "needs_human"
+    assert out[0].disposition.state != "refuted"                     # never demoted
+    md = (tmp_path / "out" / "summary.md").read_text()
+    assert "0 cross-examined" in md and "1 not examined" in md
+    assert "validator_unavailable" in md

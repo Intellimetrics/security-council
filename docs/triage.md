@@ -17,6 +17,12 @@ security-council baseline set --operator you # snapshot it as the baseline
 security-council scan . --gate-baseline new  # exit 0 unless NEW findings appear
 ```
 
+A baselined finding that later shows up in a file the baseline never covered
+(a copy of the vulnerable function) counts as **new** and gates, even though
+it clusters with the original — the delta reports it as `new_location`.
+Baselines written by security-council 0.1.x did not record files; a scan
+against one reports `baseline_legacy_entries` until you re-run `baseline set`.
+
 Baselined findings still appear in every report (stamped
 `baselineState: unchanged/updated` in SARIF); they just stop failing the
 build. Findings that disappear are reported `absent` in the delta. Matching

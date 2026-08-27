@@ -443,8 +443,30 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         if validate and merged:
             from .validate import panel as _vpanel
             vrunner = (_vpanel.make_vendor_runner(ws.root) if vendor_validate else None)
+            vfail: list[dict] = []
             _vpanel.validate_findings(merged, repo_root=ws.root, max_findings=validate_max_findings,
-                                      max_cost_usd=validate_budget_usd, vendor_runner=vrunner)
+                                      max_cost_usd=validate_budget_usd, vendor_runner=vrunner,
+                                      failures=vfail)
+            # A panel that never convened (backend missing, timed out, empty
+            # output) leaves the finding `needs_human` — fail-safe — but the RUN
+            # must say so: before this, `--validate` with no `llm-council` on
+            # PATH reported "N cross-examined" and no degradation (0.2.0
+            # release rehearsal). Not a gate change; a visibility one.
+            if vfail:
+                attempted = sum(1 for f in merged if f.validation is not None)
+                first = vfail[0]["error"]
+                if len(vfail) >= attempted:
+                    pre_degr.append({"kind": "validator_unavailable",
+                                     "detail": f"--validate was requested but no panel convened "
+                                               f"for any of the {attempted} finding(s) selected "
+                                               f"({first}); they are needs_human, not "
+                                               "cross-examined. Is `llm-council` installed and "
+                                               "on PATH? (`security-council doctor`)"})
+                else:
+                    pre_degr.append({"kind": "validator_failed",
+                                     "detail": f"{len(vfail)} of {attempted} panel(s) did not "
+                                               f"convene ({first}); those findings are "
+                                               "needs_human, not cross-examined"})
 
         # score + disposition policy (mutates dispositions; must precede exports/gate)
         _, decided_at = _utc_stamp()
@@ -569,6 +591,13 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             baseline_delta["set_at"] = baseline.get("set_at")
             baseline_delta["operator"] = baseline.get("operator")
             baseline_delta["signature"] = baseline.get("signature_status")
+            if baseline_delta.get("legacy_entries"):
+                n = baseline_delta["legacy_entries"]
+                pre_degr.append({"kind": "baseline_legacy_entries",
+                                 "detail": f"{n} baseline entr{'y' if n == 1 else 'ies'} "
+                                           "predate per-location tracking: a copy of that "
+                                           "finding in a new file would not gate as new "
+                                           "under gate_baseline: new. Re-run `baseline set`."})
             # R13: a signed baseline has no expiry (Q3's replay bound is the
             # suppression's expires_at), so at least its AGE is printed.
             try:

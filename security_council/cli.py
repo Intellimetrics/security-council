@@ -195,7 +195,8 @@ def _print_summary(run) -> None:
                   f"{'; '.join(r.get('reasons') or [])[:160]}")
     if run.degradations:
         print(f"degradations: {run.degradations}")
-    print(f"reports: {run.out_dir}  (summary.md, merged.sarif, findings.json, manifest.json)")
+    print(f"reports: {run.out_dir}  (summary.html, summary.md, merged.sarif, findings.json, "
+          "manifest.json)")
     print(f"exit {run.exit_code}")
 
 
@@ -214,6 +215,12 @@ def cmd_doctor(args) -> int:
     print(f"  {'ssh-keygen':<13} {'ready' if ver else 'MISSING':<11} "
           f"{ver or 'no ssh-keygen -Y (OpenSSH >= 8.2): decision signing unavailable; '
                      'require_signatures: enforce refuses every signed decision (fail-closed)'}")
+    lc = shutil.which("llm-council")
+    print(f"  {'llm-council':<13} {'ready' if lc else 'unavailable':<11} "
+          + (f"{lc}  (validator panel backend for `scan --validate`)" if lc else
+             "not on PATH: `scan --validate` cannot convene a panel — findings would be "
+             "needs_human and the run degraded (validator_unavailable); "
+             "https://github.com/Intellimetrics/llm-council"))
     return 0
 
 

@@ -222,16 +222,22 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
         singles = sum(1 for f in findings if f.corroboration.singleton_by_policy)
         uncovered = sum(1 for f in findings if f.corroboration.uncovered)
         validated = [f for f in findings if f.validation is not None]
-        tp = sum(1 for f in validated if f.validation.verdict == "true_positive")
-        fp = sum(1 for f in validated if f.validation.verdict == "false_positive")
-        nh = sum(1 for f in validated if f.validation.verdict in ("needs_human", "uncertain"))
+        # a validation record with an empty panel means nobody convened (backend
+        # missing / timed out): it is needs_human, but it was NOT cross-examined
+        convened = [f for f in validated if f.validation.panel]
+        unconvened = len(validated) - len(convened)
+        tp = sum(1 for f in convened if f.validation.verdict == "true_positive")
+        fp = sum(1 for f in convened if f.validation.verdict == "false_positive")
+        nh = sum(1 for f in convened if f.validation.verdict in ("needs_human", "uncertain"))
         demoted = sum(1 for f in findings if _is_demoted(f))
         out.append(f"- **{len(findings)} findings** (root-cause clusters): {sev_txt}")
         out.append(f"- **Corroboration:** {corroborated} confirmed by ≥2 independent vendor families · "
                    f"{singles} only one eligible arm (singleton-by-policy) · {uncovered} uncovered")
         if validated:
-            out.append(f"- **Validator panel:** {len(validated)} cross-examined → {tp} true positive · "
-                       f"{fp} false positive (demoted) · {nh} need human review")
+            out.append(f"- **Validator panel:** {len(convened)} cross-examined → {tp} true positive · "
+                       f"{fp} false positive (demoted) · {nh} need human review"
+                       + (f" · ⚠ **{unconvened} not examined** (no panel convened; flagged "
+                          "`needs_human` — see degradations)" if unconvened else ""))
         else:
             out.append("- **Validator panel:** not run (`--validate` to cross-examine findings)")
         if demoted:
@@ -240,7 +246,10 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
         if bd:
             out.append(f"- **Baseline** (vs run {_code(bd.get('baseline_run', '?'))}): "
                        f"{bd.get('new', 0)} new · {bd.get('unchanged', 0)} unchanged · "
-                       f"{bd.get('updated', 0)} updated · {bd.get('absent', 0)} absent")
+                       f"{bd.get('updated', 0)} updated · {bd.get('absent', 0)} absent"
+                       + (f" · {bd['new_location']} baselined root cause(s) now also in a file "
+                          "the baseline never covered (counted new)"
+                          if bd.get("new_location") else ""))
             # R9: the baseline decides what does NOT gate, so its provenance is
             # shown every run — set by whom, when, and the digest to compare.
             prov = []

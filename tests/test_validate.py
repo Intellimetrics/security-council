@@ -133,3 +133,24 @@ def test_validate_findings_skips_supply_chain():
     assert len(calls) == 1                         # only the injection finding validated
     assert dep.validation is None
     assert code.validation is not None
+
+
+def test_panel_that_never_convened_is_reported_as_a_failure():
+    """0.2.0 release rehearsal: with no `llm-council` on PATH, `--validate` left
+    every finding needs_human (fail-safe) but reported nothing — the summary
+    said "1 cross-examined". The failure must be handed back to the caller."""
+    def runner(prompt, *, cwd, mode="consensus", max_cost_usd=None, timeout=600):
+        return CouncilResult(ok=False, degraded=True, results=[],
+                             error="[not found] [Errno 2] No such file or directory: 'llm-council'")
+    f = _finding(family="injection")
+    failures: list = []
+    panel.validate_findings([f], repo_root=".", runner=runner, failures=failures)
+    assert f.validation is not None and f.validation.verdict == "needs_human"
+    assert f.validation.panel == []
+    assert failures == [{"finding_id": f.id, "error": runner(None, cwd=None).error}]
+    # a convened-but-degraded panel (one peer answered) is NOT a failure
+    ok_one = _finding(family="injection")
+    failures2: list = []
+    panel.validate_findings([ok_one], repo_root=".", failures=failures2, runner=_runner([
+        ("claude", "for", "yes", [_cite()])]))
+    assert ok_one.validation.verdict == "needs_human" and failures2 == []

@@ -253,10 +253,17 @@ def _state_for(finding: Finding, val: Validation) -> str:
 
 def validate_finding(finding: Finding, *, repo_root, runner=council_client.run_council,
                      mode: str = "consensus", max_cost_usd: float | None = 0.5,
-                     timeout: int = 600, vendor_runner=None) -> Finding:
+                     timeout: int = 600, vendor_runner=None,
+                     failures: list[dict] | None = None) -> Finding:
     prompt = build_validation_prompt(finding)
     psha = hashlib.sha256(prompt.encode()).hexdigest()
     cr = runner(prompt, cwd=repo_root, mode=mode, max_cost_usd=max_cost_usd, timeout=timeout)
+    if failures is not None and cr.degraded and not cr.results:
+        # nobody sat: backend missing / timed out / no output. The verdict below
+        # is needs_human (fail-safe); the caller turns this into a run-level
+        # degradation so the report never claims a cross-examination happened.
+        failures.append({"finding_id": finding.id,
+                         "error": (cr.error or "no panel output").strip()[:300]})
     extra = None
     if vendor_runner is not None:
         extra = [vendor_opinion(v, psha) for v in (vendor_runner(finding) or [])]
@@ -275,12 +282,13 @@ SKIP_VALIDATION_FAMILIES = frozenset({"supply_chain"})
 
 def validate_findings(findings: list[Finding], *, repo_root, runner=council_client.run_council,
                       max_findings: int | None = None,
-                      skip_families: frozenset = SKIP_VALIDATION_FAMILIES, **kw) -> list[Finding]:
+                      skip_families: frozenset = SKIP_VALIDATION_FAMILIES,
+                      failures: list[dict] | None = None, **kw) -> list[Finding]:
     from ..model import CLOSED_LIFECYCLES
     eligible = [f for f in findings if f.taxonomy.cwe_family not in skip_families
                 and f.disposition.lifecycle not in CLOSED_LIFECYCLES]
     ranked = sorted(eligible, key=lambda f: f.severity.security_severity, reverse=True)
     todo = ranked[:max_findings] if max_findings else ranked
     for f in todo:
-        validate_finding(f, repo_root=repo_root, runner=runner, **kw)
+        validate_finding(f, repo_root=repo_root, runner=runner, failures=failures, **kw)
     return findings

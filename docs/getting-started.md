@@ -16,7 +16,9 @@ Runtime dependencies are deliberately minimal: the Python package needs only
   binaries aren't on PATH. Local binaries are used when present.
 - **llm-council CLI** (optional) — the `--validate` adversarial panel shells
   out to `llm-council run --json`. Without it, everything except validation
-  works.
+  works; `doctor` shows whether it is on PATH, and a `--validate` run that
+  cannot convene a panel says so (`validator_unavailable`) instead of
+  reporting a cross-examination that never happened.
 - **vendor CLIs** (optional) — the LLM arms drive `claude`, `codex`, or `agy`
   and the dedicated `claude-security` / `codex-security` scanners. See
   [arms.md](arms.md) and read [data-boundaries.md](data-boundaries.md) first.

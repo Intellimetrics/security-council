@@ -194,6 +194,55 @@ def test_baseline_annotation_tiers(tmp_path):
     assert delta["baseline_run"] == "r0"
 
 
+def test_baseline_copy_of_root_cause_in_new_file_is_new(tmp_path):
+    """0.2.0 release rehearsal (reproduced live): root-cause fingerprints are
+    path-free, so a copy-pasted vulnerable function clusters with the original
+    and the baseline delta called it `unchanged` — `gate_baseline: new` let the
+    copy through with exit 0. A baselined root cause in a file the baseline
+    never covered is a new instance."""
+    store = dec.DecisionStore(tmp_path)
+    store.set_baseline([to_dict(_bl_finding("a"))], run_id="r0", now_iso=NOW)
+    entry = store.load_baseline()["findings"][0]
+    assert entry["uris"] == ["app/x.py"]
+    copied = _bl_finding("a")
+    copied.locations = copied.locations + [
+        dataclasses.replace(copied.locations[0], uri="app/copy.py")]
+    delta = dec.annotate_baseline([copied], store.load_baseline())
+    assert copied.baseline_state == "new"
+    assert (delta["new"], delta["unchanged"], delta["new_location"], delta["absent"]) == (1, 0, 1, 0)
+    assert delta["legacy_entries"] == 0
+    # the same files as the baseline -> still unchanged (no false alarm)
+    same = _bl_finding("a")
+    delta = dec.annotate_baseline([same], store.load_baseline())
+    assert same.baseline_state == "unchanged" and delta["new_location"] == 0
+
+
+def test_baseline_legacy_entry_keeps_old_semantics_but_is_counted(tmp_path):
+    store = dec.DecisionStore(tmp_path)
+    store.set_baseline([to_dict(_bl_finding("a"))], run_id="r0", now_iso=NOW)
+    bl = store.load_baseline()
+    for e in bl["findings"]:
+        del e["uris"]                                   # a baseline written by 0.1.x
+    copied = _bl_finding("a")
+    copied.locations = copied.locations + [
+        dataclasses.replace(copied.locations[0], uri="app/copy.py")]
+    delta = dec.annotate_baseline([copied], bl)
+    assert copied.baseline_state == "unchanged"         # old behaviour, by design
+    assert delta["legacy_entries"] == 1                  # ...but the run says so (degradation)
+
+
+def test_baseline_uris_are_integrity_pinned():
+    """`uris` decides unchanged-vs-new, so editing the list must read as tampering;
+    a legacy entry (no `uris` key) keeps its original digest so existing signed
+    baselines still verify after upgrade."""
+    legacy = {"id": "f", "root_cause": "rc", "context_hash": "ch", "path_cwe_sink": "p"}
+    with_uris = {**legacy, "uris": ["app/x.py"]}
+    assert dec.baseline_content_sha256([legacy]) != dec.baseline_content_sha256([with_uris])
+    widened = {**legacy, "uris": ["app/x.py", "app/copy.py"]}
+    assert dec.baseline_content_sha256([with_uris]) != dec.baseline_content_sha256([widened])
+    assert dec.baseline_content_sha256([legacy]) == dec.baseline_content_sha256([dict(legacy)])
+
+
 def test_gate_baseline_new_mode():
     ok_arm = ArmResult(name="a", kind="scanner", family="x", ok=True, exit_code=0,
                        error="", findings=[])

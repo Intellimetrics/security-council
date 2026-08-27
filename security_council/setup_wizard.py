@@ -23,7 +23,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from . import __version__
 from .config import PROFILES, find_config
+
+REPO_URL = "https://github.com/Intellimetrics/security-council/blob/main"
 
 _LANG = {".py": "Python", ".js": "JavaScript", ".ts": "TypeScript", ".java": "Java",
          ".go": "Go", ".rb": "Ruby", ".cs": "C#", ".c": "C", ".cpp": "C++",
@@ -176,12 +179,14 @@ def cheat_sheet(profile: str, detected: dict) -> str:
         lines.append("  # deep scans spend vendor budget (caps above); a fixture-scale run "
                      "was ~$7-12 total")
     ci = detected.get("ci") or []
-    tmpl = {"azure-devops": "templates/security-council.yml",
-            "gitlab": "templates/security-council.gitlab-ci.yml",
-            "github": "action.yml (uses: Intellimetrics/security-council@v0.1.0)"}
+    # A pip/wheel install has no `docs/` or `templates/` next to it, so point at
+    # the published tree; the action tag follows the installed version.
+    tmpl = {"azure-devops": f"{REPO_URL}/templates/security-council.yml",
+            "gitlab": f"{REPO_URL}/templates/security-council.gitlab-ci.yml",
+            "github": f"action.yml (uses: Intellimetrics/security-council@v{__version__})"}
     for system in ci:
-        lines.append(f"  # detected {system} — CI template: {tmpl[system]} (docs/ci/)")
-    lines.append("  # full triage loop (suppress/outcome/baseline): docs/triage.md")
+        lines.append(f"  # detected {system} — CI template: {tmpl[system]} ({REPO_URL}/docs/ci/)")
+    lines.append(f"  # full triage loop (suppress/outcome/baseline): {REPO_URL}/docs/triage.md")
     return "\n".join(lines)
 
 
