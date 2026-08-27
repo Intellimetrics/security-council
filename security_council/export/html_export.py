@@ -295,6 +295,10 @@ def to_html(findings: list[Finding], manifest: dict, *, scores: dict | None = No
     parts = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+        # the page is opened from disk as often as it is served: carry its own
+        # CSP so a missed escape would still be inert (R14)
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'\">",
         f"<title>security-council — {_e(manifest.get('run_id'))}</title>",
         f"<style>{_CSS}</style></head><body><div class='page'>",
         _dashboard(findings, manifest, rd),

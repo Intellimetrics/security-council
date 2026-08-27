@@ -172,6 +172,16 @@ def test_dual_use_artifacts_are_withheld_unless_asked(tmp_path):
         assert status == 200 and b"(dual-use, not served)" in body and b"href=" not in body.split(b"claude-analysis_attack-path")[1][:40]
         _, _, z = _get(base + f"runs/{run.run_id}.zip")
         assert not any("attack-path" in n for n in zipfile.ZipFile(BytesIO(z)).namelist())
+        # R14 own pass: a symlink ALIAS to the withheld directory (or a
+        # case-insensitive filesystem) must not walk around the check
+        (run.out_dir / "raw" / "alias").symlink_to(d)
+        status, _, body = _get(base + f"runs/{run.run_id}/raw/alias/attack-path.md")
+        assert status == 403 and b"dual-use" in body
+        status, _, body = _get(base + f"runs/{run.run_id}/raw/")
+        assert b"alias" in body and b"href='/runs/" + run.run_id.encode() + b"/raw/alias" not in body
+        _, _, z = _get(base + f"runs/{run.run_id}.zip")
+        assert not any("alias" in n or "attack-path" in n for n in zipfile.ZipFile(BytesIO(z)).namelist())
+        (run.out_dir / "raw" / "alias").unlink()
     finally:
         srv.stop()
     srv = serve.ReportServer(target, port=0, include_dual_use=True)
@@ -183,6 +193,16 @@ def test_dual_use_artifacts_are_withheld_unless_asked(tmp_path):
         assert any("attack-path.md" in n for n in zipfile.ZipFile(BytesIO(z)).namelist())
     finally:
         srv.stop()
+
+
+def test_viewer_never_writes_into_a_run(viewer):
+    srv, base, target, runs = viewer
+    run = runs[-1]
+    (run.out_dir / "summary.html").unlink()
+    before = sorted(p.name for p in run.out_dir.iterdir())
+    status, headers, body = _get(base + f"runs/{run.run_id}/")
+    assert status == 200 and b"<h1>security-council report" in body      # rendered in memory
+    assert sorted(p.name for p in run.out_dir.iterdir()) == before     # nothing written
 
 
 def test_only_our_summary_page_is_served_as_html(viewer):

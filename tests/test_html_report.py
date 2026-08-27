@@ -122,6 +122,8 @@ def test_page_is_hardened_and_self_contained():
     assert "http://" not in page and "https://" not in page and "javascript" not in page.lower()
     assert "src=" not in page.replace("src=x", "").replace("src=y", "")
     assert "<link" not in page and "@import" not in page and "url(" not in page
+    # opened from disk there are no response headers: the page carries its own CSP
+    assert "http-equiv='Content-Security-Policy'" in page and "default-src 'none'" in page
 
 
 def test_dashboard_gate_tiles_next_steps_and_where_to_look(tmp_path):

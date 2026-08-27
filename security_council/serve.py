@@ -3,7 +3,7 @@
 What it serves (stdlib `http.server`, no dependency, no JavaScript):
 
     /                         index: every run newest-first (the `runs` listing)
-    /runs/<id>/               that run's summary.html (rendered on the fly if absent)
+    /runs/<id>/               that run's summary.html (rendered in memory if absent)
     /runs/<id>/<file>         any file in the run directory (SARIF, findings, raw/…)
     /runs/<id>.zip            the run directory as one download
     /runs/latest/…            redirects to the newest run
@@ -165,30 +165,40 @@ class ReportServer:
 
     @property
     def url(self) -> str:
-        host = "127.0.0.1" if self.bind in ("0.0.0.0", "", "::") and is_loopback("127.0.0.1") \
-            and self.bind != "0.0.0.0" else self.bind
-        if self.bind in ("0.0.0.0", "::", ""):
-            host = _lan_address() or "127.0.0.1"
+        host = (_lan_address() or "127.0.0.1") if self.bind in ("0.0.0.0", "::", "") \
+            else self.bind
         base = f"http://{host}:{self.port}/"
         return base + (f"?token={self.token}" if self.token else "")
 
     # -- policy helpers used by the handler --------------------------------
-    def excluded_prefixes(self, run_dir: Path) -> list[str]:
-        """Directories holding dual-use (export_excluded) artifacts, from the
-        run's manifest. Read per request: manifests are small and a run can
-        be re-rendered while the viewer is up."""
+    def excluded_dirs(self, run_dir: Path) -> list[Path]:
+        """RESOLVED directories holding dual-use (export_excluded) artifacts,
+        from the run's manifest. Compared as resolved paths, never as request
+        strings — a symlink alias or a case-insensitive filesystem would
+        otherwise walk around a prefix check (R14 own pass). Read per request:
+        manifests are small and a run can be re-rendered while the viewer is up."""
         if self.include_dual_use:
             return []
         try:
             m = json.loads((run_dir / "manifest.json").read_text())
         except (OSError, ValueError):
             return []
-        out = []
+        out: list[Path] = []
         for a in m.get("artifacts") or []:
             if a.get("export_excluded") and a.get("path"):
-                p = str(a["path"]).strip("/")
-                out.append(p.rsplit("/", 1)[0] + "/" if "/" in p else p)
+                d = _confine(run_dir, str(a["path"]).strip("/").rsplit("/", 1)[0]
+                             if "/" in str(a["path"]) else "")
+                if d is not None and d != run_dir.resolve():
+                    out.append(d)
         return out
+
+    @staticmethod
+    def is_excluded(path: Path, excluded: list[Path]) -> bool:
+        try:
+            r = path.resolve(strict=True)
+        except OSError:
+            return False
+        return any(r == d or d in r.parents for d in excluded)
 
 
 def _default_docs_root() -> Path | None:
@@ -348,18 +358,16 @@ class _Handler(BaseHTTPRequestHandler):
             return self._err(HTTPStatus.NOT_FOUND, "no such run")
         if not inner:
             page = run_dir / "summary.html"
-            if not page.is_file():
-                self._render_summary(run_dir, page)
-            if not page.is_file():
+            body = page.read_bytes() if page.is_file() else self._render_summary(run_dir)
+            if body is None:
                 return self._err(HTTPStatus.NOT_FOUND, "this run has no summary")
-            return self._send(200, page.read_bytes(), "text/html; charset=utf-8", self._extra)
-        for prefix in self.srv.excluded_prefixes(run_dir):
-            if inner.startswith(prefix) or inner + "/" == prefix:
-                return self._err(HTTPStatus.FORBIDDEN, "dual-use artifact: not served (start with "
-                                                       "--include-dual-use to allow it)")
+            return self._send(200, body, "text/html; charset=utf-8", self._extra)
         target = _confine(run_dir, inner)
         if target is None:
             return self._err(HTTPStatus.NOT_FOUND, "no such file")
+        if self.srv.is_excluded(target, self.srv.excluded_dirs(run_dir)):
+            return self._err(HTTPStatus.FORBIDDEN, "dual-use artifact: not served (start with "
+                                                   "--include-dual-use to allow it)")
         if target.is_dir():
             return self._listing(run_dir, target, inner)
         if not target.is_file():
@@ -371,12 +379,15 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(200, target.read_bytes(), ctype, self._extra)
 
     def _listing(self, run_dir: Path, d: Path, inner: str) -> None:
-        excluded = self.srv.excluded_prefixes(run_dir)
+        excluded = self.srv.excluded_dirs(run_dir)
         items = []
         for p in sorted(d.iterdir(), key=lambda x: (not x.is_dir(), x.name)):
             rel = f"{inner.rstrip('/')}/{p.name}".strip("/")
-            if any(rel.startswith(x.rstrip("/")) for x in excluded):
+            if self.srv.is_excluded(p, excluded):
                 items.append(f"<li>{_e(p.name)} <span class='mut'>(dual-use, not served)</span></li>")
+                continue
+            if _confine(run_dir, rel) is None:
+                items.append(f"<li>{_e(p.name)} <span class='mut'>(not served)</span></li>")
                 continue
             items.append(f"<li><a href='/runs/{_e(run_dir.name)}/{_e(rel)}{'/' if p.is_dir() else ''}'>"
                          f"{_e(p.name)}{'/' if p.is_dir() else ''}</a></li>")
@@ -384,30 +395,33 @@ class _Handler(BaseHTTPRequestHandler):
                 f"← report</a></p><ul>{''.join(items)}</ul>")
         self._send(200, _page(inner, body), "text/html; charset=utf-8", self._extra)
 
-    def _render_summary(self, run_dir: Path, page: Path) -> None:
+    def _render_summary(self, run_dir: Path) -> bytes | None:
+        """Render a run's page IN MEMORY when summary.html is missing (older
+        runs). The viewer never writes into a run directory."""
         try:
             from .cli import _load_findings, _load_scores
             from .export import html_export
             m = json.loads((run_dir / "manifest.json").read_text())
             md = run_dir / "summary.md"
-            page.write_text(html_export.to_html(
+            return html_export.to_html(
                 _load_findings(run_dir), m, scores=_load_scores(run_dir) or None, run_dir=run_dir,
-                markdown_text=md.read_text() if md.is_file() else None))
+                markdown_text=md.read_text() if md.is_file() else None).encode()
         except (OSError, ValueError):
-            pass
+            return None
 
     def _zip(self, run_id: str) -> None:
         run_dir = _confine(self.srv.runs_root, run_id)
         if run_dir is None or not run_dir.is_dir() or run_dir == self.srv.runs_root.resolve():
             return self._err(HTTPStatus.NOT_FOUND, "no such run")
-        excluded = self.srv.excluded_prefixes(run_dir)
+        excluded = self.srv.excluded_dirs(run_dir)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for p in sorted(run_dir.rglob("*")):
                 if not p.is_file() or p.is_symlink():
                     continue
                 rel = p.relative_to(run_dir).as_posix()
-                if any(rel.startswith(x.rstrip("/")) for x in excluded):
+                # symlinked DIRECTORIES are walked by rglob: confine each file
+                if _confine(run_dir, rel) is None or self.srv.is_excluded(p, excluded):
                     continue
                 zf.write(p, f"{run_dir.name}/{rel}")
         self._send(200, buf.getvalue(), "application/zip",
