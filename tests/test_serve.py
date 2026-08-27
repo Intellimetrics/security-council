@@ -417,6 +417,12 @@ def test_zip_size_cap_and_log_redaction(viewer, monkeypatch, capsys):
     monkeypatch.setattr(serve, "ZIP_MAX_BYTES", 10)
     status, _, body = _get(base + f"runs/{run.run_id}.zip")
     assert status == 413 and b"download its files individually" in body
+    import threading
+    monkeypatch.setattr(serve, "_ZIP_SLOTS", threading.BoundedSemaphore(1))
+    serve._ZIP_SLOTS.acquire()                                    # someone is building one
+    status, _, body = _get(base + f"runs/{run.run_id}.zip")
+    assert status == 503
+    serve._ZIP_SLOTS.release()
     monkeypatch.setenv("SECURITY_COUNCIL_SERVE_LOG", "1")
 
     class _H(serve._Handler):

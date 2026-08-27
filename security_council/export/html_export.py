@@ -165,8 +165,8 @@ def _safe_rel(path: object) -> str | None:
     somewhere else (R14, codex: escaping made it inert as text but not as an
     href). Anything else is rendered as text, not a link."""
     s = "" if path is None else str(path).strip()
-    if not s or len(s) > 400 or "\\" in s or "\x00" in s or ":" in s:
-        return None
+    if not s or len(s) > 400 or "\\" in s or "\x00" in s or ":" in s or "%" in s:
+        return None                      # `%2e%2e` is a dot-dot segment to a browser (R14)
     if s.startswith(("/", "//", "#", "?")):
         return None
     parts = s.split("/")

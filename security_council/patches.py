@@ -133,7 +133,16 @@ def apply_patch(work: Path, patch_path: Path, *, timeout: int = 120) -> tuple[bo
     work = Path(work)
     env = {**os.environ, **_GIT_NEUTRAL_ENV, "GIT_CEILING_DIRECTORIES": str(work.parent)}
     err = ""
-    for strip in ("-p1", "-p0"):
+    # R14 follow-up: pick the strip level from the patch's own headers instead
+    # of trying both — `-p0` on a git-format new-file patch would create `b/X`
+    # and report "applied"; `-p1` on a plain `--- app/x.py` patch would strip a
+    # real directory and could hit a same-named file at the root.
+    try:
+        text = Path(patch_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    strips = ("-p1",) if _GIT_PREFIX_RE.search(text) else ("-p0",)
+    for strip in strips:
         r = subprocess.run([git, "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null",
                             "apply", strip, "--recount", "--whitespace=nowarn", str(patch_path)],
                            capture_output=True, text=True, cwd=str(work), env=env,
@@ -145,6 +154,8 @@ def apply_patch(work: Path, patch_path: Path, *, timeout: int = 120) -> tuple[bo
 
 
 _DIFF_GIT_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$")
+_PLUS_HEADER_RE = re.compile(r"^\+\+\+ (?:b/)?([^\t\n]+)")
+_GIT_PREFIX_RE = re.compile(r"^(?:diff --git a/|--- a/|\+\+\+ b/)", re.M)
 _MODE_RE = re.compile(r"^(new mode|old mode|new file mode|deleted file mode) (\d+)")
 _SYMLINK_MODE = "120000"
 
@@ -163,17 +174,31 @@ def validate_patch(diff: str, *, target_files: set[str] | None = None,
     files: list[str] = []
     refused: list[str] = []
     review: list[str] = []
+    cur: str | None = None
+
+    def _seen(f: str) -> None:
+        if f in files:
+            return
+        files.append(f)
+        if any(rx.search(f) for rx in REFUSE_PATH_RES):
+            refused.append(f)
+        elif any(rx.search(f) for rx in REVIEW_PATH_RES):
+            review.append(f"modifies {f}")
+        if target_files and f not in target_files and f not in refused:
+            review.append(f"out_of_scope: {f}")
+
     for line in diff.splitlines():
         m = _DIFF_GIT_RE.match(line)
         if m:
-            f = _rel(m.group(2))
-            files.append(f)
-            if any(rx.search(f) for rx in REFUSE_PATH_RES):
-                refused.append(f)
-            elif any(rx.search(f) for rx in REVIEW_PATH_RES):
-                review.append(f"modifies {f}")
-            if target_files and f not in target_files and not refused[-1:] == [f]:
-                review.append(f"out_of_scope: {f}")
+            cur = _rel(m.group(2))
+            _seen(cur)
+            continue
+        # R14 (VP-1): a traditional `---/+++`-only patch used to yield no files at
+        # all, so the REFUSE list never saw it. The `+++` header names the file.
+        m = _PLUS_HEADER_RE.match(line)
+        if m and m.group(1).strip() != "/dev/null":
+            cur = _rel(m.group(1).strip())
+            _seen(cur)
             continue
         if line.startswith(("new mode", "old mode", "new file mode", "deleted file mode")):
             mm = _MODE_RE.match(line)
@@ -181,6 +206,9 @@ def validate_patch(diff: str, *, target_files: set[str] | None = None,
                 refused.append("symlink entry (120000)")
             elif mm and ("new mode" in line):
                 review.append("file mode change")
+            elif line.startswith("deleted file mode"):
+                # R14 (VP-2): a deletion can read as `fixed`; a reviewer must see it
+                review.append(f"deletes {cur or 'a file'}")
         if line.startswith("rename from") or line.startswith("copy from"):
             review.append("rename/copy header")
         if line.startswith("Binary files") or "GIT binary patch" in line:

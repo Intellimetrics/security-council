@@ -234,6 +234,13 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
     docs/serve.md: cookie not port-scoped, no Secure flag over http, token in history/MCP output.
     Lesson for council prompts: keep them < 10k chars, no inline context files, and phrase as
     "verify the control" not "find a bypass" (codex's provider filter).
+    **R14b (closure, continuation; claude + antigravity YES/risk low, codex timeout): SHIP.** Every
+    R14a item confirmed closed with lines; verify-patch containment confirmed (git apply's own
+    unsafe-path + beyond-symlink checks live because the scratch copy is `.git`-stripped and
+    symlink-free). Follow-ups taken the same day: traditional `---/+++` patches now reach the
+    REFUSE list (VP-1); `deleted file mode` → `review_required: deletes <file>` (VP-2) and the
+    verdict reason says the file was removed; `_safe_rel` rejects `%` (HX-1); zip builds bounded
+    to two at once (SV-1); the `-p` strip level follows the patch headers instead of trying both.
 9. **gitleaks/osv can't path-exclude via CLI** — isolation (scratch copy excluding runtime dirs) is what keeps scans clean; don't remove it.
 10. **`coverage.CATEGORY_POLICY` is keyed by arm name** (`POLICY_ALIASES` maps `claude`/`codex` → `house`). A new arm without an entry/alias is `unknown` for every family → never eligible → its findings mislabel as singleton/uncovered. Add a policy row when adding an arm.
 

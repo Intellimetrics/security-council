@@ -153,3 +153,54 @@ def test_apply_patch_refuses_paths_that_escape_the_tree(tmp_path):
 def test_rel_keeps_a_genuine_work_directory_in_the_path():
     assert patches._rel("src/work/x.py") == "src/work/x.py"
     assert patches._rel("/pristine/x.py") == "pristine/x.py"
+
+
+
+# --------------------------------------------------------------------------- #
+# R14 follow-ups (council, non-blocking): traditional headers, deletions, -p
+# --------------------------------------------------------------------------- #
+
+def test_traditional_patch_headers_reach_the_refuse_list():
+    """VP-1: a `---/+++`-only patch used to yield no files, so the REFUSE list
+    never saw `.security-council/…`."""
+    from security_council.patches import validate_patch
+    trad = "--- .security-council/x\n+++ .security-council/x\n@@ -0,0 +1 @@\n+z\n"
+    r = validate_patch(trad)
+    assert r.files == [".security-council/x"] and r.refused and r.ok is False
+    plain = "--- app/x.py\t2026\n+++ app/x.py\t2026\n@@ -1 +1 @@\n-a\n+b\n"
+    r = validate_patch(plain)
+    assert r.files == ["app/x.py"] and r.ok
+    new = "--- /dev/null\n+++ b/app/new.py\n@@ -0,0 +1 @@\n+x\n"
+    assert validate_patch(new).files == ["app/new.py"]
+
+
+def test_deletion_is_flagged_for_review():
+    from security_council.patches import validate_patch
+    d = ("diff --git a/app/x.py b/app/x.py\ndeleted file mode 100644\n--- a/app/x.py\n"
+         "+++ /dev/null\n@@ -1 +0,0 @@\n-x\n")
+    r = validate_patch(d)
+    assert r.ok and "deletes app/x.py" in r.review_required
+
+
+def test_strip_level_follows_the_headers(tmp_path):
+    """A git-format new-file patch must never be applied with -p0 (it would
+    create `b/X`); a plain patch must never be applied with -p1."""
+    import shutil
+    from security_council.patches import apply_patch
+    if not shutil.which("git"):
+        import pytest
+        pytest.skip("git required")
+    work = tmp_path / "w"
+    (work / "sub").mkdir(parents=True)
+    (work / "sub" / "x.py").write_text("a\n")
+    (work / "x.py").write_text("a\n")                    # same-named file at the root
+    gitfmt = tmp_path / "g.patch"
+    gitfmt.write_text("diff --git a/nope/new.py b/nope/new.py\nnew file mode 100644\n"
+                      "--- /dev/null\n+++ b/nope/new.py\n@@ -0,0 +1 @@\n+x\n")
+    ok, err = apply_patch(work, gitfmt)
+    assert ok and (work / "nope" / "new.py").is_file() and not (work / "b").exists()
+    plain = tmp_path / "p.patch"
+    plain.write_text("--- sub/x.py\n+++ sub/x.py\n@@ -1 +1 @@\n-a\n+b\n")
+    ok, err = apply_patch(work, plain)
+    assert ok and (work / "sub" / "x.py").read_text() == "b\n"
+    assert (work / "x.py").read_text() == "a\n"           # -p1 was never tried

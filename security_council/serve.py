@@ -76,6 +76,7 @@ _TEXT_TYPES = {".md": "text/markdown; charset=utf-8", ".sarif": "application/jso
                ".cklb": "application/json", ".py": "text/plain; charset=utf-8",
                ".js": "text/plain; charset=utf-8", ".ts": "text/plain; charset=utf-8"}
 ZIP_MAX_BYTES = 256 * 1024 * 1024        # a run bigger than this is downloaded file by file
+_ZIP_SLOTS = threading.BoundedSemaphore(2)   # zips are built in memory: at most two at once
 _HOSTNAME_RE = re.compile(r"^[A-Za-z0-9.:_-]{1,253}$")
 
 _CSS = """
@@ -524,6 +525,15 @@ class _Handler(BaseHTTPRequestHandler):
         run_dir = _confine(self.srv.runs_root, run_id)
         if run_dir is None or not run_dir.is_dir() or run_dir == self.srv.runs_root.resolve():
             return self._err(HTTPStatus.NOT_FOUND, "no such run")
+        if not _ZIP_SLOTS.acquire(blocking=False):
+            return self._err(HTTPStatus.SERVICE_UNAVAILABLE,
+                             "another download is being built; try again in a moment")
+        try:
+            self._zip_locked(run_dir)
+        finally:
+            _ZIP_SLOTS.release()
+
+    def _zip_locked(self, run_dir: Path) -> None:
         excluded = self.srv.excluded_paths(run_dir)
         files: list[tuple[Path, str]] = []
         total = 0

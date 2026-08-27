@@ -187,6 +187,7 @@ def test_manifest_paths_are_linked_only_when_they_are_relative_run_paths():
     for p in bad:
         assert html_export._safe_rel(p) is None, p
     assert html_export._safe_rel("raw/x/y.md") == "raw/x/y.md"
+    assert html_export._safe_rel("raw/%2e%2e/x") is None            # R14 HX-1
 
 
 def test_existing_r8_expectations_still_hold():

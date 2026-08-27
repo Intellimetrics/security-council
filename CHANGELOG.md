@@ -104,6 +104,10 @@
   unreadable manifest; manifest paths are linked only when they are plain
   relative paths; `?token=` is redacted from logs; zip capped at 256 MB;
   30 s request timeout; docs mounted only from a real checkout.
+- Verify-patch follow-ups (R14b): traditional `---/+++` patches are
+  validated against the refuse list too; a deletion is flagged `deletes
+  <file>` for review and the verdict reason says so; the `-p` strip level is
+  chosen from the patch headers rather than tried twice.
 
 ### Added — deterministic verify-fix
 
