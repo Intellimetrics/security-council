@@ -72,7 +72,8 @@ def _digest(parts: list[str]) -> str:
 
 
 def _norm_path(path: str) -> str:
-    return path.strip().replace("\\", "/").lstrip("./")
+    from .normalize.paths import normalize_separators   # lazy: normalize.base imports us
+    return normalize_separators(path.strip()).lstrip("./")
 
 
 def _norm_expr(expr: str) -> str:

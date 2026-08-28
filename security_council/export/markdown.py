@@ -224,7 +224,7 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
         validated = [f for f in findings if f.validation is not None]
         # a validation record with an empty panel means nobody convened (backend
         # missing / timed out): it is needs_human, but it was NOT cross-examined
-        convened = [f for f in validated if f.validation.panel]
+        convened = [f for f in validated if f.validation.convened()]
         unconvened = len(validated) - len(convened)
         tp = sum(1 for f in convened if f.validation.verdict == "true_positive")
         fp = sum(1 for f in convened if f.validation.verdict == "false_positive")

@@ -394,6 +394,24 @@ Papercuts: cheat sheet's checkout-only paths and hard-coded `@v0.1.0`;
 `summary.html` missing from the scan footer. Everything else passed from the
 wheel first time. Six regression tests, vacuity-checked. 623 tests.
 
+**R15 council on the two fixes (2026-08-27, quick; claude YES/risk low, codex
+timeout, antigravity empty — plan for one usable peer; transcript
+`.llm-council/runs/20260827_195752_*`):** control 1 sound (digest catches strip
+AND add of `uris`; signature over the recomputed digest), control 2 fail-safe
+downstream. Two follow-ups, both reproduced live then closed the same day: a
+committed file literally named `app\reports.py` aliased onto `app/reports.py`
+(`to_repo_relative` rewrote `\` unconditionally → copy's findings folded into
+the original's location, invisible AND `unchanged`) — backslash translation is
+now Windows-host/Windows-shaped only (`normalize/paths.normalize_separators`,
+shared with `fingerprint._norm_path`); I1 then refuses the uri, so the
+findings are DROPPED and counted → `partial_coverage` → exit 3, with the
+degradation naming `invalid:I1` (scanner arms now carry the normalizer's skip
+breakdown in `coverage.skipped`). I1 was deliberately NOT weakened; and an all-absent panel (llm-council
+ran, every peer failed) still counted as cross-examined — `Validation.convened()`
+is the single predicate for both the degradation and the summary. Info items
+taken: legacy nag only under `gate_baseline: new`; rename-gates-as-new in the
+upgrade note.
+
 Release steps left (outward-facing, need the user's go): `git push`, `git tag
 v0.2.0` + push, `gh release create v0.2.0` with the CHANGELOG section, then
 `gh workflow run live-verify` (runs against `@main`) and confirm both jobs

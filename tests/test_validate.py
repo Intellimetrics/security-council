@@ -154,3 +154,24 @@ def test_panel_that_never_convened_is_reported_as_a_failure():
     panel.validate_findings([ok_one], repo_root=".", failures=failures2, runner=_runner([
         ("claude", "for", "yes", [_cite()])]))
     assert ok_one.validation.verdict == "needs_human" and failures2 == []
+
+
+def test_panel_where_every_peer_failed_is_not_cross_examined():
+    """R15: llm-council ran but every peer failed (`ok=False`) — `results` is
+    non-empty yet every seat is `absent`. That is not a cross-examination."""
+    def runner(prompt, *, cwd, mode="consensus", max_cost_usd=None, timeout=600):
+        return CouncilResult(ok=False, degraded=True, results=[
+            PeerResult(name=n, ok=False, label=None, stance=st, model=None, confidence=None,
+                       blockers=[], evidence=[], error=f"{n} timed out")
+            for n, st in (("claude", "for"), ("codex", "against"), ("antigravity", "neutral"))])
+    f = _finding(family="injection")
+    failures: list = []
+    panel.validate_findings([f], repo_root=".", runner=runner, failures=failures)
+    assert f.validation.verdict == "needs_human"
+    assert not f.validation.convened()
+    assert len(f.validation.panel) == 3 and all(op.status == "absent" for op in f.validation.panel)
+    assert failures and failures[0]["finding_id"] == f.id and "claude: claude timed out" in failures[0]["error"]
+    # one peer answering IS a (degraded) convening
+    one = _finding(family="injection")
+    panel.validate_findings([one], repo_root=".", runner=_runner([("claude", "for", "yes", [_cite()])]))
+    assert one.validation.convened()

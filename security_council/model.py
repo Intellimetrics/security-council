@@ -288,6 +288,14 @@ class Validation:
     batched_with: list[str] = field(default_factory=list)
     no_cross_file_navigation: bool = False
 
+    def convened(self) -> bool:
+        """Did any INDEPENDENT panel seat actually answer? A record whose
+        seats are all `absent` (backend missing, every peer failed) is
+        `needs_human` but was never cross-examined; the run degradation and
+        the summary's "cross-examined" count both read this one predicate
+        (R15 — the two had drifted apart)."""
+        return any(op.independent and op.status != "absent" for op in self.panel)
+
 
 @dataclass
 class DecidedBy:

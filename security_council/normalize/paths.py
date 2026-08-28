@@ -2,8 +2,27 @@
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+
+_WINDOWS_SHAPED = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
+
+def normalize_separators(path: str) -> str:
+    r"""Translate ``\`` to ``/`` only where a backslash IS a separator: on a
+    Windows host, or in a Windows-shaped path (drive letter or UNC prefix).
+
+    On POSIX a backslash is a legal filename character. R15 (0.2.0 release
+    rehearsal) reproduced a committed file literally named ``app\\reports.py``
+    normalizing onto ``app/reports.py``: its findings were folded into the
+    original's location (invisible in the report) and the baseline delta read
+    the copy as ``unchanged`` — a silent gate pass. The scanned repository must
+    not be able to alias one of its files onto another."""
+    if os.name == "nt" or _WINDOWS_SHAPED.match(path):
+        return path.replace("\\", "/")
+    return path
 
 
 def to_repo_relative(uri: str, *, repo_root: str | Path, scan_root: str | Path | None = None) -> str:
@@ -16,7 +35,7 @@ def to_repo_relative(uri: str, *, repo_root: str | Path, scan_root: str | Path |
     p = uri
     if p.startswith("file://"):
         p = unquote(urlparse(p).path)
-    p = p.replace("\\", "/")
+    p = normalize_separators(p)
     for base in (scan_root, repo_root):
         if not base:
             continue

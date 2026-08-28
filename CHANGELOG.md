@@ -5,7 +5,9 @@
 **Upgrading from 0.1.0:** re-run `security-council baseline set` once so the
 baseline records file locations (see *Fixed* below); until then each scan
 reports `baseline_legacy_entries`. Existing signed decisions and baselines
-still verify. The GitHub Action tag is `Intellimetrics/security-council@v0.2.0`.
+still verify. Moving or renaming a file that holds a baselined finding now
+gates it as `new` (a moved instance is a re-review event) — one more
+`baseline set` after the move. The GitHub Action tag is `Intellimetrics/security-council@v0.2.0`.
 
 ### Fixed — found in the 0.2.0 release rehearsal
 
@@ -35,6 +37,23 @@ were reproduced live before the fix and again after it.
   degradation carries the backend's error, the summary counts only convened
   panels as cross-examined and flags the rest, and `doctor` reports the
   `llm-council` backend.
+- Council R15 on the two fixes above (claude YES; codex timeout, antigravity
+  empty) named two follow-ups, both reproduced and closed before the tag:
+  a committed file literally named `app\reports.py` (a backslash is a legal
+  POSIX filename character) normalized onto `app/reports.py`, so its
+  findings were folded into the original's location — invisible in the
+  report and `unchanged` to the baseline. Backslashes are now translated only
+  on a Windows host or in a Windows-shaped path (drive letter / UNC); such a
+  file cannot be represented (uris are repo-relative POSIX, invariant I1), so
+  its findings are dropped and *counted* — the arm is `partial_coverage`,
+  the run exits 3, and the degradation now names the drop reason
+  (`invalid:I1 ×2: …`) instead of "unresolvable location". Degraded, never
+  silently clean. And a
+  panel where `llm-council` ran but every peer failed still counted as
+  "cross-examined"; "convened" is now one predicate on the validation record
+  (an independent seat that answered), read by the degradation and the
+  summary alike. `baseline_legacy_entries` is reported only under
+  `gate_baseline: new`, where it matters.
 - The `setup` cheat sheet pointed at `docs/…` and `templates/…` paths that
   exist only in a checkout and hard-coded `@v0.1.0` for the GitHub Action;
   it now links the published tree and follows the installed version. The

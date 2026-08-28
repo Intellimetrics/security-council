@@ -165,6 +165,28 @@ def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) ->
     return 0, degr
 
 
+_SKIP_REASONS = {
+    "unresolvable_location": "location does not resolve to real code, or lies outside the "
+                             "scanned root",
+    "invalid:I1": "location not representable — uris must be repo-relative POSIX (I1); a "
+                  "file whose NAME contains a backslash cannot be placed and is dropped, "
+                  "never aliased onto another file (R15)",
+}
+
+
+def _skip_breakdown(skipped: dict) -> str:
+    """Name the normalizer's drop reasons so a partial_coverage degradation says
+    WHY results are missing, not just how many (R15: a backslash-named file's
+    findings were 'unresolvable' with no way to tell that from a hallucinated
+    path)."""
+    if not skipped:
+        return "unresolvable location, or a path outside the scanned root"
+    parts = []
+    for kind, n in sorted(skipped.items(), key=lambda kv: (-kv[1], kv[0])):
+        parts.append(f"{kind} ×{n}: {_SKIP_REASONS.get(kind, 'rejected by the finding model')}")
+    return "; ".join(parts)
+
+
 def _partial_reason(r: ArmResult) -> str:
     cov = r.coverage or {}
     if cov.get("ignore_files"):
@@ -179,9 +201,9 @@ def _partial_reason(r: ArmResult) -> str:
         return f"declined {len(declined)} categories: {', '.join(sorted(declined)[:6])}"
     raw, norm = cov.get("raw_results"), cov.get("normalized")
     if isinstance(raw, int) and isinstance(norm, int) and norm < raw:
+        why = _skip_breakdown(cov.get("skipped") or {})
         return (f"reported {raw} results but only {norm} could be placed in the repo — "
-                f"{raw - norm} dropped (unresolvable location, or a path outside the "
-                f"scanned root); those findings are NOT in this report")
+                f"{raw - norm} dropped ({why}); those findings are NOT in this report")
     return f"completion={cov.get('completion') or 'partial'} — scanned less than the full scope"
 
 
@@ -591,7 +613,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             baseline_delta["set_at"] = baseline.get("set_at")
             baseline_delta["operator"] = baseline.get("operator")
             baseline_delta["signature"] = baseline.get("signature_status")
-            if baseline_delta.get("legacy_entries"):
+            if (baseline_delta.get("legacy_entries")
+                    and (config.get("policy") or {}).get("gate_baseline") == "new"):
                 n = baseline_delta["legacy_entries"]
                 pre_degr.append({"kind": "baseline_legacy_entries",
                                  "detail": f"{n} baseline entr{'y' if n == 1 else 'ies'} "

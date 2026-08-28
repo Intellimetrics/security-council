@@ -18,7 +18,13 @@ def test_path_strips_scan_mount_and_repo_root():
     assert to_repo_relative("/repo/app/x.py", repo_root="/repo") == "app/x.py"
     assert to_repo_relative("file:///src/a%20b.py", repo_root="/repo", scan_root="/src") == "a b.py"
     assert to_repo_relative("./app/x.py", repo_root="/repo") == "app/x.py"
-    assert to_repo_relative("app\\x.py", repo_root="/repo") == "app/x.py"
+    # R15: a backslash is a separator only on Windows or in a Windows-shaped
+    # path; on POSIX `app\\x.py` is a different file from `app/x.py`, and the
+    # scanned repo must not be able to alias one file onto another.
+    assert to_repo_relative("C:\\repo\\app\\x.py", repo_root="C:\\repo") == "app/x.py"
+    assert to_repo_relative("\\\\srv\\share\\app\\x.py", repo_root="//srv/share") == "app/x.py"
+    assert to_repo_relative("app\\x.py", repo_root="/repo") == "app\\x.py"
+    assert to_repo_relative("/src/app\\x.py", repo_root="/repo", scan_root="/src") == "app\\x.py"
 
 
 # --- snippets ---
@@ -107,3 +113,41 @@ def test_xpath_injection_maps_to_injection_family():
     # pool with the other injection CWEs and stay out of the crypto carve-out.
     assert m.family_for_cwe("CWE-643") == "injection"
     assert m.canonical_cwe("CWE-643") not in m.CRYPTO_CWES
+
+
+def test_backslash_named_posix_file_is_dropped_as_invalid_never_aliased(tmp_path):
+    """R15 (reproduced live): a committed file literally named `app\\x.py` used
+    to normalize onto `app/x.py` — its findings merged into the other file's
+    location (invisible in the report) and read `unchanged` to the baseline.
+    Now the uri keeps its backslash, I1 refuses it, the finding is DROPPED and
+    counted (partial_coverage → exit 3): degraded, never silently clean."""
+    from security_council.normalize import registry
+    from security_council.normalize.base import ParseContext
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "x.py").write_text("a = 1\nb = eval(a)\n")
+    (tmp_path / "app\\x.py").write_text("a = 1\nb = eval(a)\n")
+    rule = {"id": "r", "properties": {"tags": ["CWE-89: SQL Injection", "security"]}}
+    sarif = {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "semgrep", "rules": [rule]}},
+             "results": [{"ruleId": "r", "level": "error", "message": {"text": "t"},
+                          "locations": [{"physicalLocation": {
+                              "artifactLocation": {"uri": u},
+                              "region": {"startLine": 2, "endLine": 2}}}]}
+                         for u in ("/src/app/x.py", "/src/app\\x.py")]}]}
+    ctx = ParseContext(repo_root=tmp_path, scan_root="/src", source_id="semgrep",
+                       source_kind="scanner", family="semgrep", tool_version="1.0",
+                       run_id="r", collected_at="2026-08-27T00:00:00Z")
+    out = registry.normalize_sarif(sarif, "semgrep", ctx)
+    assert [loc.uri for f in out for loc in f.locations] == ["app/x.py"]
+    assert dict(ctx.skipped) == {"invalid:I1": 1}
+
+
+def test_partial_reason_names_the_drop_kind():
+    from security_council.arms.base import ArmResult
+    from security_council.orchestrator import _partial_reason
+    r = ArmResult(name="semgrep", kind="scanner", family="semgrep", ok=True, exit_code=0,
+                  error="", findings=[], coverage={"raw_results": 5, "normalized": 3,
+                                                   "skipped": {"invalid:I1": 2}})
+    txt = _partial_reason(r)
+    assert "2 dropped" in txt and "invalid:I1 ×2" in txt and "backslash" in txt
+    r.coverage = {"raw_results": 5, "normalized": 3}          # older arms: no breakdown
+    assert "unresolvable location" in _partial_reason(r)

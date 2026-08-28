@@ -221,6 +221,10 @@ class ScannerArm:
                                    source_kind="scanner", family=self.family, run_id=run_id,
                                    collected_at=collected_at, tool_version=version)
                 findings = registry.normalize_sarif(sarif, self.name, ctx)
+                if ctx.skipped:
+                    # why results were dropped (unresolvable_location, invalid:I1 ...)
+                    # — surfaced by the partial_coverage degradation (R15)
+                    cov["skipped"] = dict(ctx.skipped)
                 raw_count = sum(len(run.get("results", [])) for run in sarif.get("runs", []))
                 # findings present => productive run, not a failure — EXCEPT a
                 # timeout, whose report is whatever had been flushed when the

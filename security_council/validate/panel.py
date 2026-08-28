@@ -258,17 +258,21 @@ def validate_finding(finding: Finding, *, repo_root, runner=council_client.run_c
     prompt = build_validation_prompt(finding)
     psha = hashlib.sha256(prompt.encode()).hexdigest()
     cr = runner(prompt, cwd=repo_root, mode=mode, max_cost_usd=max_cost_usd, timeout=timeout)
-    if failures is not None and cr.degraded and not cr.results:
-        # nobody sat: backend missing / timed out / no output. The verdict below
-        # is needs_human (fail-safe); the caller turns this into a run-level
-        # degradation so the report never claims a cross-examination happened.
-        failures.append({"finding_id": finding.id,
-                         "error": (cr.error or "no panel output").strip()[:300]})
     extra = None
     if vendor_runner is not None:
         extra = [vendor_opinion(v, psha) for v in (vendor_runner(finding) or [])]
     val = synthesize_validation(finding, cr, prompt_sha256=psha, extra_opinions=extra)
     finding.validation = val
+    if failures is not None and not val.convened():
+        # nobody sat: backend missing, no output, or every peer failed (R15:
+        # `not cr.results` missed the all-failed case — llm-council present,
+        # peer CLIs not). The verdict is needs_human (fail-safe); the caller
+        # turns this into a run-level degradation so the report never claims a
+        # cross-examination happened.
+        why = cr.error.strip() if cr.error else (
+            "; ".join(f"{p.name}: {p.error or 'failed'}" for p in cr.results if not p.ok)
+            or "no panel output")
+        failures.append({"finding_id": finding.id, "error": why[:300]})
     finding.disposition.state = _state_for(finding, val)
     # lifecycle stays "open": v1 auto-demotes (refuted -> underReview in SARIF) but never
     # auto-closes/suppresses. Suppression is a later, policy-gated, shadow-mode decision.
