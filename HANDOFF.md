@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-27 (0.2.0 rehearsed from the wheel; see §7.10). Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-28 (0.2.0 RELEASED; see §7.10 for the rehearsal method). Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -363,7 +363,7 @@ analysis results fails the gate-unchanged test. **Live status: LIVE-VERIFIED 202
 CODEOWNERS + required review; documented residuals in docs/signing.md); ADO/GitLab templates
 unproven on real infrastructure; CKLB never opened in a live STIG Viewer.
 
-## 7.10 Release state — 0.2.0 (2026-08-27, rehearsed; tag/release pending user go-ahead)
+## 7.10 Release state — 0.2.0 (RELEASED 2026-08-28)
 
 **The confidence bar for "a cut that actually works" is now a rehearsal, not the
 test suite.** Method (repeat it for every release; ~15 min, $0 except one
@@ -431,7 +431,14 @@ fixed + pinned the same hour: claude-security `scan_prefix` strip by bare `start
 UNC file-URIs under a configured root refused instead of matched (false refusal, fail-safe
 direction). Council-ready for the tag.
 
-Release steps left (outward-facing, need the user's go): `git push`, `git tag
+**RELEASED 2026-08-28: `v0.2.0` tagged at `3392c7f`, published at
+<https://github.com/Intellimetrics/security-council/releases/tag/v0.2.0> (notes = the
+CHANGELOG 0.2.0 section). `live-verify` run 33160501908 on real GitHub runners at that
+sha: clean-pass + detects-and-gates both green. At tagging: 629 tests (+1 skip), ruff
+clean, wheel rehearsed in a fresh venv (§ method above). Next release is 0.2.1/0.3.0 —
+bump pyproject + `__init__` + CHANGELOG first; never move a tag that has a release.
+
+Release steps as run (for next time): `git push`, `git tag
 v0.2.0` + push, `gh release create v0.2.0` with the CHANGELOG section, then
 `gh workflow run live-verify` (runs against `@main`) and confirm both jobs
 green. `git ls-remote --tags origin` first — a stale tag bit 0.1.0.
