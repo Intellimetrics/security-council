@@ -77,6 +77,7 @@ participants:
     type: cli
     family: antigravity
     origin: US / Google
+    usage_from_json: true   # llm-council >= 0.23.0: agy --output-format json; its `status` lands in the empty-response error
     command: agy
     args:
     - --print
