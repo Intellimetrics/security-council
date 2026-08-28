@@ -54,6 +54,22 @@ were reproduced live before the fix and again after it.
   (an independent seat that answered), read by the degradation and the
   summary alike. `baseline_legacy_entries` is reported only under
   `gate_baseline: new`, where it matters.
+- Council R15b (independent re-run with a full quorum: claude and codex both
+  NO) found the same two defects one hop away from the fixes, all closed:
+  the codex-security and claude-security adapters still folded `\`→`/`
+  before the shared boundary (the alias survived through those arms); an
+  absolute path that no configured base explains (`C:\src\app.py`,
+  `\\srv\share\x.py`, `/etc/passwd`) was made "relative" by stripping its
+  leading slashes and a hostile repository containing that tree would place
+  the finding there — it now stays absolute and invariant I1 refuses it
+  (I1 also refuses a drive-letter prefix); the HTML dashboard's "validated"
+  tile still counted unconvened panels as cross-examined; the patch-path
+  helper shares the separator rule; `doctor`'s llm-council row is tested.
+  Note: `validator_unavailable` is informational — the exit code is still
+  decided by severity (the finding stays open and gates) while the SARIF
+  run records `executionSuccessful: false`; CI consumers may see exit 0
+  alongside an unsuccessful run and should treat the degradation as the
+  signal that validation did not happen.
 - The `setup` cheat sheet pointed at `docs/…` and `templates/…` paths that
   exist only in a checkout and hard-coded `@v0.1.0` for the GitHub Action;
   it now links the published tree and follows the installed version. The

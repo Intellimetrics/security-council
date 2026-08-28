@@ -166,7 +166,8 @@ def _rel(path: str) -> str:
     repo-relative paths now, so this only normalizes separators and a stray
     leading slash; it used to search for `/work/` markers, which mangled a
     genuine `src/work/x.py` into `x.py`."""
-    return path.replace("\\", "/").lstrip("/")
+    from .normalize.paths import normalize_separators
+    return normalize_separators(path).lstrip("/")
 
 
 def validate_patch(diff: str, *, target_files: set[str] | None = None,

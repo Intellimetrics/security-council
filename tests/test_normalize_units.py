@@ -24,6 +24,14 @@ def test_path_strips_scan_mount_and_repo_root():
     assert to_repo_relative("C:\\repo\\app\\x.py", repo_root="C:\\repo") == "app/x.py"
     assert to_repo_relative("\\\\srv\\share\\app\\x.py", repo_root="//srv/share") == "app/x.py"
     assert to_repo_relative("app\\x.py", repo_root="/repo") == "app\\x.py"
+    # R15b: an absolute path no configured base explains stays absolute, so I1
+    # refuses it — it is never made "relative" onto a tree the repo could contain
+    from security_council.model import _URI_RE
+    for bad in ("C:\\src\\app.py", "\\\\srv\\share\\app.py", "/etc/passwd", "C:/src/app.py"):
+        out = to_repo_relative(bad, repo_root="/repo", scan_root="/src")
+        assert not _URI_RE.match(out), (bad, out)
+    assert to_repo_relative("/etc/passwd", repo_root="/repo") == "/etc/passwd"
+    assert to_repo_relative("C:\\src\\app.py", repo_root="/repo") == "C:/src/app.py"
     assert to_repo_relative("/src/app\\x.py", repo_root="/repo", scan_root="/src") == "app\\x.py"
 
 
@@ -151,3 +159,24 @@ def test_partial_reason_names_the_drop_kind():
     assert "2 dropped" in txt and "invalid:I1 ×2" in txt and "backslash" in txt
     r.coverage = {"raw_results": 5, "normalized": 3}          # older arms: no breakdown
     assert "unresolvable location" in _partial_reason(r)
+
+
+def test_dedicated_adapters_do_not_fold_backslashes():
+    """R15b (codex + claude, independently): the codex-security and
+    claude-security adapters folded `\\`→`/` before the shared boundary, so the
+    `app\\x.py` alias survived through those two arms."""
+    from security_council.normalize.sources import claude_security, codex_security
+    doc = {"findings": [{"ruleId": "r", "title": "t", "severity": "high",
+                         "locations": [{"path": "app\\x.py", "line": 2, "role": "sink"}],
+                         "taxonomy": {"cwe": ["CWE-89"]}}]}
+    raws = codex_security.parse_findings(doc)
+    assert raws and raws[0].path == "app\\x.py"
+    sarif = {"runs": [{"tool": {"driver": {"name": "claude-security"}},
+                       "results": [{"ruleId": "r", "message": {"text": "t"},
+                                    "locations": [{"physicalLocation": {
+                                        "artifactLocation": {"uri": "app\\x.py"},
+                                        "region": {"startLine": 2}}}]}]}]}
+    raws, _ = claude_security.parse_sarif(sarif)
+    assert raws and raws[0].path == "app\\x.py"
+    from security_council.patches import _rel
+    assert _rel("app\\x.py") == "app\\x.py" and _rel("/app/x.py") == "app/x.py"

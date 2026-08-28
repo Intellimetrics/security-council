@@ -231,7 +231,11 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
     corroborated = [f for f in findings
                     if (f.corroboration.independent_family_count
                         or len(set(f.corroboration.vendor_families))) >= 2]
-    validated = [f for f in findings if f.validation is not None]
+    # R15b: "validated" means a panel actually convened — the same predicate
+    # the markdown uses; an unconvened needs_human is NOT cross-examined
+    with_record = [f for f in findings if f.validation is not None]
+    validated = [f for f in with_record if f.validation.convened()]
+    unexamined = len(with_record) - len(validated)
     degr = manifest.get("degradations") or []
     sp = manifest.get("signature_policy") or {}
     tgt = manifest.get("target") or {}
@@ -272,7 +276,8 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
     tiles.append(_tile("gating", len(gating), f"at/above {(manifest.get('policy') or {}).get('fail_on_severity', 'high')}"))
     tiles.append(_tile("corroborated", len(corroborated), "≥2 independent vendor families"))
     tiles.append(_tile("validated", len(validated),
-                       "cross-examined by the panel" if validated else "panel not run"))
+                       ("cross-examined by the panel" if validated else "panel not run")
+                       + (f" · ⚠ {unexamined} not examined (no panel convened)" if unexamined else "")))
     tiles.append(_tile("demoted", len(demoted), "left the gate, still listed"))
     tiles.append(_tile("arms", f"{len(ok)}/{len(arms)}", "completed" if not failed else
                        "failed: " + ", ".join(a.get("name", "?") for a in failed)))

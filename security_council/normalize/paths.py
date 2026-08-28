@@ -36,14 +36,24 @@ def to_repo_relative(uri: str, *, repo_root: str | Path, scan_root: str | Path |
     if p.startswith("file://"):
         p = unquote(urlparse(p).path)
     p = normalize_separators(p)
+    absolute = p.startswith("/") or bool(_WINDOWS_SHAPED.match(p))
+    matched = False
     for base in (scan_root, repo_root):
         if not base:
             continue
-        b = str(base).replace("\\", "/").rstrip("/")
+        b = normalize_separators(str(base)).rstrip("/")
         if p == b:
-            p = ""
+            p, matched = "", True
         elif p.startswith(b + "/"):
-            p = p[len(b) + 1:]
+            p, matched = p[len(b) + 1:], True
+    if absolute and not matched:
+        # R15b: an absolute path that no configured base explains used to be
+        # made "relative" by stripping its leading slashes — `C:\src\app.py` →
+        # `C:/src/app.py`, `\\srv\share\x.py` → `srv/share/x.py`, `/etc/passwd`
+        # → `etc/passwd` — and a hostile repository containing that tree would
+        # place the finding there. Leave it absolute: invariant I1 refuses it,
+        # the finding is dropped and COUNTED (partial_coverage), never aliased.
+        return p
     p = p.lstrip("/")
     while p.startswith("./"):
         p = p[2:]

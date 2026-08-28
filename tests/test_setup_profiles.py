@@ -176,3 +176,16 @@ def test_cheat_sheet_has_no_checkout_only_paths_and_follows_the_version():
     assert sw.REPO_URL + "/templates/security-council.gitlab-ci.yml" in sheet
     for line in sheet.splitlines():
         assert " docs/" not in line and " templates/" not in line, line   # bare relative paths
+
+
+def test_doctor_reports_the_validator_backend(monkeypatch, capsys, quiet_arms):
+    import shutil
+    from security_council.cli import main as cli_main
+    real = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda n, *a, **k: None if n == "llm-council" else real(n, *a, **k))
+    assert cli_main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "llm-council" in out and "unavailable" in out and "validator_unavailable" in out
+    monkeypatch.setattr(shutil, "which", lambda n, *a, **k: "/usr/bin/llm-council" if n == "llm-council" else real(n, *a, **k))
+    cli_main(["doctor"])
+    assert "llm-council   ready" in capsys.readouterr().out

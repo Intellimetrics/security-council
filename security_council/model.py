@@ -118,7 +118,7 @@ CWE_TO_FAMILY: dict[str, str] = {
 }
 
 _CWE_RE = re.compile(r"^CWE-(?:\d+|noinfo)(?:-[a-z]+)?$")
-_URI_RE = re.compile(r"^(?!/)(?!.*\.\.)[^\\]+$")
+_URI_RE = re.compile(r"^(?!/)(?![A-Za-z]:)(?!.*\.\.)[^\\]+$")   # repo-relative POSIX; R15b: no drive prefix
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z]+/v\d+:[0-9a-f]{32}$")
 

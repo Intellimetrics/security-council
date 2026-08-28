@@ -123,7 +123,10 @@ def parse_findings(doc: dict) -> list[RawFinding]:
         if anchor:
             fps["codexSecurity/anchor"] = str(anchor)
         out.append(RawFinding(
-            path=str(loc["path"]).replace("\\", "/").lstrip("/"), start_line=start, end_line=max(start, end),
+            # verbatim: separator policy and absolute-path refusal live in
+            # normalize.paths / invariant I1 (R15b — folding here re-created
+            # the `app\\x.py` → `app/x.py` alias one hop before the boundary)
+            path=str(loc["path"]), start_line=start, end_line=max(start, end),
             title=f.get("title") or f.get("ruleId") or "finding",
             description=_description(f),
             rule_id=f"codex-security/{f.get('ruleId') or 'unknown'}",

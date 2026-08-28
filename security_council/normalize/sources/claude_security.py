@@ -79,8 +79,10 @@ def parse_sarif(sarif: dict) -> tuple[list[RawFinding], dict]:
             ploc = ((res.get("locations") or [{}])[0]).get("physicalLocation") or {}
             uri = unquote((ploc.get("artifactLocation") or {}).get("uri") or "")
             if prefix and uri.startswith(prefix):
-                uri = uri[len(prefix):]
-            path = (rec.get("file") or uri).replace("\\", "/").lstrip("/")
+                uri = uri[len(prefix):].lstrip("/")
+            # verbatim otherwise: separator policy and absolute-path refusal
+            # live in normalize.paths / invariant I1 (R15b)
+            path = rec.get("file") or uri
             if not path:
                 continue
             region = ploc.get("region") or {}

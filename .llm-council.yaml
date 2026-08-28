@@ -60,6 +60,8 @@ participants:
     - mcp_servers={}
     - --cd
     - '{cwd}'
+    - -c
+    - model_reasoning_effort=medium   # council peer must not inherit ~/.codex ultra (773s vs 151s on the same prompt)
     - '-'
     model: null
     timeout: 600

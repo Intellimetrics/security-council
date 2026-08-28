@@ -412,6 +412,18 @@ is the single predicate for both the degradation and the summary. Info items
 taken: legacy nag only under `gate_baseline: new`; rename-gates-as-new in the
 upgrade note.
 
+**R15b (2026-08-28, continuation w/ `independent_review`, FULL QUORUM 2/3: claude NO,
+codex NO in 176 s, antigravity empty):** the llm-council session fixed the peer problems
+(codex timeouts = inherited `~/.codex` `reasoning_effort=ultra`, 773 s vs 151 s on the
+same prompt; stopgap `-c model_reasoning_effort=medium` in `.llm-council.yaml`; upstream
+v0.23.0 injects it). Both peers independently found the R15 fixes incomplete one hop out:
+codex-security/claude-security adapters still folded `\`→`/` (alias survived those arms);
+unmatched absolute/Windows-shaped paths were made relative (`/etc/passwd`→`etc/passwd`,
+`C:\src\app.py`→`C:/src/app.py`) — now stay absolute, I1 refuses (+ drive prefix);
+HTML "validated" tile counted unconvened panels; `patches._rel` shares the separator
+rule; doctor row tested. Lesson: a fix at "the boundary" is only a fix if nothing
+upstream pre-normalizes — grep every producer adapter for the same transformation.
+
 Release steps left (outward-facing, need the user's go): `git push`, `git tag
 v0.2.0` + push, `gh release create v0.2.0` with the CHANGELOG section, then
 `gh workflow run live-verify` (runs against `@main`) and confirm both jobs

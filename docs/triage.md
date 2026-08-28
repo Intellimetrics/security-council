@@ -22,6 +22,9 @@ A baselined finding that later shows up in a file the baseline never covered
 it clusters with the original — the delta reports it as `new_location`.
 Baselines written by security-council 0.1.x did not record files; a scan
 against one reports `baseline_legacy_entries` until you re-run `baseline set`.
+Agentic arms can report the same root cause from a second file on one run and
+not the next; when that happens the cluster is `new` (fail-safe) — re-run
+`baseline set` once you have reviewed it.
 
 Baselined findings still appear in every report (stamped
 `baselineState: unchanged/updated` in SARIF); they just stop failing the
