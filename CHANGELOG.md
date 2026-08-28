@@ -70,6 +70,13 @@ were reproduced live before the fix and again after it.
   run records `executionSuccessful: false`; CI consumers may see exit 0
   alongside an unsuccessful run and should treat the degradation as the
   signal that validation did not happen.
+- Council R15c (closure, 3/3 peers labeled — the first full panel — claude
+  and antigravity YES, codex NO on two narrower items, both closed): the
+  claude-security adapter stripped its `scan_prefix` with a bare
+  `startswith` (prefix `/src` turned `/srcfoo/x.py` into `foo/x.py`), now
+  only at a path-segment boundary; `file:///C:/repo/…` and
+  `file://server/share/…` URIs under a configured root are matched instead
+  of refused (drive after the slash, UNC authority kept).
 - The `setup` cheat sheet pointed at `docs/…` and `templates/…` paths that
   exist only in a checkout and hard-coded `@v0.1.0` for the GitHub Action;
   it now links the published tree and follows the installed version. The

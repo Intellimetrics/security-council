@@ -32,6 +32,9 @@ def test_path_strips_scan_mount_and_repo_root():
         assert not _URI_RE.match(out), (bad, out)
     assert to_repo_relative("/etc/passwd", repo_root="/repo") == "/etc/passwd"
     assert to_repo_relative("C:\\src\\app.py", repo_root="/repo") == "C:/src/app.py"
+    # R15c: Windows drive / UNC file-URIs under a configured root DO match it
+    assert to_repo_relative("file:///C:/repo/app/x.py", repo_root="C:\\repo") == "app/x.py"
+    assert to_repo_relative("file://srv/share/app/x.py", repo_root="\\\\srv\\share") == "app/x.py"
     assert to_repo_relative("/src/app\\x.py", repo_root="/repo", scan_root="/src") == "app\\x.py"
 
 
@@ -180,3 +183,20 @@ def test_dedicated_adapters_do_not_fold_backslashes():
     assert raws and raws[0].path == "app\\x.py"
     from security_council.patches import _rel
     assert _rel("app\\x.py") == "app\\x.py" and _rel("/app/x.py") == "app/x.py"
+
+
+def test_claude_security_prefix_strips_only_at_a_segment_boundary():
+    """R15c (codex): `scan_prefix=/src` + uri `/srcfoo/x.py` yielded `foo/x.py`."""
+    from security_council.normalize.sources import claude_security
+    def sarif(uri):
+        return {"runs": [{"tool": {"driver": {"name": "claude-security"}},
+                          "properties": {"claudeSecurityPlugin": {"scan_prefix": "/src"}},
+                          "results": [{"ruleId": "r", "message": {"text": "t"},
+                                       "locations": [{"physicalLocation": {
+                                           "artifactLocation": {"uri": uri},
+                                           "region": {"startLine": 2}}}]}]}]}
+    assert claude_security.run_meta(sarif("/src/app/x.py"))["scan_prefix"] == "/src"
+    raws, _ = claude_security.parse_sarif(sarif("/src/app/x.py"))
+    assert raws[0].path == "app/x.py"
+    raws, _ = claude_security.parse_sarif(sarif("/srcfoo/x.py"))
+    assert raws[0].path == "/srcfoo/x.py"            # untouched -> I1 refuses it downstream

@@ -424,6 +424,13 @@ HTML "validated" tile counted unconvened panels; `patches._rel` shares the separ
 rule; doctor row tested. Lesson: a fix at "the boundary" is only a fix if nothing
 upstream pre-normalizes — grep every producer adapter for the same transformation.
 
+**R15c (closure; 3/3 labeled — first full panel ever here — claude YES, antigravity YES,
+codex NO):** all R15b items confirmed closed by all three. Codex's two new items, both
+fixed + pinned the same hour: claude-security `scan_prefix` strip by bare `startswith`
+(`/src` + `/srcfoo/x.py` → `foo/x.py`; now segment-boundary only) and `file:///C:/…` /
+UNC file-URIs under a configured root refused instead of matched (false refusal, fail-safe
+direction). Council-ready for the tag.
+
 Release steps left (outward-facing, need the user's go): `git push`, `git tag
 v0.2.0` + push, `gh release create v0.2.0` with the CHANGELOG section, then
 `gh workflow run live-verify` (runs against `@main`) and confirm both jobs

@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 _WINDOWS_SHAPED = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+_DRIVE_AFTER_SLASH = re.compile(r"^/[A-Za-z]:/")
 
 
 def normalize_separators(path: str) -> str:
@@ -34,7 +35,12 @@ def to_repo_relative(uri: str, *, repo_root: str | Path, scan_root: str | Path |
     """
     p = uri
     if p.startswith("file://"):
-        p = unquote(urlparse(p).path)
+        u = urlparse(p)
+        p = unquote(u.path)
+        if u.netloc:
+            p = "//" + u.netloc + p                    # UNC: keep the authority
+        elif _DRIVE_AFTER_SLASH.match(p):
+            p = p[1:]                                  # file:///C:/x -> C:/x
     p = normalize_separators(p)
     absolute = p.startswith("/") or bool(_WINDOWS_SHAPED.match(p))
     matched = False

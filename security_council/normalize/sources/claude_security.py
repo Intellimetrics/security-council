@@ -78,8 +78,15 @@ def parse_sarif(sarif: dict) -> tuple[list[RawFinding], dict]:
             rec = props if isinstance(props, dict) else {}
             ploc = ((res.get("locations") or [{}])[0]).get("physicalLocation") or {}
             uri = unquote((ploc.get("artifactLocation") or {}).get("uri") or "")
-            if prefix and uri.startswith(prefix):
-                uri = uri[len(prefix):].lstrip("/")
+            # strip the plugin's own scan prefix only at a path-segment boundary
+            # (R15c: a bare startswith turned `/srcfoo/x.py` under prefix `/src`
+            # into `foo/x.py` — a different file)
+            if prefix:
+                pre = prefix.rstrip("/")
+                if uri == pre:
+                    uri = ""
+                elif uri.startswith(pre + "/"):
+                    uri = uri[len(pre) + 1:]
             # verbatim otherwise: separator policy and absolute-path refusal
             # live in normalize.paths / invariant I1 (R15b)
             path = rec.get("file") or uri
