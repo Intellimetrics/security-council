@@ -1,9 +1,10 @@
 """Validator panel tests with an injected fake council runner."""
 import hashlib
 
-from security_council import model as m
+from security_council import model as m, proc
 from security_council.export import sarif
 from security_council.validate import panel
+from security_council.validate import council_client
 from security_council.validate.council_client import CouncilResult, PeerResult
 
 
@@ -84,6 +85,51 @@ def test_degraded_is_needs_human():
         ("claude", "for", "yes", [_cite()])], degraded=True))
     assert f.validation.verdict == "needs_human"
     assert f.disposition.state == "needs_human"
+
+
+def test_cross_validation_preserves_prior_host_opinion():
+    f = _finding()
+    host = m.PanelOpinion(
+        role="prosecutor", participant="codex-current", family="codex",
+        prompt_sha256=_sha("host"), verdict="true_positive", rationale="host trace",
+        status="ok",
+    )
+    f.validation = m.Validation(
+        verdict="true_positive", confidence=0.8, panel=[host],
+        reachability=m.Reachability(verdict="external", entrypoints=["/reports"]),
+    )
+
+    panel.validate_finding(f, repo_root=".", runner=_runner([
+        ("claude", "against", "yes", [_cite()]),
+        ("antigravity", "neutral", "yes", [_cite()]),
+    ]))
+
+    assert {op.participant for op in f.validation.panel} == {
+        "codex-current", "claude", "antigravity"
+    }
+    assert f.validation.reachability.verdict == "external"
+    assert f.validation.verdict == "true_positive"
+
+
+def test_prior_host_opinion_does_not_hide_external_panel_failure():
+    f = _finding()
+    f.validation = m.Validation(
+        verdict="true_positive", confidence=0.8,
+        panel=[m.PanelOpinion(
+            role="prosecutor", participant="codex-current", family="codex",
+            prompt_sha256=_sha("host"), verdict="true_positive",
+            rationale="host trace", status="ok",
+        )],
+    )
+    failures = []
+
+    def unavailable(prompt, **kwargs):
+        return CouncilResult(ok=False, degraded=True, results=[], error="external peers unavailable")
+
+    panel.validate_finding(f, repo_root=".", runner=unavailable, failures=failures)
+
+    assert failures == [{"finding_id": f.id, "error": "external peers unavailable"}]
+    assert any(op.participant == "codex-current" for op in f.validation.panel)
 
 
 def test_defender_hallucinated_citation_escalates_to_needs_human():
@@ -170,8 +216,36 @@ def test_panel_where_every_peer_failed_is_not_cross_examined():
     assert f.validation.verdict == "needs_human"
     assert not f.validation.convened()
     assert len(f.validation.panel) == 3 and all(op.status == "absent" for op in f.validation.panel)
+    assert f.validation.panel[0].rationale == "claude timed out"
     assert failures and failures[0]["finding_id"] == f.id and "claude: claude timed out" in failures[0]["error"]
     # one peer answering IS a (degraded) convening
     one = _finding(family="injection")
     panel.validate_findings([one], repo_root=".", runner=_runner([("claude", "for", "yes", [_cite()])]))
     assert one.validation.convened()
+
+
+def test_council_transport_pins_external_peers_and_group_timeout(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return proc.ProcResult(True, 0, '{"metadata": {}, "results": []}', "", 0.1, False)
+
+    monkeypatch.setattr(council_client.proc, "run_command", fake_run)
+    cfg = tmp_path / "validators.yaml"
+    cfg.write_text("version: 1\n")
+
+    council_client.run_council(
+        "check", cwd=tmp_path, config_file=cfg, current="codex",
+        participants=("claude", "antigravity"),
+        stances={"claude": "against", "antigravity": "neutral"}, timeout=9,
+    )
+
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--config") + 1] == str(cfg)
+    assert cmd[cmd.index("--current") + 1] == "codex"
+    assert cmd[cmd.index("--participants") + 1] == "claude,antigravity"
+    assert "--stance" in cmd
+    assert captured["kwargs"]["timeout"] == 9
+    assert captured["kwargs"]["kill_process_group"] is True

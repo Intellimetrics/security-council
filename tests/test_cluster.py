@@ -102,6 +102,24 @@ def test_merge_cluster_is_invariant_valid_and_counts_sources():
     assert merged.cluster_id == c.id
 
 
+def test_merge_cluster_preserves_revision_bound_validation():
+    finding = mk()
+    finding.validation = m.Validation(
+        verdict="true_positive", confidence=0.8,
+        panel=[m.PanelOpinion(
+            role="prosecutor", participant="codex-current", family="codex",
+            prompt_sha256=_sha("validation"), verdict="true_positive", rationale="trace",
+            status="ok",
+        )],
+    )
+    [cluster] = cl.cluster_findings([finding])
+
+    merged = cl.merge_cluster(cluster)
+
+    assert merged.validation is finding.validation
+    assert merged.disposition.state == "likely"
+
+
 def test_merge_cluster_crypto_sticky():
     rc = "rootCause/v1:" + _sha("shared3")[:32]
     a = mk(cwe="CWE-79", family="xss", root_cause=rc)

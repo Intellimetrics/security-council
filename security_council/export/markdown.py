@@ -43,6 +43,17 @@ _LANG_BY_EXT = {
 }
 
 
+def _is_host_opinion(op) -> bool:
+    return op.participant.endswith("-current")
+
+
+def _external_panel_families(f: Finding) -> set[str]:
+    if f.validation is None:
+        return set()
+    return {op.family for op in f.validation.panel
+            if op.independent and not _is_host_opinion(op) and op.status != "absent"}
+
+
 # --------------------------------------------------------------------------- #
 # Escaping (the trust boundary of this module)
 # --------------------------------------------------------------------------- #
@@ -224,7 +235,10 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
         validated = [f for f in findings if f.validation is not None]
         # a validation record with an empty panel means nobody convened (backend
         # missing / timed out): it is needs_human, but it was NOT cross-examined
-        convened = [f for f in validated if f.validation.convened()]
+        convened = [f for f in validated if _external_panel_families(f)]
+        quorum = [f for f in convened if len(_external_panel_families(f)) >= 2]
+        host_validated = [f for f in validated if any(
+            _is_host_opinion(op) and op.status != "absent" for op in f.validation.panel)]
         unconvened = len(validated) - len(convened)
         tp = sum(1 for f in convened if f.validation.verdict == "true_positive")
         fp = sum(1 for f in convened if f.validation.verdict == "false_positive")
@@ -234,10 +248,31 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
         out.append(f"- **Corroboration:** {corroborated} confirmed by ≥2 independent vendor families · "
                    f"{singles} only one eligible arm (singleton-by-policy) · {uncovered} uncovered")
         if validated:
-            out.append(f"- **Validator panel:** {len(convened)} cross-examined → {tp} true positive · "
-                       f"{fp} false positive (demoted) · {nh} need human review"
-                       + (f" · ⚠ **{unconvened} not examined** (no panel convened; flagged "
-                          "`needs_human` — see degradations)" if unconvened else ""))
+            if convened:
+                line = (f"- **External validator panel:** {len(convened)} cross-examined "
+                        f"({len(quorum)} reached two-vendor quorum) → {tp} true positive · "
+                        f"{fp} false positive (demoted) · {nh} need human review")
+            else:
+                line = "- **External validator panel:** 0 cross-examined (0 reached two-vendor quorum)"
+            if host_validated:
+                line += (f" · **Daybreak host validation:** {len(host_validated)} records"
+                         f" ({len(validated) - len(convened)} without an external panel)")
+            missing = len(findings) - len(validated)
+            if missing:
+                line += f" · **{missing} have no validation record**"
+            elif unconvened and not host_validated:
+                line += f" · ⚠ **{unconvened} not examined**"
+            out.append(line)
+            vm = manifest.get("validation") or {}
+            if vm.get("requested"):
+                out.append(
+                    f"- **Validation selection coverage:** {vm.get('eligible', 0)} eligible · "
+                    f"{vm.get('external_selected', 0)} selected · "
+                    f"{vm.get('external_convened', 0)} convened · "
+                    f"{vm.get('external_failed', 0)} failed to convene · "
+                    f"{vm.get('not_selected', 0)} not selected · "
+                    f"{vm.get('deterministic_skipped', 0)} deterministic-family skipped"
+                )
         else:
             out.append("- **Validator panel:** not run (`--validate` to cross-examine findings)")
         if demoted:

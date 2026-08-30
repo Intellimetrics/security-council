@@ -8,7 +8,9 @@ the M0 S6 spike and is the whole reason the runner exists.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 
@@ -25,22 +27,59 @@ class ProcResult:
 
 def run_command(cmd: list[str], *, timeout: int = 1800,
                 success_exit_codes: tuple[int, ...] = (0,),
-                cwd: str | None = None, env: dict | None = None) -> ProcResult:
+                cwd: str | None = None, env: dict | None = None,
+                kill_process_group: bool = False) -> ProcResult:
     # start_new_session isolates the child in its own session/process group.
-    # NOTE: subprocess.run kills only the direct child on timeout; killing a
-    # timed-out agent's untrusted grandchildren (R6/MV4-13) is handled by the
-    # fix-lane fence (`bwrap --die-with-parent`), which is the only place
-    # untrusted test code runs. Kept on subprocess.run so existing fakes work.
+    # ``subprocess.run(timeout=...)`` kills only the direct child and then waits
+    # for captured pipes to close.  A validator such as llm-council owns native
+    # CLI children; if one survives with stdout/stderr open, that wait is
+    # unbounded.  Own Popen directly so the timeout terminates the exact group.
     start = time.monotonic()
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                           cwd=cwd, env=env, check=False,
-                           start_new_session=hasattr(os, "setsid"))
-    except subprocess.TimeoutExpired as e:
-        return ProcResult(False, None, e.stdout or "", (e.stderr or "") + "\n[timed out]",
-                          time.monotonic() - start, True)
-    except FileNotFoundError as e:
-        return ProcResult(False, None, "", f"[not found] {e}", time.monotonic() - start, False)
+    if not kill_process_group:
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                               cwd=cwd, env=env, check=False,
+                               start_new_session=hasattr(os, "setsid"))
+        except subprocess.TimeoutExpired as e:
+            return ProcResult(False, None, e.stdout or "", (e.stderr or "") + "\n[timed out]",
+                              time.monotonic() - start, True)
+        except FileNotFoundError as e:
+            return ProcResult(False, None, "", f"[not found] {e}",
+                              time.monotonic() - start, False)
+        return ProcResult(p.returncode in success_exit_codes, p.returncode, p.stdout, p.stderr,
+                          time.monotonic() - start, False)
+
+    with (tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as out_file,
+          tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as err_file):
+        try:
+            p = subprocess.Popen(cmd, stdout=out_file, stderr=err_file, text=True,
+                                 cwd=cwd, env=env, start_new_session=hasattr(os, "setsid"))
+        except FileNotFoundError as e:
+            return ProcResult(False, None, "", f"[not found] {e}",
+                              time.monotonic() - start, False)
+        timed_out = False
+        try:
+            p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                if hasattr(os, "killpg"):
+                    os.killpg(p.pid, signal.SIGKILL)
+                else:
+                    p.kill()
+            except OSError:
+                pass
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+        out_file.seek(0)
+        err_file.seek(0)
+        stdout, stderr = out_file.read(), err_file.read()
+        if timed_out:
+            return ProcResult(False, None, stdout, stderr + "\n[timed out]",
+                              time.monotonic() - start, True)
     elapsed = time.monotonic() - start
-    return ProcResult(p.returncode in success_exit_codes, p.returncode, p.stdout, p.stderr,
+    return ProcResult(p.returncode in success_exit_codes, p.returncode, stdout, stderr,
                       elapsed, False)

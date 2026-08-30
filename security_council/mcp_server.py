@@ -69,6 +69,46 @@ def _resolve_dir(arguments: dict, key: str, *, default_to_root: bool = True) -> 
     return p
 
 
+def _resolve_file(arguments: dict, key: str) -> Path | None:
+    """Resolve an optional operator-owned file inside the MCP root."""
+    requested = arguments.get(key)
+    if requested is None:
+        return None
+    root = _root()
+    p = Path(str(requested))
+    if not p.is_absolute():
+        raise ValueError(
+            f"PathMustBeAbsolute: {key}={requested!r}; configured_root={root}.")
+    p = p.resolve()
+    try:
+        p.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"ProjectRootMismatch: {key}={p}; configured_root={root}.") from exc
+    if not p.is_file():
+        raise ValueError(f"{key} is not a file: {p}")
+    return p
+
+
+def _resolve_output_root(arguments: dict) -> Path | None:
+    """Resolve an optional reports root; the orchestrator appends the run id."""
+    requested = arguments.get("reports_root")
+    if requested is None:
+        return None
+    root = _root()
+    p = Path(str(requested))
+    if not p.is_absolute():
+        raise ValueError(
+            f"PathMustBeAbsolute: reports_root={requested!r}; configured_root={root}.")
+    p = p.resolve()
+    try:
+        p.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"ProjectRootMismatch: reports_root={p}; configured_root={root}.") from exc
+    return p
+
+
 # --------------------------------------------------------------------------- #
 # tool handlers (transport-independent)
 # --------------------------------------------------------------------------- #
@@ -82,6 +122,8 @@ def _arms(names: list[str], config: dict):
 
 
 def sc_scan(arguments: dict) -> dict:
+    import functools
+
     if os.environ.get(NESTED_ENV):
         raise ValueError(
             "NestedScanRefused: this process is running inside a security-council "
@@ -89,10 +131,20 @@ def sc_scan(arguments: dict) -> dict:
     from .arms.registry import known_arms
     from .orchestrator import run_scan
     target = _resolve_dir(arguments, "target")
-    config = load_config(target)
+    config_path = _resolve_file(arguments, "config_path")
+    ignore_repo = bool(arguments.get("ignore_repo_config", False))
+    if config_path is not None and ignore_repo:
+        raise ValueError("config_path and ignore_repo_config are mutually exclusive")
+    config = load_config(target, explicit=config_path, ignore_repo=ignore_repo)
+    profile = arguments.get("profile")
+    if profile:
+        from .config import PROFILES, deep_merge
+        config = deep_merge(config, PROFILES[profile])
     for k in ("fail_on_severity", "gate_baseline"):
         if arguments.get(k):
             config["policy"][k] = arguments[k]
+    if arguments.get("min_arms") is not None:
+        config["policy"]["min_arms_ok"] = int(arguments["min_arms"])
     if arguments.get("require_signatures"):
         if not isinstance(config.get("decisions"), dict):
             config["decisions"] = {}
@@ -103,10 +155,58 @@ def sc_scan(arguments: dict) -> dict:
     unknown = [n for n in names if n not in known_arms()]
     if unknown:
         raise ValueError(f"unknown arms {unknown}; known: {known_arms()}")
+    if arguments.get("deep"):
+        opts = config["arms"].setdefault("options", {})
+        enabled = set(names)
+        for arm_name, key, value in (("codex-security", "mode", "deep"),
+                                     ("claude-security", "effort", "high"),
+                                     ("claude", "effort", "high"),
+                                     ("agy", "effort", "high")):
+            if arm_name in enabled:
+                opts.setdefault(arm_name, {})[key] = value
+    reports_root = _resolve_output_root(arguments)
+    if reports_root is not None:
+        config.setdefault("reports", {})["outdir"] = str(reports_root)
+    analysis_arms = []
+    if arguments.get("sbom"):
+        from .arms.sbom import SbomArm
+        analysis_arms.append(SbomArm())
+    validate = (bool(arguments["validate"]) if "validate" in arguments
+                else bool((config.get("defaults") or {}).get("validate", False)))
+    validator_runner = None
+    validator_current = arguments.get("validator_current")
+    validator_participants_raw = arguments.get("validator_participants")
+    validator_config = _resolve_file(arguments, "validator_config_path")
+    if validator_current or validator_participants_raw or validator_config:
+        if not validator_current:
+            raise ValueError("validator_current is required when customizing validator peers")
+        participants = tuple(
+            item.strip() for item in str(validator_participants_raw or "").split(",")
+            if item.strip()
+        )
+        if not participants:
+            raise ValueError("validator_participants must name at least one external peer")
+        allowed = {"claude", "codex", "antigravity"}
+        unknown_peers = sorted(set(participants) - allowed)
+        if unknown_peers:
+            raise ValueError(f"unknown validator participants {unknown_peers}")
+        if validator_current in participants:
+            raise ValueError("validator_participants must exclude validator_current")
+        from .validate.council_client import run_council
+        validator_runner = functools.partial(
+            run_council,
+            config_file=validator_config,
+            current=validator_current,
+            participants=participants,
+        )
     run = run_scan(target, _arms(names, config), config,
                    isolate=not arguments.get("inplace", False),
-                   validate=bool(arguments.get("validate", False)),
-                   validate_max_findings=arguments.get("validate_max"))
+                   validate=validate,
+                   validate_max_findings=arguments.get("validate_max"),
+                   validate_budget_usd=arguments.get("validate_budget", 0.5),
+                   validator_runner=validator_runner,
+                   validator_timeout=arguments.get("validator_timeout", 600),
+                   analysis_arms=analysis_arms)
     return {"run_id": run.run_id, "out_dir": str(run.out_dir), "exit_code": run.exit_code,
             "counts": run.manifest["counts"], "degradations": run.degradations,
             "disposition_actions": run.manifest.get("disposition_actions"),
@@ -336,8 +436,9 @@ def sc_serve(arguments: dict) -> dict:
     target = _resolve_dir(arguments, "target")
     bind = arguments.get("bind") or "127.0.0.1"
     token = arguments.get("token") or ("auto" if needs_token(bind) else None)
+    port = int(arguments["port"]) if "port" in arguments else 8642
     try:
-        srv = ReportServer(target, bind=bind, port=int(arguments.get("port") or 8642),
+        srv = ReportServer(target, bind=bind, port=port,
                            token=token, include_dual_use=bool(arguments.get("include_dual_use")))
         url = srv.start()
     except ServeRefused as e:
@@ -385,8 +486,25 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
      "Refuses when running nested inside a security-council arm.",
      _obj({"target": _target_prop(),
            "arms": {"type": "string", "description": "comma-separated arm names"},
+           "profile": {"enum": ["quick", "ci", "deep", "gov"]},
+           "config_path": {"type": "string", "description":
+                           "Absolute operator-owned config file inside the MCP root."},
+           "ignore_repo_config": {"type": "boolean"},
+           "reports_root": {"type": "string", "description":
+                            "Absolute reports root inside the MCP root; run id is appended."},
+           "deep": {"type": "boolean", "description":
+                    "Use high effort for enabled agentic arms."},
            "validate": {"type": "boolean"},
            "validate_max": {"type": "integer"},
+           "validate_budget": {"type": "number", "exclusiveMinimum": 0},
+           "validator_current": {"enum": ["claude", "codex", "antigravity"]},
+           "validator_participants": {"type": "string", "description":
+                                      "Comma-separated external peers; must exclude current host."},
+           "validator_config_path": {"type": "string", "description":
+                                     "Absolute operator-owned llm-council config inside MCP root."},
+           "validator_timeout": {"type": "integer", "minimum": 1},
+           "min_arms": {"type": "integer", "minimum": 1},
+           "sbom": {"type": "boolean"},
            "require_signatures": {"enum": ["off", "warn", "enforce", "auto"]},
            "fail_on_severity": {"enum": ["critical", "high", "medium", "low", "info"]},
            "gate_baseline": {"enum": ["all", "new"]},

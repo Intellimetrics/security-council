@@ -12,6 +12,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .. import proc
 
@@ -78,15 +79,28 @@ def _verdicts_from_transcript(path: str | None) -> dict[str, str]:
 
 def run_council(question: str, *, cwd, mode: str = "consensus",
                 context_files: list[str] | None = None, max_cost_usd: float | None = None,
-                timeout: int = 600, llm_council_bin: str = "llm-council") -> CouncilResult:
+                timeout: int = 600, llm_council_bin: str = "llm-council",
+                config_file: str | Path | None = None,
+                current: str | None = None,
+                participants: tuple[str, ...] | list[str] | None = None,
+                stances: dict[str, str] | None = None) -> CouncilResult:
     cmd = [llm_council_bin, "run", "--mode", mode, "--json", "--cwd", str(cwd)]
+    if config_file:
+        cmd += ["--config", str(config_file)]
+    if current:
+        cmd += ["--current", current]
+    if participants:
+        cmd += ["--participants", ",".join(participants)]
+    for participant, stance in (stances or {}).items():
+        cmd += ["--stance", f"{participant}={stance}"]
     for c in context_files or []:
         cmd += ["--context", c]
     if max_cost_usd is not None:
         cmd += ["--max-cost-usd", str(max_cost_usd)]
     cmd += [question]
     env = {k: v for k, v in os.environ.items() if k != "LLM_COUNCIL_NESTED"}
-    r = proc.run_command(cmd, timeout=timeout, cwd=str(cwd), env=env)
+    r = proc.run_command(cmd, timeout=timeout, cwd=str(cwd), env=env,
+                         kill_process_group=True)
     if not r.stdout.strip():
         return CouncilResult(False, True, [], error=(r.stderr or "no output")[:500])
     try:

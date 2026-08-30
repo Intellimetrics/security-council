@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,12 @@ from .base import ArmResult
 _PKG = Path(__file__).resolve().parent.parent
 _PROMPT_PATH = _PKG / "prompts" / "house-sast.md"
 _SCHEMA_PATH = _PKG / "schemas" / "agent_finding_envelope.v1.json"
+_DIAGNOSTIC_SECRET_RES = (
+    re.compile(r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s\"']+"),
+    re.compile(r"(?i)((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s,;\"']+"),
+    re.compile(r"\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b"),
+    re.compile(r"-----BEGIN [^-]+ PRIVATE KEY-----.*?-----END [^-]+ PRIVATE KEY-----", re.DOTALL),
+)
 
 
 @dataclass
@@ -77,6 +84,10 @@ def _claude_cmd(arm, prompt, cwd, out):
            "--strict-mcp-config", "--no-session-persistence"]
     if arm.model:
         cmd += ["--model", arm.model]
+    if getattr(arm, "effort", None):
+        cmd += ["--effort", arm.effort]
+    if getattr(arm, "fallback_model", None):
+        cmd += ["--fallback-model", arm.fallback_model]
     budget = getattr(arm, "max_budget_usd", None)
     if budget is not None:
         # hard fuse; same flag the claude-security arm has used live
@@ -127,6 +138,8 @@ def _agy_cmd(arm, prompt, cwd, out):
            "--mode", "plan", "--sandbox", "--print-timeout", "18m", "--add-dir", str(cwd)]
     if arm.model:
         cmd += ["--model", arm.model]
+    if getattr(arm, "effort", None):
+        cmd += ["--effort", arm.effort]
     return cmd
 
 
@@ -166,13 +179,22 @@ LLM_CLI_SPECS: dict[str, LlmCliSpec] = {
 class LlmCliArm:
     kind = "agent_cli"
 
-    def __init__(self, name: str, *, model: str | None = None) -> None:
+    def __init__(self, name: str, *, model: str | None = None,
+                 effort: str | None = None, max_budget_usd: float | None = None,
+                 fallback_model: str | None = None) -> None:
         if name not in LLM_CLI_SPECS:
             raise ValueError(f"unknown llm-cli arm: {name}")
+        if effort not in (None, "low", "medium", "high"):
+            raise ValueError(f"invalid effort {effort!r}; expected low|medium|high")
+        if max_budget_usd is not None and float(max_budget_usd) <= 0:
+            raise ValueError("max_budget_usd must be positive")
         self.name = name
         self.spec = LLM_CLI_SPECS[name]
         self.family = self.spec.family
         self.model = model
+        self.effort = effort
+        self.max_budget_usd = float(max_budget_usd) if max_budget_usd is not None else None
+        self.fallback_model = fallback_model
 
     def available(self) -> tuple[bool, str]:
         p = shutil.which(self.spec.command)
@@ -197,17 +219,26 @@ class LlmCliArm:
 
         parsed = self.spec.parse(self, r, raw_dir)
         (raw_dir / "envelope.json").write_text(json.dumps(parsed.envelope or {}, indent=2))
+        failure_cov = {"served_model": parsed.served_model, "cost_usd": parsed.cost_usd,
+                       "cost_stopped": bool(parsed.subtype and
+                                            "budget" in parsed.subtype.lower())}
 
         # guard 1: hard failure (timeout / soft-deny / no output)
         if not parsed.status_ok or r.timed_out:
-            return self._fail(cmd, r, error=f"arm not ok: {parsed.note or r.stderr[:200]}")
+            return self._fail(cmd, r, raw_dir=raw_dir,
+                              error=f"arm not ok: {parsed.note or r.stderr[:200]}",
+                              coverage=failure_cov)
         # guard 2: model substitution (fail loudly per D8)
         if self.model and parsed.served_model and not _model_matches(self.model, parsed.served_model):
-            return self._fail(cmd, r, error=f"model_substituted: requested {self.model} "
-                              f"served {parsed.served_model}", classifier_fallback=True)
+            return self._fail(cmd, r, raw_dir=raw_dir,
+                              error=f"model_substituted: requested {self.model} "
+                              f"served {parsed.served_model}", classifier_fallback=True,
+                              coverage=failure_cov)
         # guard 3: no structured output at all
         if parsed.envelope is None:
-            return self._fail(cmd, r, error="no structured output (coverage_unverified)")
+            return self._fail(cmd, r, raw_dir=raw_dir,
+                              error="no structured output (coverage_unverified)",
+                              coverage=failure_cov)
 
         ctx = ParseContext(repo_root=target, source_id=self.name, source_kind="agent_cli",
                            family=self.family, run_id=run_id, collected_at=collected_at,
@@ -236,16 +267,35 @@ class LlmCliArm:
                          tool_version=parsed.served_model, elapsed_seconds=r.elapsed_seconds,
                          command=_redact(cmd), raw_path=str(raw_dir / "envelope.json"), coverage=cov)
 
-    def _fail(self, cmd, r, *, error: str, classifier_fallback: bool = False) -> ArmResult:
+    def _fail(self, cmd, r, *, raw_dir: Path, error: str,
+              classifier_fallback: bool = False, coverage: dict | None = None) -> ArmResult:
+        diagnostic = raw_dir / "cli-output.txt"
+        stdout = _redact_diagnostic(r.stdout[-8000:])
+        stderr = _redact_diagnostic(r.stderr[-8000:])
+        diagnostic.write_text(
+            f"$ {' '.join(_redact(cmd))}\n\n[stdout tail]\n{stdout}\n\n"
+            f"[stderr tail]\n{stderr}\n")
         return ArmResult(name=self.name, kind=self.kind, family=self.family, ok=False,
                          exit_code=r.exit_code, error=error, findings=[],
                          elapsed_seconds=r.elapsed_seconds, command=_redact(cmd),
-                         coverage={"classifier_fallback": classifier_fallback})
+                         raw_path=str(diagnostic),
+                         coverage={**(coverage or {}),
+                                   "classifier_fallback": classifier_fallback})
 
 
 def _redact(cmd: list[str]) -> list[str]:
     # the prompt can be long; don't dump it into the manifest command
     return [("<prompt>" if len(a) > 400 else a) for a in cmd]
+
+
+def _redact_diagnostic(text: str) -> str:
+    out = text or ""
+    for pattern in _DIAGNOSTIC_SECRET_RES:
+        if pattern.groups:
+            out = pattern.sub(r"\1<redacted>", out)
+        else:
+            out = pattern.sub("<redacted>", out)
+    return out
 
 
 def _model_matches(requested: str, served: str) -> bool:

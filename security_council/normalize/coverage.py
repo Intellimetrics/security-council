@@ -121,7 +121,7 @@ def declined_families(result) -> frozenset[str]:
     return frozenset({str(x) for x in (cov.get("declined_categories") or [])} & CWE_FAMILIES)
 
 
-def source_run_for(result) -> "SourceRun":
+def source_run_for(result) -> SourceRun:
     """The corroboration source for an arm, honouring what it really covered.
 
     A ``none`` arm never votes — it has no standing to agree with a finding or
@@ -137,6 +137,23 @@ def source_run_for(result) -> "SourceRun":
                      ran=verdict != NONE,
                      supported_families=(frozenset(CWE_FAMILIES) - declined) if declined else None,
                      may_decline=verdict == VERIFIED)
+
+
+def source_runs_for(result) -> list[SourceRun]:
+    """Return original source coverage represented by an import arm.
+
+    A consolidated run imports already-merged findings without rerunning their
+    producers.  The import arm carries the prior arm coverage as private,
+    in-memory ``_source_runs`` so corroboration continues to compare finding
+    provenance against the actual Semgrep/Claude/agy/etc. sources rather than
+    against one synthetic importer.
+    """
+    expanded = (getattr(result, "coverage", None) or {}).get("_source_runs")
+    if expanded is None:
+        return [source_run_for(result)]
+    if not isinstance(expanded, list) or not all(isinstance(x, SourceRun) for x in expanded):
+        raise ValueError("import arm _source_runs must contain SourceRun values")
+    return list(expanded)
 
 
 @dataclass

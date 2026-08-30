@@ -1,11 +1,13 @@
 """MCP server handlers (transport-independent): root scoping, nesting guard,
 and the sc_* tool surface over a real orchestrated run — no `mcp` SDK needed."""
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from security_council import mcp_server as srv
-from tests.test_orchestrator import FakeArm, _allow_unsigned, _finding as orch_finding
+from tests.test_orchestrator import FakeArm, _allow_unsigned
+from tests.test_orchestrator import _finding as orch_finding
 
 NOW = "2026-08-22T00:00:00Z"
 
@@ -49,6 +51,57 @@ def test_unknown_tool_and_unknown_arm(root):
         srv.call_tool("sc_nope", {})
     with pytest.raises(ValueError, match="unknown arms"):
         srv.sc_scan({"arms": "not-an-arm"})
+
+
+def test_operator_config_profile_and_deep_controls(root, monkeypatch):
+    cfg = root / "operator.yaml"
+    cfg.write_text("arms:\n  options:\n    claude:\n      max_budget_usd: 9\n")
+    reports = root / "portfolio-runs"
+    captured = {}
+
+    def fake_arms(names, config):
+        captured["names"] = names
+        captured["config"] = config
+        return [FakeArm("claude", "agent_cli", "claude", [])]
+
+    def fake_run_scan(target, arms, config, **kwargs):
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(
+            run_id="r1", out_dir=reports / "r1", exit_code=0, degradations=[],
+            manifest={"counts": {"total": 0, "by_severity": {}, "by_state": {}},
+                      "disposition_actions": {}, "baseline_delta": None, "reports": []})
+
+    monkeypatch.setattr(srv, "_arms", fake_arms)
+    import security_council.orchestrator as orch
+    monkeypatch.setattr(orch, "run_scan", fake_run_scan)
+
+    out = srv.sc_scan({"target": str(root), "config_path": str(cfg), "profile": "deep",
+                       "arms": "claude,agy", "deep": True, "reports_root": str(reports),
+                       "min_arms": 2, "validate_budget": 4, "sbom": True,
+                       "validator_current": "codex",
+                       "validator_participants": "claude,antigravity",
+                       "validator_timeout": 300})
+    assert out["exit_code"] == 0
+    assert captured["names"] == ["claude", "agy"]
+    assert captured["config"]["_source"]["kind"] == "explicit"
+    assert captured["config"]["policy"]["min_arms_ok"] == 2
+    assert captured["config"]["reports"]["outdir"] == str(reports)
+    assert captured["config"]["arms"]["options"]["claude"] == {
+        "max_budget_usd": 9, "effort": "high"}
+    assert captured["config"]["arms"]["options"]["agy"]["effort"] == "high"
+    assert captured["kwargs"]["validate"] is True
+    assert captured["kwargs"]["validate_budget_usd"] == 4
+    assert captured["kwargs"]["validator_timeout"] == 300
+    runner = captured["kwargs"]["validator_runner"]
+    assert runner.keywords["current"] == "codex"
+    assert runner.keywords["participants"] == ("claude", "antigravity")
+    assert captured["kwargs"]["analysis_arms"][0].name == "sbom"
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        srv.sc_scan({"config_path": str(cfg), "ignore_repo_config": True})
+    with pytest.raises(ValueError, match="exclude validator_current"):
+        srv.sc_scan({"validator_current": "codex",
+                     "validator_participants": "claude,codex"})
 
 
 # --------------------------------------------------------------------------- #
@@ -118,7 +171,7 @@ def test_sc_doctor_reports_every_arm_without_raising(root, monkeypatch):
     monkeypatch.setattr(reg, "build_arm", lambda n, options=None: _Probe(n == "good"))
     rows = srv.sc_doctor({})["arms"]
     assert {r["arm"]: r["ready"] for r in rows} == {"good": True, "bad": False}
-    assert "boom" in [r for r in rows if r["arm"] == "bad"][0]["detail"]
+    assert "boom" in next(r for r in rows if r["arm"] == "bad")["detail"]
 
 
 def test_tool_registry_schemas_are_complete(root):

@@ -16,7 +16,7 @@ from .cluster import cluster_findings, merge_cluster
 from .export import html_export, markdown, sarif
 from .jsonio import dumps, to_dict
 from .manifest import build_manifest
-from .model import Finding
+from .model import CLOSED_LIFECYCLES, Finding
 from .normalize import coverage
 from .workspace import prepare_workspace
 
@@ -317,7 +317,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
              isolate: bool = True, validate: bool = False, validate_max_findings: int | None = None,
              validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None,
              fix_spec: dict | None = None, vendor_validate: bool = False,
-             verify_patch: dict | None = None) -> ScanRun:
+             verify_patch: dict | None = None, validator_runner=None,
+             validator_timeout: int = 600) -> ScanRun:
     target = Path(target).resolve()
     if fix_spec and not isolate:
         raise ValueError("the fix lane requires isolation (an in-place fix would edit the "
@@ -373,6 +374,12 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         run_arms = list(arms)
 
     ws = prepare_workspace(target, mode="copy" if isolate else "inplace")
+    target_bound_arms = [arm for arm in [*run_arms, *analysis_arms]
+                         if callable(getattr(arm, "bind_target", None))]
+    if target_bound_arms:
+        initial_git = ws.git_info()
+        for arm in target_bound_arms:
+            arm.bind_target(target=ws.original, git_info=initial_git)
     if ws.excluded:
         scan_scope = {**scan_scope, "excluded": ws.excluded}    # what the copy left out
     try:
@@ -405,7 +412,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         # arm toward auto-suppression. An arm that scanned nothing must not get
         # a vote on whether someone else's finding is real.
         run_ctx = coverage.RunContext(
-            sources=[coverage.source_run_for(r) for r in results],
+            sources=[source for r in results for source in coverage.source_runs_for(r)],
             min_distinct_vendors=mdv)
         merged = [coverage.apply(merge_cluster(c), run_ctx) for c in clusters]
         merged.sort(key=lambda f: (-_SEV_RANK[f.severity.label], f.taxonomy.cwe_family))
@@ -462,22 +469,29 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                                        "signed decisions cannot be checked and are refused "
                                        "(fail-closed)."})
 
+        validation_failures: list[dict] = []
         if validate and merged:
             from .validate import panel as _vpanel
             vrunner = (_vpanel.make_vendor_runner(ws.root) if vendor_validate else None)
-            vfail: list[dict] = []
-            _vpanel.validate_findings(merged, repo_root=ws.root, max_findings=validate_max_findings,
-                                      max_cost_usd=validate_budget_usd, vendor_runner=vrunner,
-                                      failures=vfail)
+            _vpanel.validate_findings(
+                merged, repo_root=ws.root, max_findings=validate_max_findings,
+                max_cost_usd=validate_budget_usd, vendor_runner=vrunner,
+                runner=validator_runner or _vpanel.council_client.run_council,
+                timeout=validator_timeout, failures=validation_failures)
             # A panel that never convened (backend missing, timed out, empty
             # output) leaves the finding `needs_human` — fail-safe — but the RUN
             # must say so: before this, `--validate` with no `llm-council` on
             # PATH reported "N cross-examined" and no degradation (0.2.0
             # release rehearsal). Not a gate change; a visibility one.
-            if vfail:
-                attempted = sum(1 for f in merged if f.validation is not None)
-                first = vfail[0]["error"]
-                if len(vfail) >= attempted:
+            if validation_failures:
+                eligible = sum(
+                    f.taxonomy.cwe_family != "supply_chain"
+                    and f.disposition.lifecycle not in CLOSED_LIFECYCLES
+                    for f in merged
+                )
+                attempted = min(eligible, validate_max_findings or eligible)
+                first = validation_failures[0]["error"]
+                if len(validation_failures) >= attempted:
                     pre_degr.append({"kind": "validator_unavailable",
                                      "detail": f"--validate was requested but no panel convened "
                                                f"for any of the {attempted} finding(s) selected "
@@ -486,7 +500,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                                                "on PATH? (`security-council doctor`)"})
                 else:
                     pre_degr.append({"kind": "validator_failed",
-                                     "detail": f"{len(vfail)} of {attempted} panel(s) did not "
+                                     "detail": f"{len(validation_failures)} of {attempted} panel(s) did not "
                                                f"convene ({first}); those findings are "
                                                "needs_human, not cross-examined"})
 
@@ -655,6 +669,49 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         verify_fix = ({"method": "deterministic", "patches": verify_blocks}
                       if verify_blocks else None)
 
+        def _host_opinion(op) -> bool:
+            return op.participant.endswith("-current")
+
+        with_validation = [f for f in merged if f.validation is not None]
+        host_validated = [f for f in with_validation if any(
+            _host_opinion(op) and op.status != "absent" for op in f.validation.panel)]
+        skipped_validation = [f for f in merged
+                              if f.taxonomy.cwe_family == "supply_chain"
+                              and f.disposition.lifecycle not in CLOSED_LIFECYCLES]
+        eligible_ranked = sorted(
+            (f for f in merged
+             if f.taxonomy.cwe_family != "supply_chain"
+             and f.disposition.lifecycle not in CLOSED_LIFECYCLES),
+            key=lambda f: f.severity.security_severity,
+            reverse=True,
+        )
+        selected_external = (eligible_ranked[:validate_max_findings]
+                             if validate and validate_max_findings else
+                             eligible_ranked if validate else [])
+        selected_ids = {f.id for f in selected_external}
+        externally_convened = [f for f in with_validation if f.id in selected_ids and any(
+            op.independent and not _host_opinion(op) and op.status != "absent"
+            for op in f.validation.panel)]
+        external_quorum = [f for f in externally_convened if len({
+            op.family for op in f.validation.panel
+            if op.independent and not _host_opinion(op) and op.status != "absent"
+        }) >= 2]
+        validation_meta = {
+            "requested": validate,
+            "eligible": len(eligible_ranked),
+            "max_findings": validate_max_findings,
+            "max_cost_usd_per_finding": validate_budget_usd if validate else None,
+            "timeout_seconds_per_finding": validator_timeout if validate else None,
+            "host_records": len(host_validated),
+            "external_selected": len(selected_external),
+            "external_convened": len(externally_convened),
+            "external_two_vendor_quorum": len(external_quorum),
+            "external_failed": len(validation_failures),
+            "not_selected": len(eligible_ranked) - len(selected_external),
+            "deterministic_skipped": len(skipped_validation),
+            "no_validation_record": len(merged) - len(with_validation),
+        }
+
         policy_rows = policy_mod.decisions_to_json(decisions)
         (out_dir / "policy.json").write_text(dumps(policy_rows))
 
@@ -685,6 +742,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             baseline_delta=baseline_delta, prior_decisions=prior_decisions, artifacts=artifacts,
             calibration=cal_meta, signature_policy=sig_policy, history_audit=history_audit,
             verify_fix=verify_fix,
+            validation=validation_meta,
             reports=[{"path": str(out_dir / n), "format": fmt} for n, fmt in
                      (("merged.sarif", "sarif"), ("raw.sarif", "sarif"), ("findings.json", "json"),
                       ("summary.md", "markdown"), ("summary.html", "html"),

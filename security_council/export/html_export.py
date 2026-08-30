@@ -234,8 +234,12 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
     # R15b: "validated" means a panel actually convened — the same predicate
     # the markdown uses; an unconvened needs_human is NOT cross-examined
     with_record = [f for f in findings if f.validation is not None]
-    validated = [f for f in with_record if f.validation.convened()]
-    unexamined = len(with_record) - len(validated)
+    validated = [f for f in with_record if _markdown._external_panel_families(f)]
+    quorum = [f for f in validated if len(_markdown._external_panel_families(f)) >= 2]
+    host_validated = [f for f in with_record if any(
+        _markdown._is_host_opinion(op) and op.status != "absent"
+        for op in f.validation.panel)]
+    vm = manifest.get("validation") or {}
     degr = manifest.get("degradations") or []
     sp = manifest.get("signature_policy") or {}
     tgt = manifest.get("target") or {}
@@ -275,9 +279,22 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
                          f'<div class="v sev {_e(s)}">{_e(sev[s])}</div></div>')
     tiles.append(_tile("gating", len(gating), f"at/above {(manifest.get('policy') or {}).get('fail_on_severity', 'high')}"))
     tiles.append(_tile("corroborated", len(corroborated), "≥2 independent vendor families"))
-    tiles.append(_tile("validated", len(validated),
-                       ("cross-examined by the panel" if validated else "panel not run")
-                       + (f" · ⚠ {unexamined} not examined (no panel convened)" if unexamined else "")))
+    tiles.append(_tile("external panel", len(validated),
+                       (f"cross-examined · {len(quorum)} two-vendor quorum"
+                        if validated else "not run")))
+    if vm.get("requested"):
+        tiles.append(_tile("validator selected", vm.get("external_selected", 0),
+                           f"of {vm.get('eligible', 0)} eligible"))
+        tiles.append(_tile("not selected", vm.get("not_selected", 0),
+                           f"{vm.get('external_failed', 0)} failed to convene"))
+        tiles.append(_tile("deterministic skipped", vm.get("deterministic_skipped", 0),
+                           "outside code-path panel"))
+    if host_validated:
+        tiles.append(_tile("Daybreak validated", len(host_validated),
+                           f"host records · {len(with_record) - len(validated)} without external panel"))
+    if len(findings) != len(with_record):
+        tiles.append(_tile("unvalidated", len(findings) - len(with_record),
+                           "no validation record"))
     tiles.append(_tile("demoted", len(demoted), "left the gate, still listed"))
     tiles.append(_tile("arms", f"{len(ok)}/{len(arms)}", "completed" if not failed else
                        "failed: " + ", ".join(a.get("name", "?") for a in failed)))

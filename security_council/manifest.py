@@ -23,7 +23,8 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
                    calibration: dict | None = None,
                    signature_policy: dict | None = None,
                    history_audit: list[dict] | None = None,
-                   verify_fix: dict | None = None) -> dict:
+                   verify_fix: dict | None = None,
+                   validation: dict | None = None) -> dict:
     by_sev = Counter(f.severity.label for f in merged)
     by_state = Counter(f.disposition.state for f in merged)
     return {
@@ -53,6 +54,9 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
             # results happened.
             "coverage_verdict": _coverage.coverage_verdict(r),
             "declined_families": sorted(_coverage.declined_families(r)),
+            "imported_run_id": r.coverage.get("imported_run_id"),
+            "imported_scan_id": r.coverage.get("scan_id") if r.kind == "import" else None,
+            "imported_sources": [s.source_id for s in r.coverage.get("_source_runs", [])],
             "classifier_fallback": bool(r.coverage.get("classifier_fallback")),   # D8
             "error": r.error or None,
         } for r in arm_results],
@@ -70,6 +74,7 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
         # Deterministic verify-fix (R11 Q4): per-patch verdicts bound to the
         # patch sha + base commit. Machine evidence — a human still decides.
         "verify_fix": verify_fix,
+        "validation": validation or {"requested": False},
         "degradations": degradations,
         "exit_code": exit_code,
         "reports": reports,

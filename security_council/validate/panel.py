@@ -85,7 +85,12 @@ def _opinion(peer, prompt_sha256: str) -> PanelOpinion:
         # FAMILY_BY_PEER when seating a new peer; `participant` still names it.
         role=role, participant=peer.name, family=FAMILY_BY_PEER.get(peer.name, "unknown"),
         prompt_sha256=prompt_sha256, verdict=verdict,
-        rationale=(peer.blockers[0] if peer.blockers else ""),
+        # An absent seat is operationally important validation evidence.  The
+        # backend puts launch failures and timeouts in ``error`` rather than
+        # ``blockers``; dropping it made a degraded panel look unexplained in
+        # the canonical finding and forced operators to chase an ephemeral
+        # llm-council transcript.
+        rationale=(peer.blockers[0] if peer.blockers else peer.error),
         model_id=peer.model, citations=cites, citation_pass_rate=pass_rate, status=status)
 
 
@@ -258,12 +263,23 @@ def validate_finding(finding: Finding, *, repo_root, runner=council_client.run_c
     prompt = build_validation_prompt(finding)
     psha = hashlib.sha256(prompt.encode()).hexdigest()
     cr = runner(prompt, cwd=repo_root, mode=mode, max_cost_usd=max_cost_usd, timeout=timeout)
-    extra = None
+    # A sealed imported scan may already carry a host validation.  Preserve it
+    # as one panel opinion when adding cross-vendor review; replacing it here
+    # discarded the strongest source/control/sink trace in consolidated runs.
+    prior = finding.validation
+    extra = list(prior.panel) if prior is not None else []
     if vendor_runner is not None:
-        extra = [vendor_opinion(v, psha) for v in (vendor_runner(finding) or [])]
+        extra += [vendor_opinion(v, psha) for v in (vendor_runner(finding) or [])]
     val = synthesize_validation(finding, cr, prompt_sha256=psha, extra_opinions=extra)
+    if prior is not None:
+        val.reachability = val.reachability or prior.reachability
+        val.impact = val.impact or prior.impact
     finding.validation = val
-    if failures is not None and not val.convened():
+    external_convened = any(
+        op.independent and not op.participant.endswith("-current") and op.status != "absent"
+        for op in val.panel
+    )
+    if failures is not None and not external_convened:
         # nobody sat: backend missing, no output, or every peer failed (R15:
         # `not cr.results` missed the all-failed case — llm-council present,
         # peer CLIs not). The verdict is needs_human (fail-safe); the caller

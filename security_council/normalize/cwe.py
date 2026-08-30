@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..model import CRYPTO_CWES, CWE_FAMILIES, _CWE_RE, canonical_cwe, family_for_cwe
+from ..model import _CWE_RE, CRYPTO_CWES, CWE_FAMILIES, canonical_cwe, family_for_cwe
 from .cwe_table import CWE_BY_SOURCE_RULE, heuristic_cwe
 
 Confidence = str  # "exact" | "mapped" | "heuristic" | "none"
@@ -35,6 +35,13 @@ def normalize_cwe(*, source_id: str, rule_id: str | None, declared_cwe: list[str
     if declared_cwe:
         clean = [canonical_cwe(c) for c in declared_cwe if _CWE_RE.match(canonical_cwe(c))]
         if clean:
+            # I4 requires the primary CWE to agree with the canonical family.
+            # Crypto is intentionally sticky, so a secondary crypto CWE must be
+            # promoted ahead of a non-crypto primary rather than producing an
+            # invalid finding that the ingress boundary silently drops.
+            if any(c in CRYPTO_CWES for c in clean):
+                clean = ([c for c in clean if c in CRYPTO_CWES]
+                         + [c for c in clean if c not in CRYPTO_CWES])
             return CweAssignment(clean, _family(clean, category), "exact", category)
     # 2 mapped — curated (source, rule) table
     if rule_id and (source_id, rule_id) in CWE_BY_SOURCE_RULE:

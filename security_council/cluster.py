@@ -254,6 +254,15 @@ def merge_cluster(cluster: FindingCluster) -> Finding:
     for mem in members:
         merged_sfp.update(mem.fingerprints.source_fingerprints or {})
     fp = replace(rep.fingerprints, source_fingerprints=merged_sfp)
+    # Revision-bound import arms may carry a completed validation.  Keep the
+    # strongest one through clustering so a later cross-vendor panel can add
+    # opinions to it instead of erasing the host's source/control/sink trace.
+    prior_validations = [m.validation for m in members if m.validation is not None]
+    validation = max(prior_validations, key=lambda value: value.confidence, default=None)
+    state = "new"
+    if validation is not None and validation.verdict == "true_positive":
+        state = "validated" if (corr.independent_family_count >= 2
+                                or bool(corr.deterministic_sources)) else "likely"
     return Finding(
         id=finding_id(fp),
         schema_version=SCHEMA_VERSION,
@@ -265,7 +274,7 @@ def merge_cluster(cluster: FindingCluster) -> Finding:
         fingerprints=fp,
         provenance=provenance,
         corroboration=corr,
-        disposition=Disposition(state="new", lifecycle="open",
+        disposition=Disposition(state=state, lifecycle="open",
                                 decided_by=rep.disposition.decided_by),
         title=rep.title,
         description=rep.description,
@@ -273,4 +282,5 @@ def merge_cluster(cluster: FindingCluster) -> Finding:
         remediation=rep.remediation,
         compliance=rep.compliance,
         package=rep.package,
+        validation=validation,
     )

@@ -109,6 +109,13 @@ def test_a_partial_arm_may_not_decline():
     assert cov.source_run_for(_r(completion="complete")).may_decline is True
 
 
+def test_source_runs_for_expands_imported_original_sources():
+    sources = [cov.SourceRun("semgrep", "scanner", "semgrep"),
+               cov.SourceRun("claude", "agent_cli", "claude", may_decline=False)]
+    result = _r(kind="import", completion="partial", _source_runs=sources)
+    assert cov.source_runs_for(result) == sources
+
+
 def test_partial_arm_silence_is_neither_credit_nor_penalty():
     from security_council.model import Corroboration  # noqa: F401
     from tests.test_validate import _finding

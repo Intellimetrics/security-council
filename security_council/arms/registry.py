@@ -42,7 +42,7 @@ def build_arm(name: str, *, model: str | None = None, options: dict | None = Non
     if name in SCANNER_SPECS:
         return ScannerArm(name)
     if name in LLM_CLI_SPECS:
-        return LlmCliArm(name, model=model)
+        return LlmCliArm(name, model=model, **opts)
     if name in DEDICATED_ARMS:
         # diff is only meaningful for diff-capable dedicated arms; pass it and
         # let the arm ignore it if unsupported (all current dedicated arms support it)

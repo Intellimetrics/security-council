@@ -92,7 +92,7 @@ def test_cwe_none_falls_back_to_category_family():
 def test_cwe_crypto_sticky_from_declared():
     a = ncwe.normalize_cwe(source_id="x", rule_id=None, declared_cwe=["CWE-79", "CWE-327"],
                            category=None, title="", description="")
-    assert a.family == "crypto"
+    assert a.family == "crypto" and a.cwe == ["CWE-327", "CWE-79"]
 
 
 # --- severity ---
@@ -114,7 +114,7 @@ def test_severity_semgrep_vocab_and_secret_default():
 # --- table integrity ---
 
 def test_cwe_by_source_rule_values_are_valid_and_mapped():
-    for (src, rule), cwe in CWE_BY_SOURCE_RULE.items():
+    for cwe in CWE_BY_SOURCE_RULE.values():
         assert m._CWE_RE.match(m.canonical_cwe(cwe)), f"{cwe} malformed"
         assert m.family_for_cwe(cwe) is not None, f"{cwe} not in CWE_TO_FAMILY"
 

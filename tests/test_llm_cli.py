@@ -3,8 +3,11 @@ import json
 import pathlib
 import subprocess
 
+import pytest
+
 from security_council import model as m
 from security_council.arms.llm_cli import LlmCliArm
+from security_council.arms.registry import build_arm
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "seedrepo"
 
@@ -60,15 +63,42 @@ def test_claude_envelope_normalizes(monkeypatch, tmp_path):
 
 
 def test_agy_soft_deny_is_failure(monkeypatch, tmp_path):
-    stdout = json.dumps({"status": "CANCELED", "structured_output": None})
+    secret = "github_pat_0123456789abcdefghijklmnopqrstuvwxyz"
+    stdout = json.dumps({"status": "CANCELED", "structured_output": None,
+                         "diagnostic": secret})
     res = _run("agy", monkeypatch, tmp_path, stdout=stdout)      # exit 0 but not SUCCESS
     assert not res.ok and "CANCELED" in res.error
+    diagnostic = pathlib.Path(res.raw_path).read_text()
+    assert secret not in diagnostic and "<redacted>" in diagnostic
 
 
 def test_agy_success_but_no_structured_output(monkeypatch, tmp_path):
     stdout = json.dumps({"status": "SUCCESS", "structured_output": None})
     res = _run("agy", monkeypatch, tmp_path, stdout=stdout)
     assert not res.ok and "no structured output" in res.error
+
+
+def test_house_arm_options_reach_vendor_commands(tmp_path):
+    claude = build_arm("claude", options={"model": "fable", "effort": "high",
+                                          "max_budget_usd": 12,
+                                          "fallback_model": "claude-opus-5"})
+    ccmd = claude.spec.build_cmd(claude, "review", FIX, tmp_path)
+    assert ccmd[ccmd.index("--model") + 1] == "fable"
+    assert ccmd[ccmd.index("--effort") + 1] == "high"
+    assert ccmd[ccmd.index("--max-budget-usd") + 1] == "12"
+    assert ccmd[ccmd.index("--fallback-model") + 1] == "claude-opus-5"
+
+    agy = build_arm("agy", options={"model": "gemini-3.7-flash-high", "effort": "high"})
+    acmd = agy.spec.build_cmd(agy, "review", FIX, tmp_path)
+    assert acmd[acmd.index("--model") + 1] == "gemini-3.7-flash-high"
+    assert acmd[acmd.index("--effort") + 1] == "high"
+
+
+def test_house_arm_options_fail_closed():
+    with pytest.raises(ValueError, match="invalid effort"):
+        build_arm("agy", options={"effort": "maximum"})
+    with pytest.raises(ValueError, match="positive"):
+        build_arm("claude", options={"max_budget_usd": 0})
 
 
 def test_model_substitution_fails_loudly(monkeypatch, tmp_path):

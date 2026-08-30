@@ -269,6 +269,21 @@ def test_validate_without_a_backend_is_a_visible_degradation(tmp_path, monkeypat
     out = [x for x in run.findings if x.validation is not None]
     assert len(out) == 1 and out[0].validation.verdict == "needs_human"
     assert out[0].disposition.state != "refuted"                     # never demoted
+    assert run.manifest["validation"] == {
+        "requested": True,
+        "eligible": 1,
+        "max_findings": 1,
+        "max_cost_usd_per_finding": 0.5,
+        "timeout_seconds_per_finding": 600,
+        "host_records": 0,
+        "external_selected": 1,
+        "external_convened": 0,
+        "external_two_vendor_quorum": 0,
+        "external_failed": 1,
+        "not_selected": 0,
+        "deterministic_skipped": 0,
+        "no_validation_record": 0,
+    }
     md = (tmp_path / "out" / "summary.md").read_text()
     assert "0 cross-examined" in md and "1 not examined" in md
     assert "validator_unavailable" in md
@@ -276,4 +291,4 @@ def test_validate_without_a_backend_is_a_visible_degradation(tmp_path, monkeypat
     # "validated 1 — cross-examined by the panel" while the markdown said 0
     html = (tmp_path / "out" / "summary.html").read_text()
     assert "1 not examined" in html
-    assert 'validated</div><div class="v">0' in html          # the tile counts convened panels only
+    assert 'external panel</div><div class="v">0' in html     # tile counts convened panels only

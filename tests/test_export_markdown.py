@@ -160,7 +160,8 @@ def test_validated_finding_shows_panel_and_refuted_goes_to_appendix_not_hidden()
     assert fp.disposition.state == "refuted"
     md = markdown.to_markdown([tp, fp], _manifest([tp, fp]))
     # summary line
-    assert "2 cross-examined → 1 true positive · 1 false positive (demoted) · 0 need human review" in md
+    assert ("2 cross-examined (2 reached two-vendor quorum) → 1 true positive · "
+            "1 false positive (demoted) · 0 need human review") in md
     assert "**Demoted, not hidden:** 1 finding(s)" in md
     # detail: panel table rows with verified citation counts; state + never-auto-close note
     assert "| prosecutor | claude | m | true_positive | 1/1 | ok |" in md

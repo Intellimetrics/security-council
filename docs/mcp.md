@@ -32,7 +32,7 @@ wherever the extra is installed.
 
 | Tool | What it does |
 |---|---|
-| `sc_scan` | Run a scan (arms, validate, fail-on-severity, gate-baseline overrides); returns run summary + exit code |
+| `sc_scan` | Run a scan with profile/deep effort, operator config, repository-config refusal, reports root, arms, SBOM, validation limits/budget, current-host/external-peer selection, and gate-policy controls; returns run summary + exit code |
 | `sc_doctor` | Arm availability with reasons |
 | `sc_report` | Summarize/export a run: `json`, `md`, or `emass` |
 | `sc_last_run` | Latest run's summary for a target |
