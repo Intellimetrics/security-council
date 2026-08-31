@@ -318,7 +318,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
              validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None,
              fix_spec: dict | None = None, vendor_validate: bool = False,
              verify_patch: dict | None = None, validator_runner=None,
-             validator_timeout: int = 600) -> ScanRun:
+             validator_timeout: int = 600, reports_root: str | Path | None = None) -> ScanRun:
     target = Path(target).resolve()
     if fix_spec and not isolate:
         raise ValueError("the fix lane requires isolation (an in-place fix would edit the "
@@ -327,15 +327,22 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         raise ValueError("patch verification requires isolation (the patch is applied to a "
                          "scratch copy only); --inplace is refused with --verify-patch.")
     run_id, collected_at = _utc_stamp()
-    reports_cfg = config.get("reports") or {}
-    outdir_root = Path(reports_cfg.get("outdir", ".security-council/runs"))
-    if (config.get("_source") or {}).get("kind") == "repository" and "outdir" in reports_cfg:
-        # R17: the scanned repository must not choose where run artifacts land
-        # (an absolute repo-supplied outdir would redirect the whole run tree
-        # past the MCP reports_root containment). Operator config, --out, and
-        # the MCP reports_root argument keep working.
-        outdir_root = Path(".security-council/runs")
-    out_dir = Path(out_dir) if out_dir else (target / outdir_root / run_id)
+    if out_dir is None and reports_root is not None:
+        # the operator's reports root arrives as a PARAMETER, never through the
+        # config dict — a config key would be forgeable by the scanned repo's
+        # own YAML, which must not choose where run artifacts land (R17b)
+        out_dir = Path(reports_root) / run_id
+    if out_dir is None:
+        reports_cfg = config.get("reports") or {}
+        outdir_root = Path(reports_cfg.get("outdir", ".security-council/runs"))
+        if (config.get("_source") or {}).get("kind") == "repository" and "outdir" in reports_cfg:
+            # R17: the scanned repository must not choose where run artifacts
+            # land (an absolute repo-supplied outdir would redirect the whole
+            # run tree past the MCP reports_root containment). Operator config,
+            # --out, and the reports_root parameter keep working.
+            outdir_root = Path(".security-council/runs")
+        out_dir = target / outdir_root / run_id
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     scan_scope = diff.as_dict() if diff is not None else {"kind": "full"}
     partial = diff is not None

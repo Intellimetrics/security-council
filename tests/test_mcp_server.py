@@ -85,7 +85,7 @@ def test_operator_config_profile_and_deep_controls(root, monkeypatch):
     assert captured["names"] == ["claude", "agy"]
     assert captured["config"]["_source"]["kind"] == "explicit"
     assert captured["config"]["policy"]["min_arms_ok"] == 2
-    assert captured["config"]["reports"]["outdir"] == str(reports)
+    assert captured["kwargs"]["reports_root"] == reports
     assert captured["config"]["arms"]["options"]["claude"] == {
         "max_budget_usd": 9, "effort": "high"}
     assert captured["config"]["arms"]["options"]["agy"]["effort"] == "high"
@@ -230,3 +230,35 @@ def test_validate_max_must_be_positive(root, monkeypatch):
         select_for_validation([], max_findings=0)
     with pytest.raises(ValueError, match=">= 1"):
         select_for_validation([], max_findings=-1)
+
+
+
+def test_reports_root_survives_a_repo_config_in_the_target(root, monkeypatch):
+    # R17b regression: the operator's reports_root used to be written into the
+    # same config key the repo-outdir guard discards, so it silently stopped
+    # working whenever the scanned target shipped its own config file
+    from pathlib import Path
+    _fake_arms(monkeypatch)
+    (root / ".security-council.yaml").write_text("policy:\n  fail_on_severity: high\n")
+    reports = root / "portfolio-runs"
+    out = srv.sc_scan({"arms": "semgrep", "reports_root": str(reports)})
+    assert Path(out["out_dir"]).parent == reports
+    # and the repo's own outdir still cannot redirect the run tree
+    (root / ".security-council.yaml").write_text(
+        f"reports:\n  outdir: {root / 'evil'}\n")
+    out2 = srv.sc_scan({"arms": "semgrep"})
+    assert not (root / "evil").exists()
+    assert Path(out2["out_dir"]).parent == root / ".security-council" / "runs"
+
+
+def test_sc_report_html_refuses_a_symlinked_summary(root, monkeypatch, tmp_path_factory):
+    from pathlib import Path
+    _fake_arms(monkeypatch)
+    out = srv.sc_scan({"arms": "semgrep"})
+    run_dir = Path(out["out_dir"])
+    outside = tmp_path_factory.mktemp("outside")
+    (run_dir / "summary.html").unlink()
+    (run_dir / "summary.html").symlink_to(outside / "steal.html")
+    with pytest.raises(ValueError, match="symlink"):
+        srv.sc_report({"run_dir": str(run_dir), "format": "html"})
+    assert not (outside / "steal.html").exists()

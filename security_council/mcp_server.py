@@ -205,8 +205,6 @@ def sc_scan(arguments: dict) -> dict:
             if arm_name in enabled:
                 opts.setdefault(arm_name, {})[key] = value
     reports_root = _resolve_output_root(arguments)
-    if reports_root is not None:
-        config.setdefault("reports", {})["outdir"] = str(reports_root)
     analysis_arms = []
     if arguments.get("sbom"):
         from .arms.sbom import SbomArm
@@ -221,7 +219,7 @@ def sc_scan(arguments: dict) -> dict:
                    validate_budget_usd=arguments.get("validate_budget", 0.5),
                    validator_runner=validator_runner,
                    validator_timeout=arguments.get("validator_timeout", 600),
-                   analysis_arms=analysis_arms)
+                   analysis_arms=analysis_arms, reports_root=reports_root)
     return {"run_id": run.run_id, "out_dir": str(run.out_dir), "exit_code": run.exit_code,
             "counts": run.manifest["counts"], "degradations": run.degradations,
             "disposition_actions": run.manifest.get("disposition_actions"),
@@ -305,8 +303,11 @@ def sc_report(arguments: dict) -> dict:
         md = run_dir / "summary.md"
         page = html_export.to_html(findings, m, run_dir=run_dir,
                                    markdown_text=md.read_text() if md.is_file() else None)
-        (run_dir / "summary.html").write_text(page)   # the named path really exists
-        return {"html": page, "path": str(run_dir / "summary.html")}
+        page_path = run_dir / "summary.html"
+        if page_path.is_symlink():   # a committed run dir must not redirect the write
+            raise ValueError(f"summary.html is a symlink and is refused: {page_path}")
+        page_path.write_text(page)   # the named path really exists
+        return {"html": page, "path": str(page_path)}
     if fmt == "emass":
         from .export import emass
         app, ver = arguments.get("app_name"), arguments.get("app_version")
@@ -503,10 +504,8 @@ def sc_consolidate(arguments: dict) -> dict:
         if not isinstance(config.get("decisions"), dict):
             config["decisions"] = {}
         config["decisions"]["require_signatures"] = arguments["require_signatures"]
-    reports_root = _resolve_output_root(arguments)
-    if reports_root is not None:
-        config.setdefault("reports", {})["outdir"] = str(reports_root)
     run = run_scan(target, arms, config,
+                   reports_root=_resolve_output_root(arguments),
                    validate=bool(arguments.get("validate", False)),
                    validate_max_findings=arguments.get("validate_max"),
                    validate_budget_usd=arguments.get("validate_budget", 0.5),
