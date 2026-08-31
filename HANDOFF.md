@@ -204,7 +204,9 @@ The merge went through three council rounds on the R16 continuation thread:
   `6bb2396`.
 - **Round 3 (3/3 SHIP):** all closures verified peer-by-peer.
 
-**MERGED:** main fast-forwarded d918a4e → `6bb2396` and pushed. 678 tests
+**MERGED:** main fast-forwarded d918a4e → `6bb2396` and pushed; live-verify
+run 33403893410 green on that sha (clean-pass + detects-and-gates on real
+GitHub runners). 678 tests
 green; every council-named blocker is pinned by a test proven non-vacuous
 against its pre-fix source. Version is `0.3.0` with CHANGELOG section
 "unreleased" — cutting the release (tag + GitHub release + wheel rehearsal
