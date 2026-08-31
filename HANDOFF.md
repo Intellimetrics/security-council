@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-28 (0.2.0 RELEASED; see §7.10 for the rehearsal method). Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-31 (0.2.0 released; active IMS dogfood work is on the branch below). Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -51,6 +51,82 @@ arms run** (`claude-security,codex-security,semgrep`, run `20260821_130516`) had
 the IDOR corroborated by **both agentic vendor families**, secret snippet redacted, 3/3 panel stamps
 surfaced, and correct gate FAIL/exit 1. Cost: $7.05 (claude-security, effort low, 7.3 min) +
 ~$5.43 (codex-security, cost-stopped at the $5 fuse, 18 min).
+
+## 0.1 Active branch coordination — IMS dogfood
+
+Use `codex/ims-deep-scan-dogfood` as the base for work related to deep-scan
+consolidation, validation, or reporting. The implementation rests on these two
+commits above `main`:
+
+- `aa1913e` — snapshot-bound imports for prior Security Council runs and sealed
+  Codex Security bundles; MCP deep/validator controls; validation provenance and
+  coverage fixes.
+- `df64b80` — leadership/engineering HTML report, `report --system-name`, complete
+  finding register, related metrics, and presentation-language cleanup.
+
+Do not independently reimplement those changes on `main`. Branch from this branch,
+or cherry-pick the two commits in order. The highest-conflict files are
+`orchestrator.py`, `mcp_server.py`, `validate/panel.py`, `export/markdown.py`, and
+`export/html_export.py`. Local `.playwright-cli/`, `.superdesign/`, and `output/`
+directories are review artifacts, not repository content; do not commit them.
+
+### What the IMS run established
+
+- The consolidated run contains **732 finding instances**, not 732 demonstrated
+  unique vulnerabilities. Five repeated scanner rules account for **605** instances:
+  plaintext HTTP links 371, unrestricted request mappings 178, non-literal regular
+  expressions 33, prototype-pollution loops 12, and Spring SQL injection 11.
+  Current fingerprints keep locations separate. Do not call these one root cause
+  without a source-to-sink trace, but do add a pattern/recurrence rollup so leadership
+  can see the concentration.
+- **54 findings block promotion**: 6 critical and 48 high. Three other high findings
+  are non-gating under their current dispositions.
+- Validation is a separate coverage dimension: 721 findings were eligible, 54 were
+  selected, 53 completed the external panel, 667 were not selected, and 11 were
+  skipped as deterministic-only families. Across imported records, 53 have external
+  panel review, 24 are Daybreak-only, one has another carried record, and 654 have no
+  validation record. One selected panel failed on malformed council output and must
+  remain a visible human-review item.
+- Both import arms completed, but their source scans were marked partial. “Arm
+  completed” and “source coverage complete” must remain distinct report concepts.
+- Raw reviewer rationale stays in canonical `findings.json` for audit. HTML, Markdown,
+  and CSV presentation output must not reproduce internal prompts, scoring notes, or
+  model-generated validation appendices.
+
+### Participant model
+
+- **Discovery:** each participating model should perform the same complete security
+  objectives independently. Do not assign one model only authentication, another only
+  injection, and another only supply chain; that prevents useful overlap measurement.
+- **Validation:** differentiated confirmation, challenge, and independent-assessment
+  functions are intentional because they reduce correlated agreement. Those are
+  validation functions, not limitations on what each discovery participant scans.
+
+### Next product work exposed by dogfooding
+
+1. Add a report-level pattern group above individual instances: rule/family, count,
+   affected components, representative locations, highest severity, gating count, and
+   validation sample. Keep every instance accessible underneath.
+2. Make validation selection explicit before a run: eligible count, configured cap,
+   estimated cost, selection strategy, completed/failed/not-selected totals. Repeated
+   patterns need representative sampling rather than silently consuming one panel per
+   location.
+3. Add first-class MCP consolidation instead of requiring import-arm paths in an
+   operator config. The operation must remain revision-bound and must not rerun paid
+   producers.
+4. Bring `sc_report` to CLI parity: system name, HTML/CSV and bundle support, plus the
+   same report identity fields used by `report --system-name`.
+5. Add regression fixtures for repeated-rule rollups and presentation-text filtering.
+   Never mutate or discard the canonical evidence to make the leadership view shorter.
+
+Focused report tests on this branch: **76 passed**. The last broader run reported
+**640 passed, 3 skipped**, plus one environment-only failure because `bwrap` was not
+installed. Re-run the focused set after report work:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_html_report.py tests/test_orchestrator.py \
+  tests/test_serve.py tests/test_export_markdown.py tests/test_setup_profiles.py
+```
 
 ## 1. Where everything lives
 
