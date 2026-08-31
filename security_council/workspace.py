@@ -42,7 +42,21 @@ class Workspace:
         st = proc.run_command(["git", "-C", str(self.original), "status", "--porcelain"], timeout=15)
         br = proc.run_command(["git", "-C", str(self.original), "rev-parse", "--abbrev-ref", "HEAD"],
                               timeout=15)
-        return {"git_commit": r.stdout.strip(), "dirty": bool(st.stdout.strip()),
+
+        # The tool's own state dir must not dirty the tool's own precondition:
+        # a default-layout scan writes runs under .security-council/ and a
+        # signed decision modifies the store there, and `consolidate` would
+        # then refuse to import the very runs this scanner just produced.
+        # Everything else — tracked modifications, untracked SOURCE files, and
+        # the .security-council.yaml config file — still counts as dirty.
+        def _tool_state_only(line: str) -> bool:
+            paths = [p.strip().strip('"') for p in line[3:].split(" -> ")]
+            return all(p == ".security-council" or p.startswith(".security-council/")
+                       for p in paths)
+
+        dirty = any(ln.strip() and not _tool_state_only(ln)
+                    for ln in st.stdout.splitlines())
+        return {"git_commit": r.stdout.strip(), "dirty": dirty,
                 "branch": br.stdout.strip() if br.ok else None}
 
     def cleanup(self) -> None:

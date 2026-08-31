@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-08-31
 
-**Upgrading from 0.2.0:** no data migration. Existing signed decisions,
+**Upgrading from 0.2.0:** no data migration. The GitHub Action tag is `Intellimetrics/security-council@v0.3.0`. Existing signed decisions,
 baselines, and canonical run artifacts still verify and can now be REUSED:
 `security-council consolidate` (and the `sc_consolidate` MCP tool) combines
 prior runs and sealed Codex Security bundles into one gated report without
@@ -74,6 +74,15 @@ diff/partial or degraded passes say so in the headline.
   pattern-matches any other vendor's prose.
 - Validator subprocess timeouts now kill the whole process group, so a
   wedged peer CLI holding its pipes can no longer hang a scan.
+
+### Fixed — found in the 0.3.0 release rehearsal
+
+- A default-layout scan made its own target "dirty" (untracked run
+  artifacts under `.security-council/`), so `consolidate` refused to
+  import the very runs the scanner had just produced. The tool's state
+  dir no longer counts toward the clean-checkout precondition; tracked
+  modifications, untracked source files, and `.security-council.yaml`
+  still do.
 
 ### Fixed — found in the R17 merge-gate council review
 

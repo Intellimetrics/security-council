@@ -82,3 +82,40 @@ def test_sc_consolidate_runs_the_import_end_to_end(root, tmp_path, monkeypatch):
                               "reports_root": str(root / "reports")})
     assert out["exit_code"] == 1 and out["counts"]["total"] == 2
     assert out["validation"] == {"requested": False} or out["validation"]["requested"] is False
+
+
+def test_scanners_own_artifacts_do_not_dirty_the_consolidate_precondition(tmp_path):
+    # 0.3.0 release rehearsal: a default-layout scan writes runs under
+    # .security-council/, and consolidate then refused to import the very runs
+    # the scanner had just produced ("target checkout is dirty"). The tool's
+    # state dir never counts; any OTHER change still does.
+    from security_council.workspace import prepare_workspace
+    target, _ = _git_target(tmp_path)
+    ws = prepare_workspace(target, mode="inplace")
+    assert ws.git_info()["dirty"] is False
+    (target / ".security-council" / "runs" / "r1").mkdir(parents=True)
+    (target / ".security-council" / "runs" / "r1" / "findings.json").write_text("[]")
+    assert ws.git_info()["dirty"] is False               # tool artifacts: clean
+    (target / "app" / "settings.py").write_text("changed = True\n")
+    assert ws.git_info()["dirty"] is True                # source change: dirty
+    subprocess.run(["git", "checkout", "--", "app/settings.py"], cwd=target, check=True)
+    (target / "evil.py").write_text("x = 1\n")
+    assert ws.git_info()["dirty"] is True                # untracked source: dirty
+    (target / "evil.py").unlink()
+    (target / ".security-council.yaml").write_text("policy: {}\n")
+    assert ws.git_info()["dirty"] is True                # config file: dirty
+
+
+def test_consolidate_works_on_default_layout_runs(tmp_path, capsys):
+    # end-to-end shape of the rehearsal failure: default-out scan, then
+    # consolidate the run the scanner itself wrote into the target
+    target, sha = _git_target(tmp_path)
+    prior = target / ".security-council" / "runs" / "20260829_123340"
+    prior.parent.mkdir(parents=True, exist_ok=True)
+    import shutil as _sh
+    _sh.move(str(_write_prior_run(tmp_path, git_commit=sha)), str(prior))
+    rc = cli_main(["consolidate", str(target), "--import-run", str(prior),
+                   "--out", str(tmp_path / "out"), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1 and payload["degradations"] == []
+    assert payload["counts"]["total"] == 2
