@@ -154,3 +154,20 @@ def test_subdirectory_target_state_dir_still_counts_dirty_fail_closed(tmp_path):
     (repo / "svc" / "api" / ".security-council" / "runs").mkdir(parents=True)
     (repo / "svc" / "api" / ".security-council" / "runs" / "x.json").write_text("[]")
     assert ws.git_info()["dirty"] is True
+
+
+def test_failed_git_status_reads_unknown_never_clean(tmp_path, monkeypatch):
+    # R18 parting nit: st.ok was unchecked, so a failed `git status` read as
+    # dirty=False (clean) — the one fail-open path in the predicate
+    from security_council import proc as _proc
+    from security_council import workspace as _ws
+    target, _ = _git_target(tmp_path)
+    ws = _ws.prepare_workspace(target, mode="inplace")
+    real = _proc.run_command
+
+    def flaky(cmd, **kw):
+        if "status" in cmd:
+            return _proc.ProcResult(False, 128, "", "fatal: boom", 0.0, False)
+        return real(cmd, **kw)
+    monkeypatch.setattr(_ws.proc, "run_command", flaky)
+    assert ws.git_info()["dirty"] is None      # unknown -> import gate refuses

@@ -42,6 +42,11 @@ class Workspace:
         st = proc.run_command(["git", "-C", str(self.original), "status", "--porcelain"], timeout=15)
         br = proc.run_command(["git", "-C", str(self.original), "rev-parse", "--abbrev-ref", "HEAD"],
                               timeout=15)
+        if not st.ok:
+            # a failed status command must read as UNKNOWN (refused by the
+            # import gate), never as clean — R18 final round's parting nit
+            return {"git_commit": r.stdout.strip(), "dirty": None,
+                    "branch": br.stdout.strip() if br.ok else None}
 
         # The tool's own state dir must not dirty the tool's own precondition:
         # a default-layout scan writes runs under .security-council/ and a
