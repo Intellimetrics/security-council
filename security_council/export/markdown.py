@@ -851,8 +851,9 @@ def _patterns(findings: list[Finding], manifest: dict) -> list[str]:
     groups = _rollup.pattern_groups(findings)
     if not groups:
         return []
-    thr = (manifest.get("policy") or {}).get("fail_on_severity", "high")
-    thr_rank = _SEV_RANK.get(thr, 1)
+    from .. import policy as _policy
+    blocking = {id(f) for f in _policy.gating_findings(findings,
+                                                       manifest.get("policy") or {})}
     covered = sum(g.count for g in groups)
     out = ["## Recurring patterns", "",
            f"{len(groups)} repeated rule(s) account for {covered} of {len(findings)} "
@@ -862,9 +863,7 @@ def _patterns(findings: list[Finding], manifest: dict) -> list[str]:
            "| Pattern | Family | Instances | Highest | Gating | Cross-examined | Example locations |",
            "|---|---|---|---|---|---|---|"]
     for g in groups:
-        gating = sum(1 for m in g.members
-                     if _SEV_RANK.get(m.severity.label, 9) <= thr_rank
-                     and not _is_demoted(m))
+        gating = sum(1 for m in g.members if id(m) in blocking)
         reviewed = sum(1 for m in g.members
                        if m.validation is not None and m.validation.convened())
         examples = " · ".join(

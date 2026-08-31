@@ -67,3 +67,16 @@ def test_no_rollup_noise_without_repeats():
     assert mf["patterns"] == []
     md = markdown.to_markdown(fs, mf)
     assert "Recurring patterns" not in md and "Concentration" not in md
+
+
+def test_rollup_gating_column_matches_the_real_gate_in_baseline_new_mode():
+    # the rollup must read the SAME gate predicate as the dashboard: a
+    # baselined member under gate_baseline:new is not "gating" anywhere
+    fs = [_inst(rule="sc/http", n=i) for i in range(3)]
+    for f in fs[:2]:
+        f.baseline_state = "unchanged"
+    mf = _manifest(fs)
+    mf["policy"]["gate_baseline"] = "new"
+    md = markdown.to_markdown(fs, mf)
+    [row] = [ln for ln in md.splitlines() if ln.startswith("| `sc/http` |")]
+    assert "| 3 | **HIGH** | 1 | 0 |" in row

@@ -142,6 +142,30 @@ def high_assurance(f: Finding) -> bool:
     return is_crypto_finding(f) or f.severity.label == "critical"
 
 
+_GATE_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+
+def gating_findings(findings: list[Finding], policy: dict) -> list[Finding]:
+    """The report-side reading of the gate: which findings are blocking under
+    this policy. One predicate for every renderer (html dashboard, markdown
+    rollup) — the exit-code computation in the orchestrator remains the
+    authority, and this mirrors its rule exactly."""
+    threshold = _GATE_SEV_RANK.get((policy or {}).get("fail_on_severity", "high"), 1)
+    baseline_new = (policy or {}).get("gate_baseline") == "new"
+    out = []
+    for f in findings:
+        d = f.disposition
+        if d.lifecycle not in ("open", "reopened") or d.state == "refuted" or d.sarif_suppression:
+            continue
+        if _GATE_SEV_RANK.get(f.severity.label, 9) > threshold:
+            continue
+        if baseline_new and f.baseline_state in ("unchanged", "updated") \
+                and not baseline_ineligible(f):
+            continue
+        out.append(f)
+    return out
+
+
 def baseline_ineligible(f: Finding) -> bool:
     """G9: a baseline entry can never take this finding out of the gate."""
     return high_assurance(f)

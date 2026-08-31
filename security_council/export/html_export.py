@@ -192,21 +192,7 @@ _DECISION = {
 
 
 def _gating(findings: list[Finding], manifest: dict) -> list[Finding]:
-    pol = manifest.get("policy") or {}
-    threshold = _SEV_RANK.get(pol.get("fail_on_severity", "high"), 1)
-    baseline_new = pol.get("gate_baseline") == "new"
-    out = []
-    for f in findings:
-        d = f.disposition
-        if d.lifecycle not in ("open", "reopened") or d.state == "refuted" or d.sarif_suppression:
-            continue
-        if _SEV_RANK.get(f.severity.label, 9) > threshold:
-            continue
-        if baseline_new and f.baseline_state in ("unchanged", "updated") \
-                and not _policy.baseline_ineligible(f):
-            continue
-        out.append(f)
-    return out
+    return _policy.gating_findings(findings, manifest.get("policy") or {})
 
 
 def _next_steps(exit_code, gating: list[Finding], manifest: dict) -> str:
