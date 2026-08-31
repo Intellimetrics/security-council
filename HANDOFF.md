@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-31 (IMS dogfood branch MERGED to main at 6bb2396 as 0.3.0-unreleased after council rounds R16–R18; see §0.1). Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-31 (0.3.0 RELEASED — tag v0.3.0 at 02bbef0, live-verify 33407382496 green; see §7.10a). Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -527,6 +527,48 @@ analysis results fails the gate-unchanged test. **Live status: LIVE-VERIFIED 202
 **Known residuals, documented:** decision store signing is provenance, not assurance (R13: only load-bearing behind
 CODEOWNERS + required review; documented residuals in docs/signing.md); ADO/GitLab templates
 unproven on real infrastructure; CKLB never opened in a live STIG Viewer.
+
+## 7.10a Release state — 0.3.0 (RELEASED 2026-08-31)
+
+**Released:** tag `v0.3.0` at `02bbef0`,
+https://github.com/Intellimetrics/security-council/releases/tag/v0.3.0 (notes =
+CHANGELOG 0.3.0 section); live-verify run 33407382496 green on that sha
+(clean-pass + detects-and-gates). Post-release commit `3417d1b` closed R18's
+parting nit (failed `git status` now reads unknown/refused, never clean).
+
+**The rehearsal (same §7.10 method, from the 0.3.0 wheel, ~25 min):** every
+0.2.0 leg re-passed first time — doctor, `setup --yes`, default-arm docker
+scan, runs, all report formats + `--bundle all`, `--system-name`, serve matrix
+(traversal 404 / POST 501 / bad Host 421 / zip 200), MCP stdio handshake
+(`sc_consolidate` present, `sc_doctor` 8/8), ADO+GitLab halves, `--sbom`,
+signed decisions lane, copied-vuln `--gate-baseline new` → 1, `--verify-patch`
+(real → fixed, comment → not_fixed), `--validate` with backend (3/3 seats,
+quorum, `validated` earned) and without (visible `validator_unavailable`).
+New legs: `consolidate` happy/dirty/zero-source. **One defect found:** a
+default-layout scan's own artifacts under `.security-council/` made the target
+"dirty", so `consolidate` refused the very runs the scanner had just produced
+— the tool's state dir is now excluded from the dirty predicate (source
+changes, untracked files, and `.security-council.yaml` still fail closed).
+Bonus controls observed working: untrusted signing key refused; a verify-patch
+whose diff touched the decision store refused by the validator; a signed
+suppression (root-cause-scoped, by design) outranking the baseline for a
+copied file while the baseline still marked it `new_location`.
+
+**Release-gate rounds (R18, continuation thread):** round 1 split — codex
+SHIP; claude NO on an INFERRED git-quoting bypass with a stated flip
+condition; agy failed (its own headless `command` permission, clear stderr —
+the llm-council 0.23.0 diagnostics worked). The inference was tested live
+(`git status --porcelain` C-quotes `" .security-council/"` and
+`".security-council /"` → no bypass), the code hardened anyway (verbatim
+porcelain path, explicit unquoting, unparseable ⇒ dirty), impersonation +
+subdir-residual pinned by tests. Round 2: **3/3 SHIP**, risk low.
+
+Rehearsal gotchas for next time: `${PIPESTATUS[0]}` (bit me AGAIN, twice);
+`runs` takes no path; `decisions trust` is `--principal/--key`; generate
+verify-patch diffs with `git diff -- <file>` or the patch sweeps the decision
+store and is (correctly) refused; the seedrepo fixture's .gitignore does not
+ignore `.security-council/`, and a fixture copied from the checkout carries
+local gitignored run dirs.
 
 ## 7.10 Release state — 0.2.0 (RELEASED 2026-08-28)
 
