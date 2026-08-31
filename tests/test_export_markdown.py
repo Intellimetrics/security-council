@@ -175,11 +175,16 @@ def test_validated_finding_shows_panel_and_refuted_goes_to_appendix_not_hidden()
     # detail: panel table rows with verified citation counts; state + never-auto-close note
     assert "| risk confirmation | claude | m | true_positive | 1/1 | ok |" in md
     assert "MODEL_TRANSCRIPT_MARKER" not in md
-    assert "internal scoring note" not in md and "internal workflow note" not in md
-    assert "MODEL_APPENDIX_MARKER" not in md
-    assert "MODEL_REQUIREMENT_MARKER" not in md
-    assert "MODEL_GUIDANCE_MARKER" not in md
-    assert "**Remediation:** Use parameterized queries. (effort S)" in md
+    # vendor prose is evidence: this finding has NO codex-security provenance,
+    # so nothing is pattern-matched out of the rendered report (appendix
+    # stripping happens upstream in the codex normalizer, meta filtering only
+    # for codex-provenance findings). Markers appear escaped (\_) by _esc.
+    assert "internal scoring note" in md and "internal workflow note" in md
+    assert "MODEL\\_APPENDIX\\_MARKER" in md
+    assert "MODEL\\_REQUIREMENT\\_MARKER" in md
+    assert "MODEL\\_GUIDANCE\\_MARKER" in md
+    assert ("**Remediation:** Use parameterized queries. Additional validated "
+            "requirement: MODEL\\_REQUIREMENT\\_MARKER (effort S)") in md
     assert "Bind every value." in md
     assert "→ state `validated`" in md
     assert "→ state `refuted` · lifecycle remains **open** (auto-demote, never auto-close)" in md
@@ -351,3 +356,26 @@ def test_host_records_are_labeled_by_family_and_never_hide_panel_failures():
     # a record whose panel never convened stays visible even beside host records
     assert "⚠ **1 not examined** (no panel convened" in md
     assert "1 reviewed" in md
+
+
+def test_codex_provenance_legacy_meta_paragraphs_are_filtered():
+    # canonical artifacts written before 0.3.0 carry prose our own normalizer
+    # composed; the render-time filter applies ONLY to codex-security findings
+    f = val_finding(sources=(("codex-security", "agent_cli", "codex"),))
+    f.description = ("real vendor summary.\n\nCodex Security confidence: high — legacy composed."
+                     "\n\nValidation: validated — legacy composed.")
+    md = markdown.to_markdown([f], _manifest([f]))
+    assert "real vendor summary." in md
+    assert "legacy composed" not in md
+
+
+def test_absent_seat_reason_is_rendered_with_the_panel():
+    f = val_finding()
+    panel.validate_finding(f, repo_root=".", runner=_runner([
+        ("claude", "for", "yes", [_cite()]), ("codex", "against", "yes", [_cite()])]))
+    f.validation.panel.append(m.PanelOpinion(
+        role="adjudicator", participant="antigravity", family="google",
+        prompt_sha256="0" * 64, verdict="needs_human",
+        rationale="launch failed: enoent", status="absent"))
+    md = markdown.to_markdown([f], _manifest([f]))
+    assert "`antigravity` seat absent: launch failed: enoent" in md

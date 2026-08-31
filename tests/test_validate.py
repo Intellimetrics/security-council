@@ -249,3 +249,37 @@ def test_council_transport_pins_external_peers_and_group_timeout(monkeypatch, tm
     assert "--stance" in cmd
     assert captured["kwargs"]["timeout"] == 9
     assert captured["kwargs"]["kill_process_group"] is True
+
+
+def _carried_host_validation(verdict="true_positive"):
+    return m.Validation(verdict=verdict, confidence=0.8, panel=[m.PanelOpinion(
+        role="prosecutor", participant="codex-current", family="codex",
+        prompt_sha256="0" * 64, verdict=verdict, rationale="carried",
+        # independent=True is the LEGACY shape: 0.2-era imported artifacts
+        # carried host seats marked independent — the is_host exclusion must
+        # hold even for those (new imports write independent=False)
+        status="ok", independent=True)])
+
+
+def test_host_seat_never_supplies_the_second_confirming_voice():
+    # R16 (council): one external peer + the scanning vendor's own carried seat
+    # must NOT reach the >=2-voice quorum — that is the vendor seconding itself
+    f = _finding()
+    f.validation = _carried_host_validation()
+    panel.validate_finding(f, repo_root=".", runner=_runner([
+        ("claude", "for", "yes", [_cite()])]))
+    assert f.validation.verdict == "needs_human"
+    assert f.disposition.state == "needs_human"
+    # the carried seat is still on the panel for the record
+    assert any(op.is_host for op in f.validation.panel)
+
+
+def test_host_seat_never_supplies_the_second_refuting_family():
+    # R10 built the >=2-family refutation bar to stop one vendor refuting its
+    # own finding; a host-carried seat must not satisfy it either
+    f = _finding()
+    f.validation = _carried_host_validation(verdict="false_positive")
+    panel.validate_finding(f, repo_root=".", runner=_runner([
+        ("claude", "for", "no", [_cite()])]))
+    assert f.validation.verdict != "false_positive"
+    assert f.disposition.state != "refuted"

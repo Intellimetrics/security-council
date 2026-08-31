@@ -152,3 +152,64 @@ def test_scales_to_5000_findings():
     cs = cl.cluster_findings(findings)
     assert len(cs) == 1000
     assert all(len(c.members) == 5 for c in cs)
+
+
+# --------------------------------------------------------------------------- #
+# Imported validations through merge (council R16: cap, launder, dedupe)
+# --------------------------------------------------------------------------- #
+
+
+def _host_validation(verdict="true_positive"):
+    return m.Validation(verdict=verdict, confidence=0.8, panel=[m.PanelOpinion(
+        role="prosecutor", participant="codex-current", family="codex",
+        prompt_sha256="0" * 64, verdict=verdict, rationale="carried",
+        # independent=True is the LEGACY shape: 0.2-era imported artifacts
+        # carried host seats marked independent — the is_host exclusion must
+        # hold even for those (new imports write independent=False)
+        status="ok", independent=True)])
+
+
+def test_imported_host_validation_caps_at_likely_without_external_panel():
+    a = mk(source_id="semgrep", source_kind="scanner", vendor="semgrep")
+    b = mk(source_id="house", source_kind="agent_cli", vendor="claude")
+    b.validation = _host_validation()
+    cs = cl.cluster_findings([a, b])
+    assert len(cs) == 1
+    merged = cl.merge_cluster(cs[0])
+    # strong corroboration (deterministic source present) but NO convened
+    # external panel: the scanning vendor's carried seat is not cross-examination
+    assert merged.validation is not None and not merged.validation.convened()
+    assert merged.disposition.state == "likely"
+
+
+def test_imported_false_positive_validation_never_demotes_at_merge():
+    a = mk()
+    a.validation = _host_validation(verdict="false_positive")
+    merged = cl.merge_cluster(cl.cluster_findings([a])[0])
+    assert merged.disposition.state == "new"      # refutation stays with the live panel
+
+
+def test_imported_closed_disposition_never_relieves_the_gate():
+    # finding_from_dict reconstructs full dispositions from an UNSIGNED prior
+    # run directory; the merge constructor laundering lifecycle/suppression is
+    # what keeps an imported "suppressed" from relieving the gate. Pin it.
+    a = mk()
+    a.disposition = m.Disposition(
+        state="refuted", lifecycle="suppressed",
+        decided_by=m.DecidedBy(kind="auto", decided_at="2026-08-20T00:00:00Z"),
+        sarif_suppression={"kind": "external", "status": "accepted"})
+    merged = cl.merge_cluster(cl.cluster_findings([a])[0])
+    assert merged.disposition.state == "new"
+    assert merged.disposition.lifecycle == "open"
+    assert merged.disposition.sarif_suppression is None
+
+
+def test_double_import_of_the_same_source_does_not_inflate_corroboration():
+    # the same bundle imported twice (directly + inside a prior consolidated
+    # run) must not manufacture a second vendor family or a promotion
+    a, b = mk(), mk()
+    b.validation = _host_validation()
+    merged = cl.merge_cluster(cl.cluster_findings([a, b])[0])
+    assert merged.corroboration.independent_family_count == 1
+    assert merged.corroboration.count == 1
+    assert merged.disposition.state == "likely"   # single family, no panel: never "validated"

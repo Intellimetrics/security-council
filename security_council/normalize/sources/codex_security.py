@@ -11,6 +11,8 @@ fingerprint (``codex-security/v1``) + ids as source fingerprints.
 
 from __future__ import annotations
 
+import re
+
 from ..base import RawFinding
 
 PRIMARY_ROLES = ("sink", "root_control", "outcome", "propagation", "entrypoint", "user_input")
@@ -48,33 +50,42 @@ def _primary_location(locs: list) -> dict | None:
     return locs[0]
 
 
+# Codex Security appends model-generated validation appendices to its own
+# prose fields. This normalizer knows the producer's label formats, so the
+# strip happens HERE — never at render time, where a pattern would run over
+# every vendor's text. The sealed bundle under raw/ keeps the original.
+_VENDOR_APPENDIX_RE = re.compile(
+    r"(?:^|\s+)Additional (?:validated (?:detail|summary|requirement)|validation):.*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_APPENDIX_ELISION = "(vendor validation appendix omitted — see the raw bundle)"
+
+
+def _strip_vendor_appendix(text: str | None) -> str | None:
+    if not text:
+        return text
+    out, stripped = [], False
+    for p in re.split(r"\n\s*\n", text):
+        q = _VENDOR_APPENDIX_RE.sub("", p).strip()
+        if q != p.strip():
+            stripped = True
+        if q:
+            out.append(q)
+    body = "\n\n".join(out)
+    if stripped:   # elide visibly, never silently (demote-not-delete applies to prose too)
+        body = (body + "\n\n" if body else "") + _APPENDIX_ELISION
+    return body
+
+
 def _description(f: dict) -> str:
-    parts = [f.get("summary") or ""]
+    # summary + root cause + attack path only. The confidence and validation
+    # blocks that used to be composed into prose here now travel structurally
+    # (the import arm builds a Validation record from the same fields); the
+    # renderer keeps a legacy filter for pre-0.3.0 canonical artifacts.
+    parts = [_strip_vendor_appendix(f.get("summary")) or ""]
     rc = f.get("rootCause")
     if isinstance(rc, dict) and rc.get("summary"):
         parts.append(f"Root cause: {rc['summary']}")
-    conf = f.get("confidence") or {}
-    if isinstance(conf, dict) and conf.get("level"):
-        line = f"Codex Security confidence: {conf['level']}"
-        if conf.get("rationale"):
-            line += f" — {conf['rationale']}"
-        parts.append(line + ".")
-    val = f.get("validation")
-    if isinstance(val, dict):
-        # live bundles (producer 0.1.22) say result="confirmed"/"confirmed-with-prerequisite"
-        # + status="validated"; older drafts said disposition. Render only what exists.
-        outcome = val.get("result") or val.get("disposition") or val.get("status")
-        method = val.get("method")
-        if outcome and method:
-            line = f"Validation: {outcome} — {method}"
-        elif outcome or method:
-            line = f"Validation: {outcome or method}"
-        else:
-            line = None
-        if line:
-            if val.get("confidence"):
-                line += f" ({val['confidence']})"
-            parts.append(line.rstrip(".") + ".")
     ap = f.get("attackPath")
     if isinstance(ap, dict) and ap.get("decision"):
         bits = [f"decision {ap['decision']}"]
@@ -132,7 +143,8 @@ def parse_findings(doc: dict) -> list[RawFinding]:
             rule_id=f"codex-security/{f.get('ruleId') or 'unknown'}",
             declared_cwe=cwes, category=tax.get("category") or None, severity_label=sev,
             snippet=None if secret else _snippet_for(f, loc),
-            remediation=f.get("remediation") if isinstance(f.get("remediation"), str) else None,
+            remediation=(_strip_vendor_appendix(f.get("remediation"))
+                         if isinstance(f.get("remediation"), str) else None),
             source_fingerprints=fps, redact=secret,
         ))
     return out

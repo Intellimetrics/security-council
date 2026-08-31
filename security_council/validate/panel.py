@@ -11,6 +11,7 @@ from ..model import (
     Validation,
     Verdict,
     _URI_RE,
+    state_for_validation,
 )
 from ..score import _anchor_ranges, _is_anchored
 from . import council_client
@@ -101,7 +102,10 @@ def synthesize_validation(finding: Finding, cr: CouncilResult, *, prompt_sha256:
     # only INDEPENDENT opinions DECIDE the verdict (M-V5): a vendor validate/triage
     # voter is the same family that scanned, so it can never flip a verdict or
     # satisfy the >=2-voice quorum — it is advisory, surfaced but non-deciding.
-    deciding = [op for op in ok if op.independent]
+    # A host-carried seat (imported `-current`) is the same self-agreement in a
+    # different coat: it may neither supply the second confirming voice nor the
+    # second refuting family (R10), regardless of its `independent` flag.
+    deciding = [op for op in ok if op.independent and not op.is_host]
     reals = [op for op in deciding if op.verdict == "true_positive"]
 
     # R10 — refuting is the wrongful-suppression direction, so it is gated harder
@@ -248,12 +252,8 @@ def _scan_verdict(text: str) -> str:
 
 
 def _state_for(finding: Finding, val: Validation) -> str:
-    if val.verdict == "true_positive":
-        corr = finding.corroboration
-        strong = corr.independent_family_count >= 2 or bool(corr.deterministic_sources)
-        return "validated" if strong else "likely"
-    return {"false_positive": "refuted", "uncertain": "disputed",
-            "needs_human": "needs_human"}[val.verdict]
+    # single rule, shared with cluster.merge_cluster — see model.state_for_validation
+    return state_for_validation(val, finding.corroboration)
 
 
 def validate_finding(finding: Finding, *, repo_root, runner=council_client.run_council,

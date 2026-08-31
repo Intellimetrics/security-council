@@ -109,6 +109,48 @@ def _resolve_output_root(arguments: dict) -> Path | None:
     return p
 
 
+def _resolve_dir_list(arguments: dict, key: str) -> list[Path]:
+    """Resolve a comma-separated list of operator-owned directories, each
+    absolute and inside the MCP root (same containment as `target`)."""
+    raw = arguments.get(key)
+    if raw is None:
+        return []
+    values = [v.strip() for v in str(raw).split(",") if v.strip()]
+    return [_resolve_dir({key: v}, key, default_to_root=False) for v in values]
+
+
+def _validator_runner(arguments: dict):
+    """One shared reading of the validator peer controls (sc_scan and
+    sc_consolidate must not each re-implement the exclusion rules)."""
+    import functools
+    validator_current = arguments.get("validator_current")
+    validator_participants_raw = arguments.get("validator_participants")
+    validator_config = _resolve_file(arguments, "validator_config_path")
+    if not (validator_current or validator_participants_raw or validator_config):
+        return None
+    if not validator_current:
+        raise ValueError("validator_current is required when customizing validator peers")
+    participants = tuple(
+        item.strip() for item in str(validator_participants_raw or "").split(",")
+        if item.strip()
+    )
+    if not participants:
+        raise ValueError("validator_participants must name at least one external peer")
+    allowed = {"claude", "codex", "antigravity"}
+    unknown_peers = sorted(set(participants) - allowed)
+    if unknown_peers:
+        raise ValueError(f"unknown validator participants {unknown_peers}")
+    if validator_current in participants:
+        raise ValueError("validator_participants must exclude validator_current")
+    from .validate.council_client import run_council
+    return functools.partial(
+        run_council,
+        config_file=validator_config,
+        current=validator_current,
+        participants=participants,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # tool handlers (transport-independent)
 # --------------------------------------------------------------------------- #
@@ -122,8 +164,6 @@ def _arms(names: list[str], config: dict):
 
 
 def sc_scan(arguments: dict) -> dict:
-    import functools
-
     if os.environ.get(NESTED_ENV):
         raise ValueError(
             "NestedScanRefused: this process is running inside a security-council "
@@ -173,32 +213,7 @@ def sc_scan(arguments: dict) -> dict:
         analysis_arms.append(SbomArm())
     validate = (bool(arguments["validate"]) if "validate" in arguments
                 else bool((config.get("defaults") or {}).get("validate", False)))
-    validator_runner = None
-    validator_current = arguments.get("validator_current")
-    validator_participants_raw = arguments.get("validator_participants")
-    validator_config = _resolve_file(arguments, "validator_config_path")
-    if validator_current or validator_participants_raw or validator_config:
-        if not validator_current:
-            raise ValueError("validator_current is required when customizing validator peers")
-        participants = tuple(
-            item.strip() for item in str(validator_participants_raw or "").split(",")
-            if item.strip()
-        )
-        if not participants:
-            raise ValueError("validator_participants must name at least one external peer")
-        allowed = {"claude", "codex", "antigravity"}
-        unknown_peers = sorted(set(participants) - allowed)
-        if unknown_peers:
-            raise ValueError(f"unknown validator participants {unknown_peers}")
-        if validator_current in participants:
-            raise ValueError("validator_participants must exclude validator_current")
-        from .validate.council_client import run_council
-        validator_runner = functools.partial(
-            run_council,
-            config_file=validator_config,
-            current=validator_current,
-            participants=participants,
-        )
+    validator_runner = _validator_runner(arguments)
     run = run_scan(target, _arms(names, config), config,
                    isolate=not arguments.get("inplace", False),
                    validate=validate,
@@ -413,6 +428,59 @@ def sc_outcome_mark(arguments: dict) -> dict:
 _SERVER: dict[str, Any] = {}
 
 
+def sc_consolidate(arguments: dict) -> dict:
+    """Combine prior runs / sealed bundles into one gated report.
+
+    Import-only BY CONSTRUCTION — only `kind == "import"` arms are built, so
+    no paid producer can re-run. Sources are revision-bound to the current
+    clean checkout (arms fail closed). Import paths come only from tool
+    arguments, resolved absolute-and-inside-root exactly like `target`.
+    """
+    if os.environ.get(NESTED_ENV):
+        raise ValueError(
+            "NestedScanRefused: this process is running inside a security-council "
+            "arm; a consolidation from here would recurse.")
+    from .arms.import_bundle import (CodexSecurityBundleImportArm,
+                                     SecurityCouncilRunImportArm)
+    from .orchestrator import run_scan
+    target = _resolve_dir(arguments, "target")
+    run_dirs = _resolve_dir_list(arguments, "import_runs")
+    bundle_dirs = _resolve_dir_list(arguments, "import_bundles")
+    arms = ([SecurityCouncilRunImportArm(run_dir=d) for d in run_dirs]
+            + [CodexSecurityBundleImportArm(bundle_dir=b) for b in bundle_dirs])
+    if not arms:
+        raise ValueError("name at least one source: import_runs and/or import_bundles")
+    non_import = [getattr(a, "name", "?") for a in arms
+                  if getattr(a, "kind", None) != "import"]
+    if non_import:   # structural, by kind — never a name allowlist
+        raise ValueError(f"consolidate accepts only import arms; got {non_import}")
+    config_path = _resolve_file(arguments, "config_path")
+    ignore_repo = bool(arguments.get("ignore_repo_config", False))
+    if config_path is not None and ignore_repo:
+        raise ValueError("config_path and ignore_repo_config are mutually exclusive")
+    config = load_config(target, explicit=config_path, ignore_repo=ignore_repo)
+    for k in ("fail_on_severity", "gate_baseline"):
+        if arguments.get(k):
+            config["policy"][k] = arguments[k]
+    if arguments.get("require_signatures"):
+        if not isinstance(config.get("decisions"), dict):
+            config["decisions"] = {}
+        config["decisions"]["require_signatures"] = arguments["require_signatures"]
+    reports_root = _resolve_output_root(arguments)
+    if reports_root is not None:
+        config.setdefault("reports", {})["outdir"] = str(reports_root)
+    run = run_scan(target, arms, config,
+                   validate=bool(arguments.get("validate", False)),
+                   validate_max_findings=arguments.get("validate_max"),
+                   validate_budget_usd=arguments.get("validate_budget", 0.5),
+                   validator_runner=_validator_runner(arguments),
+                   validator_timeout=arguments.get("validator_timeout", 600))
+    return {"run_id": run.run_id, "out_dir": str(run.out_dir), "exit_code": run.exit_code,
+            "counts": run.manifest["counts"], "degradations": run.degradations,
+            "validation": run.manifest.get("validation"),
+            "reports": run.manifest.get("reports")}
+
+
 def sc_serve(arguments: dict) -> dict:
     """start | stop | status of the read-only report viewer. The server lives
     as long as this MCP process (the assistant's session); loopback unless a
@@ -510,6 +578,35 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
            "gate_baseline": {"enum": ["all", "new"]},
            "inplace": {"type": "boolean"}}),
      sc_scan),
+    ("sc_consolidate",
+     "Combine prior security-council runs and/or sealed Codex Security bundles into "
+     "one gated report WITHOUT re-running their producers. Sources are revision-bound "
+     "to the current clean checkout; only import arms can be built through this tool.",
+     _obj({"target": _target_prop(),
+           "import_runs": {"type": "string", "description":
+                           "Comma-separated absolute prior run directories inside the MCP root."},
+           "import_bundles": {"type": "string", "description":
+                              "Comma-separated absolute sealed Codex Security bundle "
+                              "directories inside the MCP root."},
+           "config_path": {"type": "string", "description":
+                           "Absolute operator-owned config file inside the MCP root."},
+           "ignore_repo_config": {"type": "boolean"},
+           "reports_root": {"type": "string", "description":
+                            "Absolute reports root inside the MCP root; run id is appended."},
+           "validate": {"type": "boolean", "description":
+                        "Convene the external validator panel over the consolidated findings."},
+           "validate_max": {"type": "integer"},
+           "validate_budget": {"type": "number", "exclusiveMinimum": 0},
+           "validator_current": {"enum": ["claude", "codex", "antigravity"]},
+           "validator_participants": {"type": "string", "description":
+                                      "Comma-separated external peers; must exclude current host."},
+           "validator_config_path": {"type": "string", "description":
+                                     "Absolute operator-owned llm-council config inside MCP root."},
+           "validator_timeout": {"type": "integer", "minimum": 1},
+           "require_signatures": {"enum": ["off", "warn", "enforce", "auto"]},
+           "fail_on_severity": {"enum": ["critical", "high", "medium", "low", "info"]},
+           "gate_baseline": {"enum": ["all", "new"]}}),
+     sc_consolidate),
     ("sc_doctor", "Check which arms are available.",
      _obj({"target": _target_prop()}), sc_doctor),
     ("sc_report", "Summarize or export a run directory (json | md | html | emass).",

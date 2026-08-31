@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-31 (0.2.0 released; active IMS dogfood work is on the branch below). Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-31 (0.2.0 released; IMS dogfood branch reviewed, council-hardened R16, consolidate verb shipped — see §0.1). Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -119,14 +119,66 @@ directories are review artifacts, not repository content; do not commit them.
 5. Add regression fixtures for repeated-rule rollups and presentation-text filtering.
    Never mutate or discard the canonical evidence to make the leadership view shorter.
 
-Focused report tests on this branch: **76 passed**. The last broader run reported
-**640 passed, 3 skipped**, plus one environment-only failure because `bwrap` was not
-installed. Re-run the focused set after report work:
+### Review + council R16 (2026-08-31)
 
-```bash
-.venv/bin/python -m pytest -q tests/test_html_report.py tests/test_orchestrator.py \
-  tests/test_serve.py tests/test_export_markdown.py tests/test_setup_profiles.py
-```
+The three branch commits were reviewed on checkout and were NOT clean: 4 tests
+red on a fresh clone (3 depended on a gitignored local run dir under
+`tests/fixtures/seedrepo/.security-council/`; 1 was the pre-existing HTML
+escaping test pinning the old gate wording), the import arms were reachable by
+no interface, and `_native_validation` mapped any record carrying a summary to
+`true_positive`, which `cluster.merge_cluster` then promoted to disposition
+`validated` (feeding vex.py "affected"). Mechanical fixes landed first
+(`49cf89f`); the six design forks went to council — R16, first full 3/3 quorum
+on a design consult, transcript
+`.llm-council/runs/20260831_094604_708760_*` — which converged on all six and
+found one more high-severity defect while verifying: host-carried seats
+(`participant *-current`, `independent=True` in 0.2-era artifacts) could supply
+the second confirming voice AND the second refuting family in a live panel,
+defeating M-V5 and the R10 two-family refutation bar.
+
+Decisions applied (second fix commit):
+
+- **Q1 interface:** dedicated `consolidate` CLI verb + `sc_consolidate` MCP
+  tool, import arms only BY KIND (structural check, not a name allowlist);
+  import paths come only from flags/tool args (MCP: absolute + inside root),
+  never from repo config — a hostile repo must not choose the ingested
+  evidence. Option (b) config-driven arms was rejected outright for that
+  reason. Divergence noted: the codex peer would also refuse `--validate` on
+  consolidate; we allow it because the external panel is the read-only
+  cross-examination lane, not a producer re-run.
+- **Q2 banner:** exit 0 headlines `RELEASE DECISION: CLEAR` only for full
+  scope with zero degradations; otherwise `CLEAR FOR SCOPE (DIFF/…)` or
+  `CLEAR — WITH LIMITATIONS`. `_next_steps` carries the same qualifier.
+- **Q3 rationales:** absent-seat reasons (launch failures/timeouts written
+  into `rationale` by panel.py) now render as ⚠ bullets under the panel
+  table; substantive ok-seat rationales stay findings.json-only.
+- **Q4 filtering:** vendor-appendix stripping moved INTO the codex-security
+  normalizer (visible elision marker, raw bundle untouched); confidence/
+  validation prose is no longer composed into descriptions at all; the
+  render-time meta filter survives ONLY for legacy codex-provenance findings
+  and never pattern-matches any other vendor's prose.
+- **Q5 promotion:** `model.state_for_validation` is the single
+  validation→state rule (cluster + panel); `validated` requires
+  `convened()` — imported host validation caps at `likely`. Host seats are
+  `independent=False` on import AND structurally excluded from `deciding`
+  (belt and braces for legacy artifacts). Imported false_positives never
+  demote at merge; merge laundering of imported lifecycle/suppression is now
+  pinned by test.
+- **Q6 skin:** light-only accepted; brand is `Security Council` with a
+  scope-derived badge and an arms-derived method line — the fixed
+  "Deep Scan" claim is gone. The hardcoded "Daybreak" label was already
+  removed in the first fix pass (host validation is labeled by seat family).
+
+Suite: **663 passed** on a clean tree; the fixture-dependent tests were
+rebuilt to construct their prior-run dir in-test. Live smokes: quick-profile
+docker scan of a staged seedrepo (exit 1), then `consolidate --import-run` of
+that run (identical 17 findings, sources carried, exit 1, sub-second).
+
+Still open from the dogfood list: pattern/recurrence rollup (item 1),
+representative sampling for repeated patterns (item 2 — selection metadata now
+exists in `manifest.validation`), `sc_report` CLI parity (item 4). Also open:
+a LIVE `consolidate --validate` run against real llm-council, and the 0.3.0
+version bump + CHANGELOG before any merge to main.
 
 ## 1. Where everything lives
 

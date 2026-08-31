@@ -130,7 +130,8 @@ def test_sealed_codex_bundle_import_normalizes_and_attests_snapshot(tmp_path):
     assert opinion.verdict == "true_positive"
     assert opinion.citations and all(citation.verified for citation in opinion.citations)
     # a host-carried seat is evidence, never external cross-examination
-    assert opinion.is_host and not validated[0].validation.convened()
+    assert opinion.is_host and not opinion.independent   # advisory, never deciding
+    assert not validated[0].validation.convened()
     assert validated[0].validation.external_families() == set()
     [source] = coverage.source_runs_for(result)
     assert source.source_id == "codex-security" and source.family == "codex"

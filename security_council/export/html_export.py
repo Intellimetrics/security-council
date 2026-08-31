@@ -213,8 +213,12 @@ def _next_steps(exit_code, gating: list[Finding], manifest: dict) -> str:
     thr = pol.get("fail_on_severity", "high")
     degr = manifest.get("degradations") or []
     if exit_code == 0:
-        msg = (f"No open finding at or above <code>{_e(thr)}</code>. Lower-severity findings, "
-               "if any, are listed below and worth a look when convenient.")
+        scope = (manifest.get("scan_scope") or {}).get("kind", "full")
+        qualifier = ("" if scope == "full"
+                     else f" in the scanned scope (<code>{_e(scope)}</code>)")
+        msg = (f"No open finding at or above <code>{_e(thr)}</code>{qualifier}. "
+               "Lower-severity findings, if any, are listed below and worth a "
+               "look when convenient.")
     elif exit_code == 1:
         by = {}
         for f in gating:
@@ -322,14 +326,22 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
     tool = (manifest.get("tool") or {}).get("security_council", "?")
 
     system_label = _system_label(manifest)
+    # method and scope are FACTS from the manifest, never fixed branding: a
+    # quick scanner pass must not present itself as a deep source-code review
+    agentic = any(a.get("kind") == "agent_cli" and a.get("ok") for a in arms)
+    imported = any(a.get("kind") == "import" and a.get("ok") for a in arms)
+    method = ("Deep source-code security review" if agentic else
+              "Consolidated security assessment" if imported else
+              "Automated multi-scanner security review")
+    badge = "Full scan" if scope == "full" else f"{scope.title()} scan"
     out = ['<header class="report-header"><div class="brandline">'
-           '<span class="brand">Security Council / Deep Scan</span>'
-           '<span class="badge">Security assessment</span></div>',
+           '<span class="brand">Security Council</span>'
+           f'<span class="badge">{_e(badge)}</span></div>',
            "<h1>Application Security Assessment</h1>",
            '<p class="subtitle">Decision-ready security posture with complete engineering evidence.</p>',
            '<div class="identity">'
            f'<div class="identity-item"><span>Assessed system</span><strong>{_e(system_label)}</strong></div>'
-           '<div class="identity-item"><span>Assessment</span><strong>Deep source-code security review</strong></div>'
+           f'<div class="identity-item"><span>Assessment</span><strong>{_e(method)}</strong></div>'
            f'<div class="identity-item"><span>Report ID</span><strong>{_e(manifest.get("run_id"))}</strong></div>'
            '</div>']
     meta = [f"target <code>{_e(tgt.get('root'))}</code>"]
@@ -365,6 +377,16 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
         5: "Resolve the preflight failure before starting another assessment.",
     }.get(exit_code, "Review the run degradations and evidence before making a release decision.")
     decision_label = _DECISION.get(exit_code, "ASSESSMENT STATUS: REVIEW REQUIRED")
+    # A gate pass is only a RELEASE decision when the whole tree was in scope
+    # and nothing degraded: a diff/partial run or a limited one must say so in
+    # the headline itself — the banner is what gets screenshotted, not the
+    # meta line under it.
+    if exit_code == 0:
+        excluded = (manifest.get("scan_scope") or {}).get("excluded")
+        if scope != "full":
+            decision_label = f"RELEASE DECISION: CLEAR FOR SCOPE ({scope.upper()})"
+        elif excluded or degr:
+            decision_label = "RELEASE DECISION: CLEAR — WITH LIMITATIONS"
     out.append(f'<div class="decision"><div class="gate {cls}">{_e(decision_label)}'
                f'<span class="gate-note">{_e(gate_note)}</span></div>'
                f'{_next_steps(exit_code, gating, manifest)}</div>')
@@ -380,7 +402,7 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
     external_count = len(validated)
     host_only = [f for f in host_validated if not f.validation.convened()]
     host_overlap = max(0, len(host_validated) - len(host_only))
-    host_label = _markdown._host_label(with_record)
+    host_tag = f" ({_e(_markdown._host_label(with_record))})" if host_validated else ""
     other_records = max(0, len(with_record) - external_count - len(host_only))
     no_record = max(0, total - len(with_record))
     selected = vm.get("external_selected", 0)
@@ -412,13 +434,13 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
         f'<span>with a validation record · {_e(no_record)} without</span></div>'
         f'<div class="relation-row"><span>External panel reviewed</span>'
         f'<strong data-metric="external-panel">{_e(external_count)}</strong></div>'
-        f'<div class="relation-row"><span>Host-only record ({_e(host_label)})</span>'
+        f'<div class="relation-row"><span>Host-only record{host_tag}</span>'
         f'<strong>{_e(len(host_only))}</strong></div>'
         f'{validation_extra}'
         f'<div class="relation-row warn"><span>No validation record</span><strong>{_e(no_record)}</strong></div>'
         f'<p class="relation-note">{_e(eligible)} eligible = {_e(selected)} selected + '
         f'{_e(not_selected)} not selected. {_e(deterministic_skipped)} skipped. {_e(failed_external)} panel failed. '
-        f'Host validation ({_e(host_label)}): {_e(host_overlap)} overlapping + '
+        f'Host validation{host_tag}: {_e(host_overlap)} overlapping + '
         f'{_e(len(host_only))} host-only.</p></section>'
         '<section class="relation"><h2>3. Run confidence</h2>'
         '<p class="relation-intro">Health signals qualify the result; they do not add to it.</p>'

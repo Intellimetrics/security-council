@@ -125,11 +125,14 @@ def _native_validation(raw: dict, *, target: Path, prompt_sha: str,
     confidence = {"high": 0.8, "medium": 0.6, "low": 0.4}.get(level, 0.5)
     rationale_parts = [source.get("summary"), source.get("method")]
     rationale = " — ".join(str(x) for x in rationale_parts if x)[:2000]
+    # M-V5: the scanning vendor's own carried seat is advisory, never deciding —
+    # it must not supply the second confirming voice or the second refuting
+    # family in a later live panel (panel.py also excludes `is_host` seats).
     opinion = PanelOpinion(
         role="prosecutor", participant="codex-current", family="codex",
         prompt_sha256=prompt_sha, verdict=verdict, rationale=rationale,
         model_id=model, citations=citations, citation_pass_rate=pass_rate,
-        status=opinion_status, independent=True,
+        status=opinion_status, independent=False,
     )
 
     attack_path = raw.get("attackPath") or {}

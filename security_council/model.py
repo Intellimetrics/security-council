@@ -312,6 +312,22 @@ class Validation:
         return bool(self.external_families())
 
 
+def state_for_validation(val: Validation, corr: "Corroboration") -> str:
+    """The ONE validation→disposition-state rule. Both call sites — the live
+    panel (`validate.panel._state_for`) and cluster merge of imported
+    validations (`cluster.merge_cluster`) — must read this function, or the
+    state label drifts from the report's convened() counts.
+
+    "validated" requires an external panel to have convened: an imported
+    host validation plus discovery corroboration caps at "likely", because
+    the scanning vendor's carried seat was never cross-examined."""
+    if val.verdict == "true_positive":
+        strong = corr.independent_family_count >= 2 or bool(corr.deterministic_sources)
+        return "validated" if (strong and val.convened()) else "likely"
+    return {"false_positive": "refuted", "uncertain": "disputed",
+            "needs_human": "needs_human"}[val.verdict]
+
+
 @dataclass
 class DecidedBy:
     kind: Literal["auto", "human"]

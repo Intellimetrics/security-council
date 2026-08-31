@@ -33,6 +33,7 @@ from .model import (
     canonical_cwe,
     family_for_cwe,
     finding_id,
+    state_for_validation,
 )
 
 _RANGE_SLOP = 3
@@ -259,10 +260,13 @@ def merge_cluster(cluster: FindingCluster) -> Finding:
     # opinions to it instead of erasing the host's source/control/sink trace.
     prior_validations = [m.validation for m in members if m.validation is not None]
     validation = max(prior_validations, key=lambda value: value.confidence, default=None)
+    # Only the fail-safe direction is applied at merge time: an imported
+    # true_positive may promote (capped at "likely" until an external panel
+    # convenes — state_for_validation enforces that), but an imported
+    # false_positive never demotes here; refutation stays with the live panel.
     state = "new"
     if validation is not None and validation.verdict == "true_positive":
-        state = "validated" if (corr.independent_family_count >= 2
-                                or bool(corr.deterministic_sources)) else "likely"
+        state = state_for_validation(validation, corr)
     return Finding(
         id=finding_id(fp),
         schema_version=SCHEMA_VERSION,

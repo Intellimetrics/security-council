@@ -176,6 +176,74 @@ def cmd_scan(args) -> int:
     return run.exit_code
 
 
+def cmd_consolidate(args) -> int:
+    """Combine already-produced canonical artifacts into one gated report.
+
+    Import-only BY CONSTRUCTION: this verb builds exclusively `kind ==
+    "import"` arms, so it can never re-run a paid producer. Every source is
+    revision-bound to the current clean checkout (the arm fails closed on a
+    mismatch or dirty tree). Import paths come ONLY from these flags — never
+    from the scanned repository's config, so a hostile repo cannot choose the
+    evidence that gets ingested. `--validate` convenes the external panel over
+    the consolidated findings; that is the read-only cross-examination lane,
+    not a producer re-run.
+    """
+    target = Path(args.path).resolve()
+    if not target.is_dir():
+        print(f"error: {target} is not a directory", file=sys.stderr)
+        return EXIT_USAGE
+    from .arms.import_bundle import (CodexSecurityBundleImportArm,
+                                     SecurityCouncilRunImportArm)
+    arms = ([SecurityCouncilRunImportArm(run_dir=d) for d in (args.import_run or [])]
+            + [CodexSecurityBundleImportArm(bundle_dir=b)
+               for b in (args.import_codex_bundle or [])])
+    if not arms:
+        print("error: name at least one source: --import-run DIR and/or "
+              "--import-codex-bundle DIR", file=sys.stderr)
+        return EXIT_USAGE
+    # structural guard by kind (never a name allowlist): whatever ends up in
+    # `arms`, nothing that can execute a producer may pass this verb
+    non_import = [getattr(a, "name", "?") for a in arms
+                  if getattr(a, "kind", None) != "import"]
+    if non_import:
+        print(f"error: consolidate accepts only import arms; got {non_import}",
+              file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        config = load_config(target,
+                             explicit=Path(args.config) if getattr(args, "config", None) else None,
+                             ignore_repo=bool(getattr(args, "ignore_repo_config", False)))
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    if (config.get("_source") or {}).get("kind") == "repository":
+        print(f"note: config loaded from the scanned repository: "
+              f"{config['_source']['path']} — policy only; import paths always "
+              f"come from the command line", file=sys.stderr)
+    if args.fail_on_severity:
+        config["policy"]["fail_on_severity"] = args.fail_on_severity
+    if getattr(args, "gate_baseline", None):
+        config["policy"]["gate_baseline"] = args.gate_baseline
+    if getattr(args, "require_signatures", None):
+        if not isinstance(config.get("decisions"), dict):
+            config["decisions"] = {}
+        config["decisions"]["require_signatures"] = args.require_signatures
+    run = run_scan(target, arms, config,
+                   out_dir=Path(args.out).resolve() if args.out else None,
+                   validate=args.validate,
+                   validate_max_findings=args.validate_max,
+                   validate_budget_usd=args.validate_budget)
+    if getattr(args, "open", False):
+        _open_report(run.out_dir)
+    if args.json:
+        print(json.dumps({"run_id": run.run_id, "out_dir": str(run.out_dir),
+                          "exit_code": run.exit_code, "counts": run.manifest["counts"],
+                          "degradations": run.degradations}, indent=2))
+    else:
+        _print_summary(run)
+    return run.exit_code
+
+
 def _print_summary(run) -> None:
     m = run.manifest
     print(f"security-council scan {run.run_id}  (target {m['target']['root']})")
@@ -993,6 +1061,28 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--validate-max", type=int, help="cap findings sent to validation")
     s.add_argument("--validate-budget", type=float, default=0.5, help="max USD per validated finding")
     s.set_defaults(fn=cmd_scan)
+    cs = sub.add_parser("consolidate",
+                        help="combine prior runs / sealed bundles into one gated report "
+                             "without re-running their producers (revision-bound)")
+    cs.add_argument("path")
+    cs.add_argument("--import-run", action="append", metavar="DIR",
+                    help="a prior security-council run directory (repeatable)")
+    cs.add_argument("--import-codex-bundle", action="append", metavar="DIR",
+                    help="a sealed Codex Security bundle directory (repeatable)")
+    cs.add_argument("--config", help="load THIS config file (no directory walk)")
+    cs.add_argument("--ignore-repo-config", action="store_true",
+                    help="never load config from the consolidated repository")
+    cs.add_argument("--fail-on-severity", choices=["critical", "high", "medium", "low", "info"])
+    cs.add_argument("--gate-baseline", choices=["all", "new"])
+    cs.add_argument("--require-signatures", choices=["off", "warn", "enforce", "auto"])
+    cs.add_argument("--validate", action="store_true",
+                    help="convene the external validator panel over the consolidated findings")
+    cs.add_argument("--validate-max", type=int)
+    cs.add_argument("--validate-budget", type=float, default=0.5)
+    cs.add_argument("--out", help="run output directory")
+    cs.add_argument("--json", action="store_true")
+    cs.add_argument("--open", action="store_true", help="open summary.html when done")
+    cs.set_defaults(fn=cmd_consolidate)
     su = sub.add_parser("setup", help="guided setup: pick a goal, write the config, "
                                       "print a repo-specific cheat sheet")
     su.add_argument("path", nargs="?", default=".")

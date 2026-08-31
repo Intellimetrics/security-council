@@ -306,3 +306,30 @@ def test_scan_open_flag(tmp_path, monkeypatch, capsys):
 def test_render_degenerate_inputs(md):
     body, heads = mdrender.render(md)
     assert "<script" not in body
+
+
+def test_release_decision_headline_is_scoped_and_branding_is_factual():
+    clean_full = dict(MANIFEST, exit_code=0, counts={"total": 0, "by_severity": {},
+                                                     "by_state": {}}, degradations=[])
+    # full scope, no degradations: the unqualified decision is earned
+    page = _page([], clean_full)
+    assert "RELEASE DECISION: CLEAR<" in page.replace("</div>", "<").replace(
+        '<span class="gate-note">', "<")
+    # a diff-scoped pass must say so IN THE HEADLINE, not a meta bullet
+    diff = _page([], dict(clean_full, scan_scope={"kind": "diff", "base": "main"}))
+    assert "RELEASE DECISION: CLEAR FOR SCOPE (DIFF)" in diff
+    assert "in the scanned scope" in diff
+    # informational degradations qualify an otherwise-full clear
+    limited = _page([], dict(clean_full,
+                             degradations=[{"kind": "validator_unavailable", "detail": "x"}]))
+    assert "RELEASE DECISION: CLEAR — WITH LIMITATIONS" in limited
+    # branding is derived from what ran, never a fixed "Deep Scan" claim
+    scanners_only = _page([], clean_full)
+    assert "Security Council /" not in scanners_only
+    assert "Automated multi-scanner security review" in scanners_only
+    agentic = _page([], dict(clean_full, arms=[
+        {"name": "claude-security", "kind": "agent_cli", "ok": True,
+         "raw_results": 0, "normalized": 0}]))
+    assert "Deep source-code security review" in agentic
+    assert 'class="badge">Full scan' in scanners_only
+    assert 'class="badge">Diff scan' in diff

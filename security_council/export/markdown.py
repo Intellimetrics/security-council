@@ -37,12 +37,7 @@ _PRESENTATION_META_RE = re.compile(
     r"^(?:Codex Security confidence|Validation(?: status)?):",
     re.IGNORECASE,
 )
-# Applied per paragraph (see _report_description), so the DOTALL tail it
-# removes ends at the paragraph boundary — never the rest of the document.
-_PRESENTATION_APPENDIX_RE = re.compile(
-    r"(?:^|\s+)Additional (?:validated (?:detail|summary|requirement)|validation):.*$",
-    re.IGNORECASE | re.DOTALL,
-)
+
 
 _REVIEW_LABEL = {
     "prosecutor": "risk confirmation",
@@ -114,22 +109,26 @@ def _review_label(role: str) -> str:
     return _REVIEW_LABEL.get(role, "independent review")
 
 
-def _report_description(text: str) -> str:
-    """Remove tool-internal assessment prose from presentation text.
+def _from_codex_security(f: Finding) -> bool:
+    return any(p.source_id == "codex-security" for p in f.provenance)
 
-    Filtering is bounded to the paragraph the label appears in: a paragraph
-    that STARTS with a tool-generated label is dropped, and an appendix label
-    strips only the rest of its own paragraph. Vendor prose in other
-    paragraphs is finding evidence and must survive (the canonical text is
-    always in findings.json)."""
-    out: list[str] = []
-    for p in re.split(r"\n\s*\n", text or ""):
-        if _PRESENTATION_META_RE.match(p.strip()):
-            continue
-        p = _PRESENTATION_APPENDIX_RE.sub("", p).strip()
-        if p:
-            out.append(p)
-    return "\n\n".join(out)
+
+def _report_description(text: str, *, strip_meta: bool = False) -> str:
+    """Presentation copy of finding prose.
+
+    `strip_meta` drops whole paragraphs that START with a label our own
+    codex-security normalizer used to compose into descriptions
+    ("Codex Security confidence:", "Validation:") — kept only for canonical
+    artifacts produced before the composition moved out of `_description`,
+    and applied ONLY to findings with codex-security provenance. Any other
+    vendor's prose is finding evidence and is never pattern-matched here
+    (vendor appendix stripping happens upstream, at normalize time, where
+    the producer format is known)."""
+    if not strip_meta:
+        return (text or "").strip()
+    paragraphs = re.split(r"\n\s*\n", text or "")
+    return "\n\n".join(p.strip() for p in paragraphs
+                        if p.strip() and not _PRESENTATION_META_RE.match(p.strip()))
 
 
 def _code(text: object, limit: int = 120, *, cell: bool = False) -> str:
@@ -634,6 +633,13 @@ def _detail(i: int, f: Finding, scores: dict | None = None) -> list[str]:
                 out.append(f"  | {_cell(_review_label(op.role))} | {_cell(op.participant)} | {_cell(op.model_id or '—', 40)} | "
                            f"{_enum(op.verdict)} | {ver}/{len(op.citations)} | {_enum(op.status)} |")
             out.append("")
+            # an absent seat's reason is operational evidence (launch failure,
+            # timeout) — surfacing it here is the whole point of carrying it in
+            # `rationale`; substantive ok-seat rationales stay in findings.json
+            for op in v.panel:
+                if op.status == "absent" and op.rationale:
+                    out.append(f"  - ⚠ {_code(op.participant)} seat absent: "
+                               f"{_esc(op.rationale, limit=200)}")
     else:
         out.append(f"- **validation** not run · state {_code(f.disposition.state)}")
     if f.package:
@@ -646,7 +652,7 @@ def _detail(i: int, f: Finding, scores: dict | None = None) -> list[str]:
         if pk.advisory_ids:
             bits.append(", ".join(_code(a) for a in pk.advisory_ids[:5]))
         out.append(f"- **package** {' · '.join(bits)}")
-    description = _report_description(f.description)
+    description = _report_description(f.description, strip_meta=_from_codex_security(f))
     if description and description != f.title:
         out.append("")
         out.append(_esc(description, limit=1500, inline=False))
@@ -656,13 +662,16 @@ def _detail(i: int, f: Finding, scores: dict | None = None) -> list[str]:
     elif primary and f.taxonomy.cwe_family == "secrets":
         out.append("")
         out.append("_snippet redacted (secret material)_")
-    remediation_summary = _report_description(f.remediation.summary) if f.remediation else ""
+    remediation_summary = (_report_description(f.remediation.summary,
+                                               strip_meta=_from_codex_security(f))
+                           if f.remediation else "")
     if remediation_summary:
         out.append("")
         out.append(f"**Remediation:** {_esc(remediation_summary, limit=600)}"
                    + (f" (effort {_enum(f.remediation.effort)})" if f.remediation.effort else ""))
         if f.remediation.guidance:
-            remediation_guidance = _report_description(f.remediation.guidance)
+            remediation_guidance = _report_description(
+                f.remediation.guidance, strip_meta=_from_codex_security(f))
         else:
             remediation_guidance = ""
         if remediation_guidance:

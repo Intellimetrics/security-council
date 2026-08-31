@@ -129,9 +129,12 @@ def test_codex_security_bundle_normalizes():
     # sink role wins over user_input as the primary location
     assert cmdi.locations[0].uri == "app/reports.py" and cmdi.locations[0].start_line == 11
     assert cmdi.severity.label == "critical" and cmdi.taxonomy.cwe_family == "injection"
-    assert "Root cause:" in cmdi.description and "Codex Security confidence: high" in cmdi.description
-    assert ("Validation: confirmed — Offline static source review "
-            "with focused forward/backward dataflow confirmation." in cmdi.description)
+    assert "Root cause:" in cmdi.description
+    # confidence/validation are no longer composed into prose — they travel
+    # structurally (the import arm builds a Validation record from the same
+    # fields), so the renderer never has to pattern-match them back out
+    assert "Codex Security confidence" not in cmdi.description
+    assert "Validation:" not in cmdi.description
     assert cmdi.locations[0].snippet and "os.system" in cmdi.locations[0].snippet
     idor = by_rule["codex-security/authorization.missing-object-ownership-check"]
     assert idor.taxonomy.cwe == ["CWE-639", "CWE-862"] and idor.taxonomy.cwe_family == "authz"
