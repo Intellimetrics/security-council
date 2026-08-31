@@ -24,11 +24,16 @@ diff/partial or degraded passes say so in the headline.
   severity, gating and cross-examined counts, example locations) without
   merging instances: a repeated rule is not one proven root cause, and every
   instance keeps its own entry.
-- **Representative validation sampling** — `--validate-max N` is now spent
-  one representative per recurring pattern (severity-ranked round-robin)
-  before any pattern gets a second panel; `manifest.validation` records the
-  strategy and the distinct patterns sampled alongside the existing
-  eligible/selected/convened/failed accounting.
+- **Representative validation sampling** — within each severity band,
+  `--validate-max N` is spent one representative per recurring pattern
+  before any pattern gets a second panel; severity is honored absolutely
+  across bands (a lower-severity finding is never selected while a
+  higher-severity one goes unselected). Synthesized rule ids
+  (`sc/<family>`, `claude-security/<cwe>`, `*/unknown`) never group, so
+  distinct agent findings are never collapsed into one representative.
+  `manifest.validation` records the strategy, the distinct patterns
+  sampled, and selected/not-selected severity histograms alongside the
+  existing eligible/selected/convened/failed accounting.
 - **Leadership HTML report** — decision banner with recommended action,
   "how the numbers relate" panels (release risk, validation coverage, run
   confidence), collapsible engineering evidence, print-first styling, and
@@ -69,6 +74,23 @@ diff/partial or degraded passes say so in the headline.
   pattern-matches any other vendor's prose.
 - Validator subprocess timeouts now kill the whole process group, so a
   wedged peer CLI holding its pipes can no longer hang a scan.
+
+### Fixed — found in the R17 merge-gate council review
+
+- The MCP `sc_report` bundle path refuses a symlinked `<run_dir>/exports`
+  (or a symlinked file inside it) and re-checks the resolved directory
+  against the MCP root — a committable run directory can no longer
+  redirect bundle writes outside the project.
+- A repository-supplied `reports.outdir` is ignored: the scanned repo
+  cannot choose where run artifacts land (operator config, `--out`, and
+  the MCP `reports_root` argument keep working).
+- The recurring-pattern rollup counts only open, non-demoted instances
+  (4 suppressed + 1 open no longer reads as "5 instances"), and its
+  Gating column reads the same shared gate predicate as the dashboard.
+- `validate-max` must be ≥ 1 everywhere (CLI, MCP schema, and the
+  selection model itself); exit-0 with `gate_baseline: new` and a
+  baselined-out backlog headlines as `CLEAR — WITH LIMITATIONS`, not
+  unqualified `CLEAR`.
 
 ## 0.2.0 — 2026-08-27
 

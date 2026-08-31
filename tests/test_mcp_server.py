@@ -202,3 +202,31 @@ def test_sc_report_parity_system_name_csv_and_bundle(root, monkeypatch):
     assert bundle["out_dir"].endswith("exports")
     with pytest.raises(ValueError, match="unknown bundle"):
         srv.sc_report({"run_dir": run_dir, "bundle": "everything"})
+
+
+def test_sc_report_bundle_refuses_symlink_escapes(root, monkeypatch, tmp_path_factory):
+    from pathlib import Path
+    _fake_arms(monkeypatch)
+    out = srv.sc_scan({"arms": "semgrep"})
+    run_dir = Path(out["out_dir"])
+    outside = tmp_path_factory.mktemp("outside")
+    # a committable run dir can arrive with exports already pointing elsewhere
+    (run_dir / "exports").symlink_to(outside)
+    with pytest.raises(ValueError, match="symlink"):
+        srv.sc_report({"run_dir": str(run_dir), "bundle": "triage"})
+    assert list(outside.iterdir()) == []
+    # a symlinked FILE inside a real exports dir is the same escape
+    (run_dir / "exports").unlink()
+    (run_dir / "exports").mkdir()
+    (run_dir / "exports" / "summary.md").symlink_to(outside / "steal.md")
+    with pytest.raises(ValueError, match="symlink"):
+        srv.sc_report({"run_dir": str(run_dir), "bundle": "triage"})
+    assert not (outside / "steal.md").exists()
+
+
+def test_validate_max_must_be_positive(root, monkeypatch):
+    from security_council.validate.panel import select_for_validation
+    with pytest.raises(ValueError, match=">= 1"):
+        select_for_validation([], max_findings=0)
+    with pytest.raises(ValueError, match=">= 1"):
+        select_for_validation([], max_findings=-1)

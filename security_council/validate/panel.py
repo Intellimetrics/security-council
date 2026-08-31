@@ -305,25 +305,30 @@ def select_for_validation(findings: list[Finding], *, max_findings: int | None =
     read the SAME selection, or the coverage numbers lie about what was
     attempted (the boolean-coverage lesson: parallel reimplementations drift).
 
-    Strategy — severity-ranked pattern round-robin: eligible findings are
-    grouped by recurring-rule pattern (rollup.pattern_key) and the cap is
-    spent one representative per pattern, patterns in severity order, before
-    any pattern gets a second panel. 178 instances of one rule must not
-    consume the budget that should cross-examine five distinct patterns; with
-    no repeated patterns this degrades to plain severity order."""
+    Strategy — pattern round-robin WITHIN each severity band (R17): severity
+    is honored absolutely across bands — a lower-severity finding is never
+    selected while a higher-severity one goes unselected — and inside a band
+    the cap is spent one representative per recurring-rule pattern
+    (rollup.pattern_key) before any pattern gets a second panel. 178 same-band
+    instances of one rule must not consume the budget that should
+    cross-examine the band's other patterns; with no repeated patterns this
+    degrades to plain severity order."""
     from itertools import zip_longest
 
     from ..model import CLOSED_LIFECYCLES
     from ..rollup import pattern_key
+    if max_findings is not None and max_findings < 1:
+        raise ValueError("max_findings must be >= 1 (omit it to validate everything)")
     eligible = [f for f in findings if f.taxonomy.cwe_family not in skip_families
                 and f.disposition.lifecycle not in CLOSED_LIFECYCLES]
     by_severity = sorted(eligible, key=lambda f: f.severity.security_severity, reverse=True)
-    groups: dict[tuple[str, str], list[Finding]] = {}
-    for f in by_severity:
-        groups.setdefault(pattern_key(f), []).append(f)
-    ordered = sorted(groups.values(),
-                     key=lambda g: g[0].severity.security_severity, reverse=True)
-    ranked = [f for tier in zip_longest(*ordered) for f in tier if f is not None]
+    ranked: list[Finding] = []
+    for label in dict.fromkeys(f.severity.label for f in by_severity):
+        band = [f for f in by_severity if f.severity.label == label]
+        groups: dict[tuple[str, str], list[Finding]] = {}
+        for f in band:
+            groups.setdefault(pattern_key(f), []).append(f)
+        ranked += [f for tier in zip_longest(*groups.values()) for f in tier if f is not None]
     return ranked, (ranked[:max_findings] if max_findings else ranked)
 
 

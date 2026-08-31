@@ -370,9 +370,14 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
     # meta line under it.
     if exit_code == 0:
         excluded = (manifest.get("scan_scope") or {}).get("excluded")
+        # unsigned operator state (a baseline) taking findings off the gate is
+        # a limitation the headline must carry, same as a degradation (R17)
+        baselined_out = (pol.get("gate_baseline") == "new"
+                         and _policy.gating_findings(findings,
+                                                     {**pol, "gate_baseline": "all"}))
         if scope != "full":
             decision_label = f"RELEASE DECISION: CLEAR FOR SCOPE ({scope.upper()})"
-        elif excluded or degr:
+        elif excluded or degr or baselined_out:
             decision_label = "RELEASE DECISION: CLEAR — WITH LIMITATIONS"
     out.append(f'<div class="decision"><div class="gate {cls}">{_e(decision_label)}'
                f'<span class="gate-note">{_e(gate_note)}</span></div>'

@@ -283,7 +283,9 @@ def test_validate_without_a_backend_is_a_visible_degradation(tmp_path, monkeypat
         "not_selected": 0,
         "deterministic_skipped": 0,
         "no_validation_record": 0,
-        "selection_strategy": "severity_ranked_pattern_round_robin",
+        "selection_strategy": "pattern_round_robin_within_severity_band",
+        "selected_by_severity": {"high": 1},
+        "not_selected_by_severity": {},
         "distinct_patterns_selected": 1,
     }
     md = (tmp_path / "out" / "summary.md").read_text()
@@ -294,3 +296,24 @@ def test_validate_without_a_backend_is_a_visible_degradation(tmp_path, monkeypat
     html = (tmp_path / "out" / "summary.html").read_text()
     assert "1 not examined" in html
     assert 'data-metric="external-panel">0' in html  # counts convened panels only
+
+
+def test_repository_config_cannot_choose_the_run_output_root(tmp_path):
+    # R17: a scanned repo's own config redirecting reports.outdir would move
+    # the whole run tree past the MCP reports_root containment. Repo-sourced
+    # outdir is ignored; operator config / --out / reports_root keep working.
+    escape = tmp_path / "escape"
+    cfg = {**DEFAULT_CONFIG,
+           "_source": {"kind": "repository", "path": str(tmp_path / ".security-council.yaml")},
+           "reports": {"outdir": str(escape)},
+           "decisions": {**DEFAULT_CONFIG["decisions"], "require_signatures": "warn"}}
+    arms = [FakeArm("semgrep", "scanner", "semgrep",
+                    [_finding(source_id="semgrep", kind="scanner", vendor="semgrep")])]
+    run = run_scan(tmp_path, arms, cfg)
+    assert not escape.exists()
+    assert str(run.out_dir).startswith(str(tmp_path / ".security-council" / "runs"))
+    # an OPERATOR-sourced config keeps the choice
+    cfg2 = {**cfg, "_source": {"kind": "explicit", "path": "op.yaml"},
+            "reports": {"outdir": str(tmp_path / "op-runs")}}
+    run2 = run_scan(tmp_path, arms, cfg2)
+    assert str(run2.out_dir).startswith(str(tmp_path / "op-runs"))

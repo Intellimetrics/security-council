@@ -21,7 +21,23 @@ _SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 DEFAULT_MIN_COUNT = 3
 
 
+def _groupable_rule_id(f: Finding) -> bool:
+    """Agent arms synthesize a rule id from taxonomy when the model supplies
+    none (`sc/<family>`, `claude-security/<cwe>`, `codex-security/unknown`).
+    Grouping those would present a CWE bucket as a "repeated rule" and let
+    the sampler collapse DISTINCT agent findings into one representative
+    (R17) — so a synthesized id never groups."""
+    rid = f.rule.id
+    if not f.rule.source_rule_id:                # normalize fallback sc/<family>
+        return False
+    if rid.endswith("/unknown") or rid.endswith("/uncategorized"):
+        return False
+    return not rid.startswith("claude-security/")   # always synthesized from CWE
+
+
 def pattern_key(f: Finding) -> tuple[str, str]:
+    if not _groupable_rule_id(f):
+        return (f"finding:{f.id}", f.taxonomy.cwe_family)   # unique: never groups
     return (f.rule.id, f.taxonomy.cwe_family)
 
 
@@ -56,8 +72,15 @@ def pattern_groups(findings: list[Finding], *,
     """Recurring-rule groups, largest first. Members keep full Finding objects
     so callers (exporters, the validation sampler) can compute gating/review
     overlays themselves instead of this module guessing their policy."""
+    # demoted/closed instances stay visible in the register and appendix, but
+    # they must not inflate the concentration view (R17: 4 suppressed + 1 open
+    # must not read as "5 instances, highest critical")
+    live = [f for f in findings
+            if f.disposition.lifecycle in ("open", "reopened")
+            and f.disposition.state != "refuted"
+            and f.disposition.vex_status not in ("not_affected", "fixed")]
     buckets: dict[tuple[str, str], list[Finding]] = {}
-    for f in findings:
+    for f in live:
         buckets.setdefault(pattern_key(f), []).append(f)
     groups = [PatternGroup(rule=k[0], family=k[1],
                            members=sorted(ms, key=lambda f: (

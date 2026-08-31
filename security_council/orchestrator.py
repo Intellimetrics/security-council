@@ -327,7 +327,14 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         raise ValueError("patch verification requires isolation (the patch is applied to a "
                          "scratch copy only); --inplace is refused with --verify-patch.")
     run_id, collected_at = _utc_stamp()
-    outdir_root = Path(config.get("reports", {}).get("outdir", ".security-council/runs"))
+    reports_cfg = config.get("reports") or {}
+    outdir_root = Path(reports_cfg.get("outdir", ".security-council/runs"))
+    if (config.get("_source") or {}).get("kind") == "repository" and "outdir" in reports_cfg:
+        # R17: the scanned repository must not choose where run artifacts land
+        # (an absolute repo-supplied outdir would redirect the whole run tree
+        # past the MCP reports_root containment). Operator config, --out, and
+        # the MCP reports_root argument keep working.
+        outdir_root = Path(".security-council/runs")
     out_dir = Path(out_dir) if out_dir else (target / outdir_root / run_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     scan_scope = diff.as_dict() if diff is not None else {"kind": "full"}
@@ -667,7 +674,17 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                       if verify_blocks else None)
 
         # The same selection model the validation loop used — never a parallel
-        # reimplementation (they drift, and then these numbers lie).
+        # reimplementation (they drift, and then these numbers lie). NOTE the
+        # invariant is temporal too: this re-derivation runs AFTER apply_policy,
+        # so a finding auto-suppressed since the loop drops out of eligible/
+        # selected and the counters under-count what actually ran (fail-safe
+        # direction, armed+shadow-exhausted only).
+        def _sev_hist(fs: list[Finding]) -> dict[str, int]:
+            hist: dict[str, int] = {}
+            for f in fs:
+                hist[f.severity.label] = hist.get(f.severity.label, 0) + 1
+            return hist
+
         from .rollup import pattern_key as _pattern_key
         from .validate.panel import SKIP_VALIDATION_FAMILIES, select_for_validation
         with_validation = [f for f in merged if f.validation is not None]
@@ -698,8 +715,11 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             "not_selected": len(eligible_ranked) - len(selected_external),
             "deterministic_skipped": len(skipped_validation),
             "no_validation_record": len(merged) - len(with_validation),
-            "selection_strategy": ("severity_ranked_pattern_round_robin"
+            "selection_strategy": ("pattern_round_robin_within_severity_band"
                                    if validate else None),
+            "selected_by_severity": _sev_hist(selected_external),
+            "not_selected_by_severity": _sev_hist(
+                [f for f in eligible_ranked if f.id not in selected_ids]),
             "distinct_patterns_selected": len({_pattern_key(f)
                                                for f in selected_external}),
         }

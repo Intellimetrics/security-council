@@ -23,6 +23,13 @@ def _build_arms(names: list[str], config: dict | None = None, diff=None):
     return [build_arm(n, options=options.get(n), diff=diff) for n in names]
 
 
+def _positive_int(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be >= 1 (omit to validate everything)")
+    return n
+
+
 def cmd_scan(args) -> int:
     target = Path(args.path).resolve()
     if not target.is_dir():
@@ -1058,7 +1065,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--vendor-validate", action="store_true",
                    help="also collect the vendors' own validate/triage verdicts as "
                         "NON-INDEPENDENT advisory panel voters (never deciding)")
-    s.add_argument("--validate-max", type=int, help="cap findings sent to validation")
+    s.add_argument("--validate-max", type=_positive_int)
     s.add_argument("--validate-budget", type=float, default=0.5, help="max USD per validated finding")
     s.set_defaults(fn=cmd_scan)
     cs = sub.add_parser("consolidate",
@@ -1077,7 +1084,7 @@ def build_parser() -> argparse.ArgumentParser:
     cs.add_argument("--require-signatures", choices=["off", "warn", "enforce", "auto"])
     cs.add_argument("--validate", action="store_true",
                     help="convene the external validator panel over the consolidated findings")
-    cs.add_argument("--validate-max", type=int)
+    cs.add_argument("--validate-max", type=_positive_int)
     cs.add_argument("--validate-budget", type=float, default=0.5)
     cs.add_argument("--out", help="run output directory")
     cs.add_argument("--json", action="store_true")

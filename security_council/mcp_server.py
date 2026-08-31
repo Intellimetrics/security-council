@@ -262,15 +262,30 @@ def sc_report(arguments: dict) -> dict:
         bundle = arguments["bundle"]
         if bundle not in ("triage", "gov", "all"):
             raise ValueError(f"unknown bundle {bundle!r} (triage|gov|all)")
-        shim = SimpleNamespace(run_dir=str(run_dir), bundle=bundle, out_dir=None,
+        # R17: run dirs live inside the scanned, committable repo — a planted
+        # `exports` symlink (or a symlinked file inside it) must not redirect
+        # bundle writes outside the root (same class serve._confine closes).
+        exports = run_dir / "exports"
+        if exports.is_symlink():
+            raise ValueError(f"exports is a symlink and is refused: {exports}")
+        exports.mkdir(parents=True, exist_ok=True)
+        exports = exports.resolve()
+        try:
+            exports.relative_to(_root())
+        except ValueError as exc:
+            raise ValueError(f"ProjectRootMismatch: exports={exports}; "
+                             f"configured_root={_root()}.") from exc
+        planted = sorted(q.name for q in exports.iterdir() if q.is_symlink())
+        if planted:
+            raise ValueError(f"exports contains symlink(s) {planted}; refused")
+        shim = SimpleNamespace(run_dir=str(run_dir), bundle=bundle, out_dir=str(exports),
                                app_name=arguments.get("app_name"),
                                app_version=arguments.get("app_version"),
                                scan_date=arguments.get("scan_date"),
                                classification=arguments.get("classification") or "UNCLASSIFIED")
         _report_bundle(shim, m)
-        out_dir = run_dir / "exports"
-        return {"out_dir": str(out_dir),
-                "written": sorted(p.name for p in out_dir.iterdir() if p.is_file())}
+        return {"out_dir": str(exports),
+                "written": sorted(q.name for q in exports.iterdir() if q.is_file())}
     if fmt == "json":
         return {"run_id": m["run_id"], "counts": m["counts"], "exit_code": m.get("exit_code"),
                 "disposition_actions": m.get("disposition_actions"),
@@ -288,9 +303,10 @@ def sc_report(arguments: dict) -> dict:
     if fmt == "html":
         from .export import html_export
         md = run_dir / "summary.md"
-        return {"html": html_export.to_html(findings, m, run_dir=run_dir,
-                                            markdown_text=md.read_text() if md.is_file() else None),
-                "path": str(run_dir / "summary.html")}
+        page = html_export.to_html(findings, m, run_dir=run_dir,
+                                   markdown_text=md.read_text() if md.is_file() else None)
+        (run_dir / "summary.html").write_text(page)   # the named path really exists
+        return {"html": page, "path": str(run_dir / "summary.html")}
     if fmt == "emass":
         from .export import emass
         app, ver = arguments.get("app_name"), arguments.get("app_version")
@@ -584,7 +600,7 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
            "deep": {"type": "boolean", "description":
                     "Use high effort for enabled agentic arms."},
            "validate": {"type": "boolean"},
-           "validate_max": {"type": "integer"},
+           "validate_max": {"type": "integer", "minimum": 1},
            "validate_budget": {"type": "number", "exclusiveMinimum": 0},
            "validator_current": {"enum": ["claude", "codex", "antigravity"]},
            "validator_participants": {"type": "string", "description":
@@ -616,7 +632,7 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
                             "Absolute reports root inside the MCP root; run id is appended."},
            "validate": {"type": "boolean", "description":
                         "Convene the external validator panel over the consolidated findings."},
-           "validate_max": {"type": "integer"},
+           "validate_max": {"type": "integer", "minimum": 1},
            "validate_budget": {"type": "number", "exclusiveMinimum": 0},
            "validator_current": {"enum": ["claude", "codex", "antigravity"]},
            "validator_participants": {"type": "string", "description":
