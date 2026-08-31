@@ -484,12 +484,9 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             # PATH reported "N cross-examined" and no degradation (0.2.0
             # release rehearsal). Not a gate change; a visibility one.
             if validation_failures:
-                eligible = sum(
-                    f.taxonomy.cwe_family != "supply_chain"
-                    and f.disposition.lifecycle not in CLOSED_LIFECYCLES
-                    for f in merged
-                )
-                attempted = min(eligible, validate_max_findings or eligible)
+                _, _selected = _vpanel.select_for_validation(
+                    merged, max_findings=validate_max_findings)
+                attempted = len(_selected)
                 first = validation_failures[0]["error"]
                 if len(validation_failures) >= attempted:
                     pre_degr.append({"kind": "validator_unavailable",
@@ -669,33 +666,23 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
         verify_fix = ({"method": "deterministic", "patches": verify_blocks}
                       if verify_blocks else None)
 
-        def _host_opinion(op) -> bool:
-            return op.participant.endswith("-current")
-
+        # The same selection model the validation loop used — never a parallel
+        # reimplementation (they drift, and then these numbers lie).
+        from .validate.panel import SKIP_VALIDATION_FAMILIES, select_for_validation
         with_validation = [f for f in merged if f.validation is not None]
         host_validated = [f for f in with_validation if any(
-            _host_opinion(op) and op.status != "absent" for op in f.validation.panel)]
+            op.is_host and op.status != "absent" for op in f.validation.panel)]
         skipped_validation = [f for f in merged
-                              if f.taxonomy.cwe_family == "supply_chain"
+                              if f.taxonomy.cwe_family in SKIP_VALIDATION_FAMILIES
                               and f.disposition.lifecycle not in CLOSED_LIFECYCLES]
-        eligible_ranked = sorted(
-            (f for f in merged
-             if f.taxonomy.cwe_family != "supply_chain"
-             and f.disposition.lifecycle not in CLOSED_LIFECYCLES),
-            key=lambda f: f.severity.security_severity,
-            reverse=True,
-        )
-        selected_external = (eligible_ranked[:validate_max_findings]
-                             if validate and validate_max_findings else
-                             eligible_ranked if validate else [])
+        eligible_ranked, selected = select_for_validation(
+            merged, max_findings=validate_max_findings)
+        selected_external = selected if validate else []
         selected_ids = {f.id for f in selected_external}
-        externally_convened = [f for f in with_validation if f.id in selected_ids and any(
-            op.independent and not _host_opinion(op) and op.status != "absent"
-            for op in f.validation.panel)]
-        external_quorum = [f for f in externally_convened if len({
-            op.family for op in f.validation.panel
-            if op.independent and not _host_opinion(op) and op.status != "absent"
-        }) >= 2]
+        externally_convened = [f for f in with_validation
+                               if f.id in selected_ids and f.validation.convened()]
+        external_quorum = [f for f in externally_convened
+                           if len(f.validation.external_families()) >= 2]
         validation_meta = {
             "requested": validate,
             "eligible": len(eligible_ranked),

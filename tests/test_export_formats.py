@@ -152,7 +152,8 @@ def test_html_escapes_hostile_text_and_keeps_demoted_visible():
     assert "<script" not in page and "<img" not in page
     assert "&lt;script&gt;" in page                              # escaped, still shown
     assert "Appendix — demoted and closed findings" in page      # demoted-not-hidden
-    assert "GATE: FAIL" in page
+    # structural, not wording-pinned: the fail banner must be present
+    assert 'class="gate fail"' in page
     # self-contained: no external fetches, no links, no JS anywhere in the page
     assert "http://" not in page and "https://" not in page
     assert "src=" not in page.replace("src=x", "")               # only the escaped text

@@ -42,6 +42,11 @@ def build_arm(name: str, *, model: str | None = None, options: dict | None = Non
     if name in SCANNER_SPECS:
         return ScannerArm(name)
     if name in LLM_CLI_SPECS:
+        allowed = {"effort", "max_budget_usd", "fallback_model"}
+        unknown_opts = sorted(set(opts) - allowed)
+        if unknown_opts:
+            raise ValueError(f"unknown option(s) {unknown_opts} for arm {name!r}; "
+                             f"allowed: {sorted(allowed)}")
         return LlmCliArm(name, model=model, **opts)
     if name in DEDICATED_ARMS:
         # diff is only meaningful for diff-capable dedicated arms; pass it and

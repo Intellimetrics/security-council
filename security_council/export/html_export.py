@@ -309,11 +309,10 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
     # R15b: "validated" means a panel actually convened — the same predicate
     # the markdown uses; an unconvened needs_human is NOT cross-examined
     with_record = [f for f in findings if f.validation is not None]
-    validated = [f for f in with_record if _markdown._external_panel_families(f)]
-    quorum = [f for f in validated if len(_markdown._external_panel_families(f)) >= 2]
+    validated = [f for f in with_record if f.validation.convened()]
+    quorum = [f for f in validated if len(f.validation.external_families()) >= 2]
     host_validated = [f for f in with_record if any(
-        _markdown._is_host_opinion(op) and op.status != "absent"
-        for op in f.validation.panel)]
+        op.is_host and op.status != "absent" for op in f.validation.panel)]
     vm = manifest.get("validation") or {}
     degr = manifest.get("degradations") or []
     sp = manifest.get("signature_policy") or {}
@@ -379,8 +378,9 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
         for s in _SEV_ORDER if (n := sev.get(s, 0)))
 
     external_count = len(validated)
-    host_only = [f for f in host_validated if not _markdown._external_panel_families(f)]
+    host_only = [f for f in host_validated if not f.validation.convened()]
     host_overlap = max(0, len(host_validated) - len(host_only))
+    host_label = _markdown._host_label(with_record)
     other_records = max(0, len(with_record) - external_count - len(host_only))
     no_record = max(0, total - len(with_record))
     selected = vm.get("external_selected", 0)
@@ -412,12 +412,14 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
         f'<span>with a validation record · {_e(no_record)} without</span></div>'
         f'<div class="relation-row"><span>External panel reviewed</span>'
         f'<strong data-metric="external-panel">{_e(external_count)}</strong></div>'
-        f'<div class="relation-row"><span>Daybreak-only record</span><strong>{_e(len(host_only))}</strong></div>'
+        f'<div class="relation-row"><span>Host-only record ({_e(host_label)})</span>'
+        f'<strong>{_e(len(host_only))}</strong></div>'
         f'{validation_extra}'
         f'<div class="relation-row warn"><span>No validation record</span><strong>{_e(no_record)}</strong></div>'
         f'<p class="relation-note">{_e(eligible)} eligible = {_e(selected)} selected + '
         f'{_e(not_selected)} not selected. {_e(deterministic_skipped)} skipped. {_e(failed_external)} panel failed. '
-        f'Daybreak: {_e(host_overlap)} overlapping + {_e(len(host_only))} host-only.</p></section>'
+        f'Host validation ({_e(host_label)}): {_e(host_overlap)} overlapping + '
+        f'{_e(len(host_only))} host-only.</p></section>'
         '<section class="relation"><h2>3. Run confidence</h2>'
         '<p class="relation-intro">Health signals qualify the result; they do not add to it.</p>'
         f'<div class="relation-total"><strong>{_e(len(ok))}/{_e(len(arms))}</strong><span>scan arms completed</span></div>'

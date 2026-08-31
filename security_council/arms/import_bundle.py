@@ -9,6 +9,7 @@ clean target checkout or the arm fails closed.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -62,16 +63,22 @@ def _native_validation(raw: dict, *, target: Path, prompt_sha: str,
     source = raw.get("validation")
     if not isinstance(source, dict) or not source:
         return None
+    # Verdict mapping is deliberately conservative: only an explicit positive
+    # status token becomes true_positive. Anything unrecognized — including a
+    # record that carries only free prose — stays "uncertain", because the
+    # merged finding's disposition and the VEX export both trust this verdict.
+    # Token (not substring) matching so "invalidated"/"not confirmed" cannot
+    # read as confirmation.
     status_text = " ".join(str(source.get(k) or "").lower()
                            for k in ("status", "result", "disposition"))
-    if any(mark in status_text for mark in ("false_positive", "refuted", "rejected")):
+    tokens = set(re.split(r"[^a-z_]+", status_text)) - {""}
+    if tokens & {"false_positive", "refuted", "rejected", "dismissed", "invalidated"}:
         verdict = "false_positive"
-    elif (any(mark in status_text for mark in ("validated", "confirmed", "reported",
-                                                "retained", "accepted"))
-          or source.get("summary")):
-        verdict = "true_positive"
-    else:
+    elif (tokens & {"not", "no", "unconfirmed", "unvalidated", "inconclusive"}
+          or not tokens & {"validated", "confirmed", "retained", "accepted"}):
         verdict = "uncertain"
+    else:
+        verdict = "true_positive"
 
     refs = {str(x) for x in (source.get("evidenceRefs") or [])}
     evidence = [item for item in (raw.get("codeEvidence") or []) if isinstance(item, dict)]

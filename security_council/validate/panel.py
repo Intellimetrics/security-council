@@ -275,11 +275,7 @@ def validate_finding(finding: Finding, *, repo_root, runner=council_client.run_c
         val.reachability = val.reachability or prior.reachability
         val.impact = val.impact or prior.impact
     finding.validation = val
-    external_convened = any(
-        op.independent and not op.participant.endswith("-current") and op.status != "absent"
-        for op in val.panel
-    )
-    if failures is not None and not external_convened:
+    if failures is not None and not val.convened():
         # nobody sat: backend missing, no output, or every peer failed (R15:
         # `not cr.results` missed the all-failed case — llm-council present,
         # peer CLIs not). The verdict is needs_human (fail-safe); the caller
@@ -300,15 +296,27 @@ def validate_finding(finding: Finding, *, repo_root, runner=council_client.run_c
 SKIP_VALIDATION_FAMILIES = frozenset({"supply_chain"})
 
 
-def validate_findings(findings: list[Finding], *, repo_root, runner=council_client.run_council,
-                      max_findings: int | None = None,
-                      skip_families: frozenset = SKIP_VALIDATION_FAMILIES,
-                      failures: list[dict] | None = None, **kw) -> list[Finding]:
+def select_for_validation(findings: list[Finding], *, max_findings: int | None = None,
+                          skip_families: frozenset = SKIP_VALIDATION_FAMILIES,
+                          ) -> tuple[list[Finding], list[Finding]]:
+    """(eligible, selected) — the single selection model for validation.
+
+    The orchestrator's manifest accounting and the actual validation loop must
+    read the SAME selection, or the coverage numbers lie about what was
+    attempted (the boolean-coverage lesson: parallel reimplementations drift)."""
     from ..model import CLOSED_LIFECYCLES
     eligible = [f for f in findings if f.taxonomy.cwe_family not in skip_families
                 and f.disposition.lifecycle not in CLOSED_LIFECYCLES]
     ranked = sorted(eligible, key=lambda f: f.severity.security_severity, reverse=True)
-    todo = ranked[:max_findings] if max_findings else ranked
+    return ranked, (ranked[:max_findings] if max_findings else ranked)
+
+
+def validate_findings(findings: list[Finding], *, repo_root, runner=council_client.run_council,
+                      max_findings: int | None = None,
+                      skip_families: frozenset = SKIP_VALIDATION_FAMILIES,
+                      failures: list[dict] | None = None, **kw) -> list[Finding]:
+    _, todo = select_for_validation(findings, max_findings=max_findings,
+                                    skip_families=skip_families)
     for f in todo:
         validate_finding(f, repo_root=repo_root, runner=runner, failures=failures, **kw)
     return findings

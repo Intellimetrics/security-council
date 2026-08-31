@@ -37,6 +37,8 @@ _PRESENTATION_META_RE = re.compile(
     r"^(?:Codex Security confidence|Validation(?: status)?):",
     re.IGNORECASE,
 )
+# Applied per paragraph (see _report_description), so the DOTALL tail it
+# removes ends at the paragraph boundary — never the rest of the document.
 _PRESENTATION_APPENDIX_RE = re.compile(
     r"(?:^|\s+)Additional (?:validated (?:detail|summary|requirement)|validation):.*$",
     re.IGNORECASE | re.DOTALL,
@@ -57,15 +59,13 @@ _LANG_BY_EXT = {
 }
 
 
-def _is_host_opinion(op) -> bool:
-    return op.participant.endswith("-current")
-
-
-def _external_panel_families(f: Finding) -> set[str]:
-    if f.validation is None:
-        return set()
-    return {op.family for op in f.validation.panel
-            if op.independent and not _is_host_opinion(op) and op.status != "absent"}
+def _host_label(findings: list[Finding]) -> str:
+    """Name host-carried validation by the vendor families that produced it
+    (e.g. "codex") — never by a hardcoded product or model codename."""
+    families = sorted({op.family for f in findings if f.validation is not None
+                       for op in f.validation.panel
+                       if op.is_host and op.status != "absent"})
+    return "/".join(families) or "host"
 
 
 # --------------------------------------------------------------------------- #
@@ -115,12 +115,21 @@ def _review_label(role: str) -> str:
 
 
 def _report_description(text: str) -> str:
-    """Remove tool-internal assessment prose from presentation text."""
-    paragraphs = re.split(r"\n\s*\n", text or "")
-    visible = "\n\n".join(
-        p for p in paragraphs if not _PRESENTATION_META_RE.match(p.strip())
-    )
-    return _PRESENTATION_APPENDIX_RE.sub("", visible).strip()
+    """Remove tool-internal assessment prose from presentation text.
+
+    Filtering is bounded to the paragraph the label appears in: a paragraph
+    that STARTS with a tool-generated label is dropped, and an appendix label
+    strips only the rest of its own paragraph. Vendor prose in other
+    paragraphs is finding evidence and must survive (the canonical text is
+    always in findings.json)."""
+    out: list[str] = []
+    for p in re.split(r"\n\s*\n", text or ""):
+        if _PRESENTATION_META_RE.match(p.strip()):
+            continue
+        p = _PRESENTATION_APPENDIX_RE.sub("", p).strip()
+        if p:
+            out.append(p)
+    return "\n\n".join(out)
 
 
 def _code(text: object, limit: int = 120, *, cell: bool = False) -> str:
@@ -263,11 +272,15 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
         validated = [f for f in findings if f.validation is not None]
         # a validation record with an empty panel means nobody convened (backend
         # missing / timed out): it is needs_human, but it was NOT cross-examined
-        convened = [f for f in validated if _external_panel_families(f)]
-        quorum = [f for f in convened if len(_external_panel_families(f)) >= 2]
+        convened = [f for f in validated if f.validation.convened()]
+        quorum = [f for f in convened if len(f.validation.external_families()) >= 2]
         host_validated = [f for f in validated if any(
-            _is_host_opinion(op) and op.status != "absent" for op in f.validation.panel)]
-        unconvened = len(validated) - len(convened)
+            op.is_host and op.status != "absent" for op in f.validation.panel)]
+        host_only = [f for f in host_validated if not f.validation.convened()]
+        # a record with neither an external seat nor a host seat means the
+        # panel never convened at all — that is a failure, and it must stay
+        # visible even when host-carried records exist alongside it
+        failed = len(validated) - len(convened) - len(host_only)
         tp = sum(1 for f in convened if f.validation.verdict == "true_positive")
         fp = sum(1 for f in convened if f.validation.verdict == "false_positive")
         nh = sum(1 for f in convened if f.validation.verdict in ("needs_human", "uncertain"))
@@ -284,13 +297,14 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
             else:
                 line = "- **External validator panel:** 0 reviewed (0 reached two-vendor quorum)"
             if host_validated:
-                line += (f" · **Daybreak host validation:** {len(host_validated)} records"
-                         f" ({len(validated) - len(convened)} without an external panel)")
+                line += (f" · **Host validation ({_host_label(validated)}):** "
+                         f"{len(host_validated)} records ({len(host_only)} host-only)")
             missing = len(findings) - len(validated)
             if missing:
                 line += f" · **{missing} have no validation record**"
-            elif unconvened and not host_validated:
-                line += f" · ⚠ **{unconvened} not examined**"
+            if failed:
+                line += (f" · ⚠ **{failed} not examined** (no panel convened; flagged "
+                         "`needs_human` — see degradations)")
             out.append(line)
             vm = manifest.get("validation") or {}
             if vm.get("requested"):

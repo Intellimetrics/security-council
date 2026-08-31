@@ -265,6 +265,14 @@ class PanelOpinion:
     elapsed_seconds: Optional[float] = None
     cost_usd: Optional[float] = None
 
+    @property
+    def is_host(self) -> bool:
+        """A seat carried from a scanning host itself (participant named
+        `<family>-current`, e.g. a validation imported with a sealed bundle).
+        Host seats are evidence worth keeping, but they are not external
+        cross-examination and must never count toward it."""
+        return self.participant.endswith("-current")
+
 
 @dataclass
 class Reachability:
@@ -288,13 +296,20 @@ class Validation:
     batched_with: list[str] = field(default_factory=list)
     no_cross_file_navigation: bool = False
 
+    def external_families(self) -> set[str]:
+        """Vendor families of independent, non-host seats that answered."""
+        return {op.family for op in self.panel
+                if op.independent and not op.is_host and op.status != "absent"}
+
     def convened(self) -> bool:
-        """Did any INDEPENDENT panel seat actually answer? A record whose
-        seats are all `absent` (backend missing, every peer failed) is
+        """Did any INDEPENDENT EXTERNAL panel seat actually answer? A record
+        whose seats are all `absent` (backend missing, every peer failed) is
         `needs_human` but was never cross-examined; the run degradation and
         the summary's "cross-examined" count both read this one predicate
-        (R15 — the two had drifted apart)."""
-        return any(op.independent and op.status != "absent" for op in self.panel)
+        (R15 — the two had drifted apart). A host-carried seat (`is_host`,
+        e.g. a validation imported with a sealed bundle) does not convene a
+        panel either: it is the scanning vendor agreeing with itself."""
+        return bool(self.external_families())
 
 
 @dataclass

@@ -310,3 +310,44 @@ def test_orchestrator_writes_summary_and_cli_regenerates_it(tmp_path, capsys):
     assert capsys.readouterr().out.strip() == summary.strip()
     assert cli_main(["report", str(run.out_dir)]) == 0
     assert json.loads(capsys.readouterr().out)["exit_code"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Host-carried validation vs external panels (consolidated imports)
+# --------------------------------------------------------------------------- #
+
+
+def _host_opinion_record(verdict="true_positive"):
+    return m.Validation(verdict=verdict, confidence=0.8, panel=[m.PanelOpinion(
+        role="prosecutor", participant="codex-current", family="codex",
+        prompt_sha256="0" * 64, verdict=verdict, rationale="carried",
+        model_id="gpt-daybreak-blue-latest", status="ok", independent=True)])
+
+
+def test_host_records_are_labeled_by_family_and_never_hide_panel_failures():
+    ext = val_finding()
+    panel.validate_finding(ext, repo_root=".", runner=_runner([
+        ("claude", "for", "yes", [_cite()]), ("codex", "against", "yes", [_cite()])]))
+    host = val_finding(family="xss")
+    host.taxonomy = m.Taxonomy(cwe=["CWE-79"], cwe_family="xss")
+    host.fingerprints = m.Fingerprints(path_cwe_sink="pathCweSink/v1:" + "2" * 32,
+                                       context_hash="contextHash/v1:" + "2" * 32,
+                                       root_cause="rootCause/v1:" + "2" * 32)
+    host.id = m.finding_id(host.fingerprints)
+    host.validation = _host_opinion_record()
+    failed = val_finding(family="authz")
+    failed.taxonomy = m.Taxonomy(cwe=["CWE-639"], cwe_family="authz")
+    failed.fingerprints = m.Fingerprints(path_cwe_sink="pathCweSink/v1:" + "3" * 32,
+                                         context_hash="contextHash/v1:" + "3" * 32,
+                                         root_cause="rootCause/v1:" + "3" * 32)
+    failed.id = m.finding_id(failed.fingerprints)
+    failed.validation = m.Validation(verdict="needs_human", confidence=0.5, panel=[])
+
+    md = markdown.to_markdown([ext, host, failed], _manifest([ext, host, failed]))
+
+    # the host label derives from the seat's vendor family — never a codename
+    assert "Daybreak" not in md
+    assert "**Host validation (codex):** 1 records (1 host-only)" in md
+    # a record whose panel never convened stays visible even beside host records
+    assert "⚠ **1 not examined** (no panel convened" in md
+    assert "1 reviewed" in md

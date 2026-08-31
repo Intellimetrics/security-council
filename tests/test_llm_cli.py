@@ -136,3 +136,8 @@ def test_codex_reads_last_message_file(monkeypatch, tmp_path):
     res = _run("codex", monkeypatch, tmp_path, stdout="{}", last_file_content=env)
     assert res.ok and len(res.findings) == 1
     assert res.findings[0].taxonomy.cwe_family == "crypto"
+
+
+def test_unknown_llm_cli_option_is_a_clean_config_error():
+    with pytest.raises(ValueError, match=r"unknown option\(s\) \['efort'\] for arm 'claude'"):
+        build_arm("claude", options={"efort": "high"})
