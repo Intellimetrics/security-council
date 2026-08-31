@@ -311,7 +311,7 @@ def _report_bundle(args, m: dict) -> int:
     return 0
 
 
-def _open_report(run_dir: Path) -> int:
+def _open_report(run_dir: Path, *, system_name: str | None = None) -> int:
     """Render (or refresh) summary.html for a run and open it in the browser."""
     import webbrowser
     from .export import html_export
@@ -320,6 +320,8 @@ def _open_report(run_dir: Path) -> int:
         print(f"error: no manifest.json in {run_dir}", file=sys.stderr)
         return EXIT_USAGE
     m = json.load(open(mf))
+    if system_name:
+        m = dict(m, report_identity={"system_name": system_name})
     page = run_dir / "summary.html"
     md = run_dir / "summary.md"
     page.write_text(html_export.to_html(
@@ -425,12 +427,14 @@ def cmd_report(args) -> int:
             return EXIT_USAGE
         args.run_dir = str(d)
     if getattr(args, "open", False):
-        return _open_report(Path(args.run_dir))
+        return _open_report(Path(args.run_dir), system_name=args.system_name)
     mf = Path(args.run_dir) / "manifest.json"
     if not mf.is_file():
         print(f"error: no manifest.json in {args.run_dir}", file=sys.stderr)
         return EXIT_USAGE
     m = json.load(open(mf))
+    if args.system_name:
+        m = dict(m, report_identity={"system_name": args.system_name})
     if args.bundle:
         return _report_bundle(args, m)
     if args.format == "csv":
@@ -1045,6 +1049,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "oscal-poam+cklb (+emass when --app-name/--app-version given)")
     r.add_argument("--out-dir", help="bundle output directory (default: <run_dir>/exports)")
     r.add_argument("--detail-limit", type=int, default=50, help="findings rendered in full (md)")
+    r.add_argument("--system-name",
+                   help="display name for the assessed system in HTML reports "
+                        "(default: target directory name)")
     r.add_argument("--classification", default="UNCLASSIFIED",
                    help="classification stamped on CKLB rules (default UNCLASSIFIED)")
     r.add_argument("--app-name", help="eMASS applicationName (required for --format emass)")

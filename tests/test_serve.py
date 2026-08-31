@@ -103,7 +103,7 @@ def test_index_run_page_files_latest_and_zip(viewer):
     assert b"loopback only" in body
     newest = runs[-1]
     status, headers, body = _get(base + f"runs/{newest.run_id}/")
-    assert status == 200 and b"<h1>security-council report" in body
+    assert status == 200 and b"<h1>Application Security Assessment</h1>" in body
     status, headers, body = _get(base + f"runs/{newest.run_id}/summary.md")
     assert status == 200 and headers["Content-Type"].startswith("text/markdown")
     status, headers, body = _get(base + f"runs/{newest.run_id}/findings.json")
@@ -214,7 +214,7 @@ def test_viewer_never_writes_into_a_run(viewer):
     (run.out_dir / "summary.html").unlink()
     before = sorted(p.name for p in run.out_dir.iterdir())
     status, headers, body = _get(base + f"runs/{run.run_id}/")
-    assert status == 200 and b"<h1>security-council report" in body      # rendered in memory
+    assert status == 200 and b"<h1>Application Security Assessment</h1>" in body  # rendered in memory
     assert sorted(p.name for p in run.out_dir.iterdir()) == before     # nothing written
 
 
@@ -367,7 +367,7 @@ def test_run_root_reads_are_confined_and_stored_html_is_never_served(viewer, tmp
     # a hostile stored summary.html is never what /runs/<id>/ returns
     (run.out_dir / "summary.html").write_text("<script>alert('planted')</script>")
     status, headers, body = _get(base + f"runs/{run.run_id}/")
-    assert status == 200 and b"planted" not in body and b"<h1>security-council report" in body
+    assert status == 200 and b"planted" not in body and b"<h1>Application Security Assessment</h1>" in body
     status, headers, body = _get(base + f"runs/{run.run_id}/summary.html")
     assert status == 200 and headers["Content-Type"].startswith("text/plain")
 

@@ -103,10 +103,13 @@ def test_page_carries_every_markdown_section_heading_for_heading():
     # and the body is the markdown: a phrase that exists only in the markdown appears once there
     assert "Suppressions reapplied from the decision store" in page
     assert "Decision signatures" in page and "Analysis artifacts" in page
-    assert page.count("<h2") == md.count("\n## ") + 2      # md h2s + Degradations + Where to look
+    # markdown h2s + three relationship panels + Degradations + Where to look
+    assert page.count("<h2") == md.count("\n## ") + 5
     # the metadata bullets before the first section are not repeated in the body
     assert "<strong>Target:</strong>" not in page and "<strong>Policy:</strong>" not in page
     assert page.count("security-council report — run") == 1
+    assert "<h1>Application Security Assessment</h1>" in page
+    assert "Assessed system" in page
 
 
 def test_page_is_hardened_and_self_contained():
@@ -143,15 +146,24 @@ def test_dashboard_gate_tiles_next_steps_and_where_to_look(tmp_path):
     (tmp_path / "raw" / "semgrep").mkdir(parents=True)
     (tmp_path / "exports").mkdir()
     page = _page([a], mf, run_dir=tmp_path)
-    assert 'class="gate fail">GATE: FAIL' in page and "(exit 1)" in page
+    assert 'class="report-header"' in page and "Leadership decision" in page
+    assert "finding instances" in page and "observed locations" in page
+    assert '<details class="engineering">' in page
+    assert "View 1 individual finding instances and engineering evidence" in page
+    branded = _page([a], dict(mf, report_identity={
+        "system_name": "Investigative Management System (IMS)"}))
+    assert "Investigative Management System (IMS)" in branded
+    assert 'class="gate fail">RELEASE DECISION: BLOCKED' in page
     assert "policy: fail on ≥ <code>high</code>" in page and "config: defaults" in page
     repo_cfg = _page([a], dict(mf, config_source={"kind": "repository", "path": "/r/.security-council.yaml"}))
     assert "loaded from the scanned repository" in repo_cfg and "/r/.security-council.yaml" in repo_cfg
-    assert "1 finding(s) fail the gate" in page and "1 high" in page
+    assert "1 findings block promotion" in page and "1 high" in page
     assert "security-council suppress" in page and "baseline set" in page
-    assert '<div class="k">gating</div><div class="v">1</div>' in page
-    assert "failed: gitleaks" in page
-    assert "Degradations — why this run is not a clean bill" in page and "boom" in page
+    assert 'data-metric="gating">1</strong>' in page
+    assert 'data-metric="instances">1</strong>' in page
+    assert "Release risk" in page and "Validation coverage" in page and "Run confidence" in page
+    assert "Failed arms: gitleaks" in page
+    assert "Run limitations" in page and "Technical details" in page and "boom" in page
     for link in ("summary.md", "merged.sarif", "findings.json", "manifest.json", "policy.json",
                  "raw/semgrep/", "raw/claude-analysis_attack-path/attack-path.md",
                  "verify-patch/", "exports/"):
@@ -159,11 +171,11 @@ def test_dashboard_gate_tiles_next_steps_and_where_to_look(tmp_path):
     assert "dual-use: kept out of shareable exports" in page
     clean = _page([], dict(MANIFEST, exit_code=0, counts={"total": 0, "by_severity": {},
                                                           "by_state": {}}, degradations=[]))
-    assert 'class="gate pass">GATE: PASS' in clean and "No open finding at or above" in clean
+    assert 'class="gate pass">RELEASE DECISION: CLEAR' in clean and "No open finding at or above" in clean
     degraded = _page([], dict(MANIFEST, exit_code=3, counts={"total": 0, "by_severity": {},
                                                              "by_state": {}},
                               degradations=[{"kind": "no_arms_succeeded", "detail": "x"}]))
-    assert "DEGRADED" in degraded and "NOT a clean bill" in degraded
+    assert "ASSESSMENT STATUS: INCOMPLETE" in degraded and "not mean clean code" in degraded
 
 
 def test_manifest_paths_are_linked_only_when_they_are_relative_run_paths():
@@ -220,7 +232,7 @@ def test_scan_writes_summary_html_and_points_latest(tmp_path):
     (target / "app" / "x.py").write_text("q = 1\n")
     run = _scan(target)
     page = run.out_dir / "summary.html"
-    assert page.is_file() and "<h1>security-council report" in page.read_text()
+    assert page.is_file() and "<h1>Application Security Assessment</h1>" in page.read_text()
     assert any(r["format"] == "html" and r["path"].endswith("summary.html")
                for r in run.manifest["reports"])
     latest = run.out_dir.parent / "latest"
@@ -250,8 +262,11 @@ def test_runs_report_latest_and_open(tmp_path, capsys, monkeypatch):
     # report with no run dir = the latest run
     assert cli_main(["report", *t]) == 0
     assert json.loads(capsys.readouterr().out)["run_id"] == run.run_id
-    assert cli_main(["report", "--format", "html", *t]) == 0
-    assert "<h1>security-council report" in capsys.readouterr().out
+    assert cli_main(["report", "--format", "html", "--system-name",
+                     "Investigative Management System (IMS)", *t]) == 0
+    html = capsys.readouterr().out
+    assert "<h1>Application Security Assessment</h1>" in html
+    assert "Investigative Management System (IMS)" in html
     # --open re-renders summary.html and hands it to the browser (stubbed)
     opened = []
     monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url) or True)

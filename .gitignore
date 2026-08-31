@@ -30,3 +30,5 @@ __pycache__/
 
 # local benchmark corpora (never vendored — GPL; converter-only lane)
 .corpora/
+.superdesign/tmp/
+.preview/

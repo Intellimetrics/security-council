@@ -142,7 +142,7 @@ def test_report_bundle_writes_audience_sets(tmp_path, capsys):
     assert {p.name for p in exports.iterdir()} == expect
     cklb_doc = json.loads((exports / "checklist.cklb").read_text())
     assert cklb_doc["stigs"][0]["stig_id"] == "Application_Security_Development_STIG"
-    assert "GATE" in (exports / "summary.html").read_text()
+    assert "RELEASE DECISION" in (exports / "summary.html").read_text()
     out = capsys.readouterr().out
     assert out.count("wrote ") == 9
 

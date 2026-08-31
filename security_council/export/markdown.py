@@ -33,6 +33,20 @@ _SPECIAL_RE = re.compile(r"([\\`*_\[\]<>|~])")
 _LINE_START_RE = re.compile(r"(?m)^(\s*)([#>]|[-+]\s|\d+[.)]\s)")
 _URL_RE = re.compile(r"(?i)\b(https?|ftp)(://)")
 _FENCE_RE = re.compile(r"`{3,}")
+_PRESENTATION_META_RE = re.compile(
+    r"^(?:Codex Security confidence|Validation(?: status)?):",
+    re.IGNORECASE,
+)
+_PRESENTATION_APPENDIX_RE = re.compile(
+    r"(?:^|\s+)Additional (?:validated (?:detail|summary|requirement)|validation):.*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+_REVIEW_LABEL = {
+    "prosecutor": "risk confirmation",
+    "defender": "risk challenge",
+    "adjudicator": "independent assessment",
+}
 
 _LANG_BY_EXT = {
     "py": "python", "js": "javascript", "mjs": "javascript", "ts": "typescript", "tsx": "tsx",
@@ -93,6 +107,20 @@ def _enum(value: object) -> str:
     """
     s = re.sub(r"\s+", " ", _CTRL_RE.sub("", "" if value is None else str(value))).strip()
     return s.replace("|", "\\|")
+
+
+def _review_label(role: str) -> str:
+    """Present internal panel roles as professional assessment functions."""
+    return _REVIEW_LABEL.get(role, "independent review")
+
+
+def _report_description(text: str) -> str:
+    """Remove tool-internal assessment prose from presentation text."""
+    paragraphs = re.split(r"\n\s*\n", text or "")
+    visible = "\n\n".join(
+        p for p in paragraphs if not _PRESENTATION_META_RE.match(p.strip())
+    )
+    return _PRESENTATION_APPENDIX_RE.sub("", visible).strip()
 
 
 def _code(text: object, limit: int = 120, *, cell: bool = False) -> str:
@@ -244,16 +272,17 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
         fp = sum(1 for f in convened if f.validation.verdict == "false_positive")
         nh = sum(1 for f in convened if f.validation.verdict in ("needs_human", "uncertain"))
         demoted = sum(1 for f in findings if _is_demoted(f))
-        out.append(f"- **{len(findings)} findings** (root-cause clusters): {sev_txt}")
+        out.append(f"- **{len(findings)} finding instances** (observed locations; recurring "
+                   f"patterns may share a root cause): {sev_txt}")
         out.append(f"- **Corroboration:** {corroborated} confirmed by ≥2 independent vendor families · "
                    f"{singles} only one eligible arm (singleton-by-policy) · {uncovered} uncovered")
         if validated:
             if convened:
-                line = (f"- **External validator panel:** {len(convened)} cross-examined "
+                line = (f"- **External validator panel:** {len(convened)} reviewed "
                         f"({len(quorum)} reached two-vendor quorum) → {tp} true positive · "
                         f"{fp} false positive (demoted) · {nh} need human review")
             else:
-                line = "- **External validator panel:** 0 cross-examined (0 reached two-vendor quorum)"
+                line = "- **External validator panel:** 0 reviewed (0 reached two-vendor quorum)"
             if host_validated:
                 line += (f" · **Daybreak host validation:** {len(host_validated)} records"
                          f" ({len(validated) - len(convened)} without an external panel)")
@@ -484,9 +513,9 @@ def _method(findings: list[Finding], manifest: dict) -> list[str]:
                 panel.setdefault(op.participant, set()).add(op.model_id or "?")
     if panel:
         bits = [f"{_code(p)} ({', '.join(_code(m) for m in sorted(ms))})" for p, ms in sorted(panel.items())]
-        out.append(f"- **Validator panel participants:** {'; '.join(bits)} — roles prosecutor / "
-                   "defender / adjudicator on different vendors; every citation re-verified "
-                   "against the repository")
+        out.append(f"- **Independent reviewers:** {'; '.join(bits)} — confirmation, challenge, "
+                   "and final assessment were separated across vendors; evidence references were "
+                   "verified against the repository")
     out.append("- **Clustering:** findings are grouped by root cause across arms; fingerprints are "
                "line-drift-stable and never contain line numbers.")
     cal = manifest.get("calibration") or {}
@@ -577,21 +606,20 @@ def _detail(i: int, f: Finding, scores: dict | None = None) -> list[str]:
                       if f.disposition.state == "refuted" and f.disposition.lifecycle == "open" else ""))
         ec = v.evidence_check or {}
         if ec:
-            out.append(f"  - citations: {ec.get('citations_verified', 0)}/{ec.get('citations_total', 0)} "
-                       f"verified · {ec.get('hallucinated', 0)} hallucinated"
-                       + (" · **defender hallucinated → escalated**" if ec.get("defender_hallucinated") else ""))
+            out.append(f"  - evidence references: {ec.get('citations_verified', 0)}/"
+                       f"{ec.get('citations_total', 0)} verified · "
+                       f"{ec.get('hallucinated', 0)} unsupported"
+                       + (" · **unsupported challenge evidence → escalated**"
+                          if ec.get("defender_hallucinated") else ""))
         if v.panel:
             out.append("")
-            out.append("  | Role | Participant | Model | Verdict | Citations | Status |")
+            out.append("  | Review function | Reviewer | Model | Assessment | Evidence | Status |")
             out.append("  |---|---|---|---|---|---|")
             for op in v.panel:
                 ver = sum(1 for ct in op.citations if ct.verified is True)
-                out.append(f"  | {_enum(op.role)} | {_cell(op.participant)} | {_cell(op.model_id or '—', 40)} | "
+                out.append(f"  | {_cell(_review_label(op.role))} | {_cell(op.participant)} | {_cell(op.model_id or '—', 40)} | "
                            f"{_enum(op.verdict)} | {ver}/{len(op.citations)} | {_enum(op.status)} |")
             out.append("")
-            for op in v.panel:
-                if op.rationale:
-                    out.append(f"  - *{_enum(op.role)}*: {_esc(op.rationale, limit=400)}")
     else:
         out.append(f"- **validation** not run · state {_code(f.disposition.state)}")
     if f.package:
@@ -604,22 +632,28 @@ def _detail(i: int, f: Finding, scores: dict | None = None) -> list[str]:
         if pk.advisory_ids:
             bits.append(", ".join(_code(a) for a in pk.advisory_ids[:5]))
         out.append(f"- **package** {' · '.join(bits)}")
-    if f.description and f.description != f.title:
+    description = _report_description(f.description)
+    if description and description != f.title:
         out.append("")
-        out.append(_esc(f.description, limit=1500, inline=False))
+        out.append(_esc(description, limit=1500, inline=False))
     if primary and primary.snippet and not f.package:   # a manifest line says nothing about a CVE
         out.append("")
         out += _fence(primary.snippet, primary.uri)
     elif primary and f.taxonomy.cwe_family == "secrets":
         out.append("")
         out.append("_snippet redacted (secret material)_")
-    if f.remediation and f.remediation.summary:
+    remediation_summary = _report_description(f.remediation.summary) if f.remediation else ""
+    if remediation_summary:
         out.append("")
-        out.append(f"**Remediation:** {_esc(f.remediation.summary, limit=600)}"
+        out.append(f"**Remediation:** {_esc(remediation_summary, limit=600)}"
                    + (f" (effort {_enum(f.remediation.effort)})" if f.remediation.effort else ""))
         if f.remediation.guidance:
+            remediation_guidance = _report_description(f.remediation.guidance)
+        else:
+            remediation_guidance = ""
+        if remediation_guidance:
             out.append("")
-            out.append(_esc(f.remediation.guidance, limit=1200, inline=False))
+            out.append(_esc(remediation_guidance, limit=1200, inline=False))
     if f.rule.help_uri:
         out.append(f"- **reference** {_esc(f.rule.help_uri, limit=200)}")
     out.append("")
@@ -662,8 +696,8 @@ def _analysis_artifacts(manifest: dict) -> list[str]:
         return []
     out = ["## Analysis artifacts", "",
            "Analysis jobs produce documents, not gate-able findings; they are attached "
-           "here and never enter the finding results or the gate. `house:<cli>` means "
-           "security-council's own prompt was run through that CLI.", "",
+           "here and never enter the finding results or the gate. `house:<cli>` identifies "
+           "the CLI used for the analysis.", "",
            "| Kind | Producer | Model | Path | Note |", "|---|---|---|---|---|"]
     for a in arts:
         posture = a.get("safeguard_posture")
@@ -768,7 +802,8 @@ def _footer(manifest: dict) -> list[str]:
         shown = posixpath.basename(path) if common else path
         out.append(f"- {_code(shown, 400)} ({_enum(r.get('format'))})")
     out.append("")
-    out.append("_Generated by security-council. Findings are clustered by root cause; corroboration is "
+    out.append("_Generated by security-council. Findings are correlated across arms at matching code "
+               "locations; corroboration is "
                "category-aware (only arms eligible to report a category count); validator verdicts "
                "demote but never hide a finding; crypto findings are never auto-suppressed._")
     out.append("")

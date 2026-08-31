@@ -64,7 +64,7 @@ def test_renders_real_findings_with_header_summary_register_and_details():
     assert md.startswith("# security-council report — run `20260820_120000`")
     assert "commit `abcdef123456`" in md and "branch `main`" in md
     assert "FAIL — gating findings present" in md
-    assert f"**{len(fs)} findings**" in md
+    assert f"**{len(fs)} finding instances**" in md
     assert len(_register_rows(md)) == len(fs)
     assert "## Findings" in md and "## Method & attestation" in md and "## Artifacts" in md
     # every finding gets a numbered detail heading
@@ -147,6 +147,15 @@ def test_validated_finding_shows_panel_and_refuted_goes_to_appendix_not_hidden()
     panel.validate_finding(tp, repo_root=".", runner=_runner([
         ("claude", "for", "yes", [_cite()]), ("codex", "against", "yes", [_cite()]),
         ("antigravity", "neutral", "yes", [_cite()])]))
+    tp.validation.panel[0].rationale = "MODEL_TRANSCRIPT_MARKER"
+    tp.description += ("\n\nCodex Security confidence: high — internal scoring note."
+                       "\n\nValidation: validated — internal workflow note."
+                       "\n\nAdditional validated detail: MODEL_APPENDIX_MARKER")
+    tp.remediation = m.Remediation(
+        summary="Use parameterized queries. Additional validated requirement: MODEL_REQUIREMENT_MARKER",
+        guidance="Bind every value.\n\nAdditional validation: MODEL_GUIDANCE_MARKER",
+        effort="S",
+    )
     fp = val_finding(family="xss")
     fp.taxonomy = m.Taxonomy(cwe=["CWE-79"], cwe_family="xss")
     fp.fingerprints = m.Fingerprints(path_cwe_sink="pathCweSink/v1:" + "1" * 32,
@@ -160,11 +169,18 @@ def test_validated_finding_shows_panel_and_refuted_goes_to_appendix_not_hidden()
     assert fp.disposition.state == "refuted"
     md = markdown.to_markdown([tp, fp], _manifest([tp, fp]))
     # summary line
-    assert ("2 cross-examined (2 reached two-vendor quorum) → 1 true positive · "
+    assert ("2 reviewed (2 reached two-vendor quorum) → 1 true positive · "
             "1 false positive (demoted) · 0 need human review") in md
     assert "**Demoted, not hidden:** 1 finding(s)" in md
     # detail: panel table rows with verified citation counts; state + never-auto-close note
-    assert "| prosecutor | claude | m | true_positive | 1/1 | ok |" in md
+    assert "| risk confirmation | claude | m | true_positive | 1/1 | ok |" in md
+    assert "MODEL_TRANSCRIPT_MARKER" not in md
+    assert "internal scoring note" not in md and "internal workflow note" not in md
+    assert "MODEL_APPENDIX_MARKER" not in md
+    assert "MODEL_REQUIREMENT_MARKER" not in md
+    assert "MODEL_GUIDANCE_MARKER" not in md
+    assert "**Remediation:** Use parameterized queries. (effort S)" in md
+    assert "Bind every value." in md
     assert "→ state `validated`" in md
     assert "→ state `refuted` · lifecycle remains **open** (auto-demote, never auto-close)" in md
     # appendix lists the refuted finding and explains nothing is deleted
@@ -173,7 +189,7 @@ def test_validated_finding_shows_panel_and_refuted_goes_to_appendix_not_hidden()
     assert "panel false_positive (1.00)" in app
     assert "nothing is deleted" in app
     # attestation: validator participants + models
-    assert "**Validator panel participants:** `antigravity` (`m`); `claude` (`m`); `codex` (`m`)" in md
+    assert "**Independent reviewers:** `antigravity` (`m`); `claude` (`m`); `codex` (`m`)" in md
 
 
 def test_human_accepted_risk_appears_in_appendix_with_operator_and_expiry():

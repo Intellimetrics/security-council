@@ -285,10 +285,10 @@ def test_validate_without_a_backend_is_a_visible_degradation(tmp_path, monkeypat
         "no_validation_record": 0,
     }
     md = (tmp_path / "out" / "summary.md").read_text()
-    assert "0 cross-examined" in md and "1 not examined" in md
+    assert "0 reviewed" in md and "1 not examined" in md
     assert "validator_unavailable" in md
-    # R15b: the HTML dashboard tile read `validation is not None` and said
+    # R15b: the HTML dashboard used to read `validation is not None` and said
     # "validated 1 — cross-examined by the panel" while the markdown said 0
     html = (tmp_path / "out" / "summary.html").read_text()
     assert "1 not examined" in html
-    assert 'external panel</div><div class="v">0' in html     # tile counts convened panels only
+    assert 'data-metric="external-panel">0' in html  # counts convened panels only
