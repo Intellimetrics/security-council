@@ -19,6 +19,7 @@ import posixpath
 import re
 
 from ..model import CLOSED_LIFECYCLES, Finding
+from .. import rollup as _rollup
 
 _SEV_ORDER = ("critical", "high", "medium", "low", "info")
 _SEV_RANK = {s: i for i, s in enumerate(_SEV_ORDER)}
@@ -288,6 +289,12 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
                    f"patterns may share a root cause): {sev_txt}")
         out.append(f"- **Corroboration:** {corroborated} confirmed by ≥2 independent vendor families · "
                    f"{singles} only one eligible arm (singleton-by-policy) · {uncovered} uncovered")
+        groups = _rollup.pattern_groups(findings)
+        if groups:
+            top = groups[0]
+            out.append(f"- **Concentration:** {len(groups)} recurring pattern(s) cover "
+                       f"{sum(g.count for g in groups)} instances — top {_code(top.rule)} × {top.count} "
+                       "(see Recurring patterns)")
         if validated:
             if convened:
                 line = (f"- **External validator panel:** {len(convened)} reviewed "
@@ -838,6 +845,37 @@ def _footer(manifest: dict) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
+def _patterns(findings: list[Finding], manifest: dict) -> list[str]:
+    """Recurring-pattern rollup: concentration without collapse. Every member
+    instance keeps its own register row and detail entry below."""
+    groups = _rollup.pattern_groups(findings)
+    if not groups:
+        return []
+    thr = (manifest.get("policy") or {}).get("fail_on_severity", "high")
+    thr_rank = _SEV_RANK.get(thr, 1)
+    covered = sum(g.count for g in groups)
+    out = ["## Recurring patterns", "",
+           f"{len(groups)} repeated rule(s) account for {covered} of {len(findings)} "
+           "finding instances. A repeated rule is **not** one proven root cause "
+           "(no source-to-sink trace joins them); each instance keeps its own "
+           "entry in the register and details below.", "",
+           "| Pattern | Family | Instances | Highest | Gating | Cross-examined | Example locations |",
+           "|---|---|---|---|---|---|---|"]
+    for g in groups:
+        gating = sum(1 for m in g.members
+                     if _SEV_RANK.get(m.severity.label, 9) <= thr_rank
+                     and not _is_demoted(m))
+        reviewed = sum(1 for m in g.members
+                       if m.validation is not None and m.validation.convened())
+        examples = " · ".join(
+            _code(f"{m.locations[0].uri}:{m.locations[0].start_line}", cell=True)
+            for m in g.members[:3] if m.locations)
+        out.append(f"| {_code(g.rule, cell=True)} | {_enum(g.family)} | {g.count} | "
+                   f"{_sev_badge(g.highest_severity)} | {gating} | {reviewed} | {examples} |")
+    out.append("")
+    return out
+
+
 def to_markdown(findings: list[Finding], manifest: dict, *, detail_limit: int | None = 50,
                 scores: dict | None = None) -> str:
     """Render the executive summary + findings register + top-N details.
@@ -851,6 +889,7 @@ def to_markdown(findings: list[Finding], manifest: dict, *, detail_limit: int | 
     out: list[str] = []
     out += _header(manifest, ordered)
     out += _summary(ordered, manifest)
+    out += _patterns(ordered, manifest)
     out += _method(ordered, manifest)
     out += _register(ordered, scores)
     if ordered:

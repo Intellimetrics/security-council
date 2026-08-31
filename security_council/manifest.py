@@ -7,6 +7,7 @@ from collections import Counter
 from . import __version__
 from .model import Finding
 from .normalize import coverage as _coverage
+from . import rollup as _rollup
 
 SCHEMA_VERSION = 1
 
@@ -75,6 +76,9 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
         # patch sha + base commit. Machine evidence — a human still decides.
         "verify_fix": verify_fix,
         "validation": validation or {"requested": False},
+        # concentration view: repeated rules are NOT merged (no proven shared
+        # root cause) but their weight must be visible — see rollup.py
+        "patterns": _rollup.rollup_json(merged),
         "degradations": degradations,
         "exit_code": exit_code,
         "reports": reports,

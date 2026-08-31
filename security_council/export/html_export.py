@@ -24,6 +24,7 @@ import html
 from pathlib import Path
 
 from .. import policy as _policy
+from .. import rollup as _rollup
 from ..model import Finding
 from . import markdown as _markdown
 from . import mdrender
@@ -452,6 +453,25 @@ def _dashboard(findings: list[Finding], manifest: dict, run_dir: Path | None) ->
         '<p class="relation-note">Corroboration means independent scanners found the same issue; it is not '
         f'validator review.{" Failed arms: " + _e(failed_names) + "." if failed_names else ""}</p></section>'
         '</div>')
+
+    groups = _rollup.pattern_groups(findings)
+    if groups:
+        covered = sum(g.count for g in groups)
+        rows = "".join(
+            f'<tr><td><code>{_e(g.rule)}</code></td><td>{_e(g.family)}</td>'
+            f'<td>{_e(g.count)}</td>'
+            f'<td class="sev {_e(g.highest_severity)}">{_e(g.highest_severity)}</td>'
+            f'<td>{_e(", ".join(g.components[:5]) or "—")}</td></tr>'
+            for g in groups[:8])
+        out.append(
+            '<p class="summary-label">Concentration</p>'
+            f'<div class="box"><p>{_e(len(groups))} recurring pattern(s) cover '
+            f'{_e(covered)} of {_e(total)} finding instances. A repeated rule is '
+            'not one proven root cause; every instance keeps its own entry in '
+            'the findings below.</p>'
+            '<div class="tbl"><table><tr><th>Pattern</th><th>Family</th>'
+            '<th>Instances</th><th>Highest</th><th>Components</th></tr>'
+            f'{rows}</table></div></div>')
 
     if degr:
         partial_arms = [str(d.get("arm")) for d in degr

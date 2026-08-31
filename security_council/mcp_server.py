@@ -252,7 +252,25 @@ def _manifest(run_dir: Path) -> dict:
 def sc_report(arguments: dict) -> dict:
     run_dir = _resolve_dir(arguments, "run_dir", default_to_root=False)
     m = _manifest(run_dir)
+    if arguments.get("system_name"):     # same identity field as `report --system-name`
+        m = dict(m, report_identity={"system_name": str(arguments["system_name"])})
     fmt = arguments.get("format") or "json"
+    if arguments.get("bundle"):
+        from types import SimpleNamespace
+
+        from .cli import _report_bundle
+        bundle = arguments["bundle"]
+        if bundle not in ("triage", "gov", "all"):
+            raise ValueError(f"unknown bundle {bundle!r} (triage|gov|all)")
+        shim = SimpleNamespace(run_dir=str(run_dir), bundle=bundle, out_dir=None,
+                               app_name=arguments.get("app_name"),
+                               app_version=arguments.get("app_version"),
+                               scan_date=arguments.get("scan_date"),
+                               classification=arguments.get("classification") or "UNCLASSIFIED")
+        _report_bundle(shim, m)
+        out_dir = run_dir / "exports"
+        return {"out_dir": str(out_dir),
+                "written": sorted(p.name for p in out_dir.iterdir() if p.is_file())}
     if fmt == "json":
         return {"run_id": m["run_id"], "counts": m["counts"], "exit_code": m.get("exit_code"),
                 "disposition_actions": m.get("disposition_actions"),
@@ -264,6 +282,9 @@ def sc_report(arguments: dict) -> dict:
     if fmt == "md":
         from .export import markdown
         return {"markdown": markdown.to_markdown(findings, m)}
+    if fmt == "csv":
+        from .export import csv_export
+        return {"csv": csv_export.to_csv(findings)}
     if fmt == "html":
         from .export import html_export
         md = run_dir / "summary.md"
@@ -279,7 +300,7 @@ def sc_report(arguments: dict) -> dict:
         body, meta = emass.to_emass_static_code_scans(
             findings, application_name=app, version=ver, scan_date=int(scan_date))
         return {"body": body, "meta": meta}
-    raise ValueError(f"unknown format {fmt!r} (json|md|html|emass)")
+    raise ValueError(f"unknown format {fmt!r} (json|md|csv|html|emass)")
 
 
 def _latest_run(target: Path) -> Path | None:
@@ -609,9 +630,17 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
      sc_consolidate),
     ("sc_doctor", "Check which arms are available.",
      _obj({"target": _target_prop()}), sc_doctor),
-    ("sc_report", "Summarize or export a run directory (json | md | html | emass).",
+    ("sc_report", "Summarize or export a run directory (json | md | csv | html | emass), "
+     "or write a full audience bundle into <run_dir>/exports.",
      _obj({"run_dir": {"type": "string"},
-           "format": {"enum": ["json", "md", "html", "emass"]},
+           "format": {"enum": ["json", "md", "csv", "html", "emass"]},
+           "system_name": {"type": "string", "description":
+                           "Display name for the assessed system (same field as "
+                           "`report --system-name`)."},
+           "bundle": {"enum": ["triage", "gov", "all"], "description":
+                      "Write this audience's report set into <run_dir>/exports "
+                      "and return the file list."},
+           "classification": {"type": "string"},
            "app_name": {"type": "string"}, "app_version": {"type": "string"},
            "scan_date": {"type": "integer"}}, ["run_dir"]),
      sc_report),

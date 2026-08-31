@@ -668,6 +668,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
 
         # The same selection model the validation loop used — never a parallel
         # reimplementation (they drift, and then these numbers lie).
+        from .rollup import pattern_key as _pattern_key
         from .validate.panel import SKIP_VALIDATION_FAMILIES, select_for_validation
         with_validation = [f for f in merged if f.validation is not None]
         host_validated = [f for f in with_validation if any(
@@ -697,6 +698,10 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             "not_selected": len(eligible_ranked) - len(selected_external),
             "deterministic_skipped": len(skipped_validation),
             "no_validation_record": len(merged) - len(with_validation),
+            "selection_strategy": ("severity_ranked_pattern_round_robin"
+                                   if validate else None),
+            "distinct_patterns_selected": len({_pattern_key(f)
+                                               for f in selected_external}),
         }
 
         policy_rows = policy_mod.decisions_to_json(decisions)

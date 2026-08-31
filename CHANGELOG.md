@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.3.0 — unreleased
+
+**Upgrading from 0.2.0:** no data migration. Existing signed decisions,
+baselines, and canonical run artifacts still verify and can now be REUSED:
+`security-council consolidate` (and the `sc_consolidate` MCP tool) combines
+prior runs and sealed Codex Security bundles into one gated report without
+re-running their producers. One report-language change: exit 0 renders as
+`RELEASE DECISION: CLEAR` only for a full-scope run with zero degradations;
+diff/partial or degraded passes say so in the headline.
+
+### Added
+
+- **`consolidate` verb + `sc_consolidate` MCP tool** — snapshot-bound imports
+  of prior security-council runs and sealed Codex Security bundles.
+  Import-only *by kind* (nothing that can execute a producer passes this
+  verb), revision-bound to the current clean checkout (fails closed on a
+  mismatch or dirty tree), and import paths come only from flags/tool
+  arguments — never from the scanned repository's config. `--validate`
+  convenes the external panel over the consolidated findings.
+- **Recurring-pattern rollup** — reports and the manifest now show where
+  repeated rules concentrate (pattern, family, instance count, highest
+  severity, gating and cross-examined counts, example locations) without
+  merging instances: a repeated rule is not one proven root cause, and every
+  instance keeps its own entry.
+- **Representative validation sampling** — `--validate-max N` is now spent
+  one representative per recurring pattern (severity-ranked round-robin)
+  before any pattern gets a second panel; `manifest.validation` records the
+  strategy and the distinct patterns sampled alongside the existing
+  eligible/selected/convened/failed accounting.
+- **Leadership HTML report** — decision banner with recommended action,
+  "how the numbers relate" panels (release risk, validation coverage, run
+  confidence), collapsible engineering evidence, print-first styling, and
+  `report --system-name` / `report_identity.system_name` for the assessed
+  system's display name. `sc_report` reaches parity: `csv` and `html`
+  formats, `system_name`, and `bundle: triage|gov|all` writing the audience
+  report set into `<run_dir>/exports`.
+- **MCP scan controls** — operator `config_path` / `ignore_repo_config`,
+  `profile`, `deep`, `reports_root`, `min_arms`, `sbom`, validation
+  budget/timeout, and validator peer selection (`validator_current` +
+  `validator_participants`, external peers only).
+- Absent validator seats now render their reason (launch failure, timeout)
+  under the panel table; failed agentic arms write redacted diagnostics to
+  `raw/<arm>/cli-output.txt`.
+
+### Changed — trust surface
+
+- **Host-carried validation is advisory, never deciding.** A seat imported
+  with a sealed bundle (`participant *-current`) cannot supply the second
+  confirming voice or the second refuting vendor family in a live panel, and
+  a finding whose only validation is host-carried caps at `likely`:
+  disposition `validated` now requires a convened external panel
+  (`model.state_for_validation`, one rule shared by the live panel and
+  cluster merge). Imported verdicts map conservatively — only explicit
+  positive status tokens confirm; prose alone stays `uncertain`; imported
+  `false_positive` records never demote at merge; imported closed/suppressed
+  dispositions never relieve the gate.
+- **Scoped release banner** — exit 0 headlines `RELEASE DECISION: CLEAR`
+  only for full scope with zero degradations, else
+  `CLEAR FOR SCOPE (DIFF/…)` or `CLEAR — WITH LIMITATIONS`.
+- **Factual report branding** — badge derives from scan scope and the
+  assessment line from the arms that actually ran; the fixed "Deep Scan"
+  claim and the hardcoded "Daybreak" label are gone (host validation is
+  labeled by the seat's vendor family).
+- **Vendor text is evidence** — tool-internal appendix stripping moved into
+  the codex-security normalizer (visible elision marker; the sealed bundle
+  under `raw/` keeps the original); render-time filtering no longer
+  pattern-matches any other vendor's prose.
+- Validator subprocess timeouts now kill the whole process group, so a
+  wedged peer CLI holding its pipes can no longer hang a scan.
+
 ## 0.2.0 — 2026-08-27
 
 **Upgrading from 0.1.0:** re-run `security-council baseline set` once so the

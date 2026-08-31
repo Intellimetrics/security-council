@@ -283,6 +283,8 @@ def test_validate_without_a_backend_is_a_visible_degradation(tmp_path, monkeypat
         "not_selected": 0,
         "deterministic_skipped": 0,
         "no_validation_record": 0,
+        "selection_strategy": "severity_ranked_pattern_round_robin",
+        "distinct_patterns_selected": 1,
     }
     md = (tmp_path / "out" / "summary.md").read_text()
     assert "0 reviewed" in md and "1 not examined" in md

@@ -35,7 +35,7 @@ wherever the extra is installed.
 | `sc_scan` | Run a scan with profile/deep effort, operator config, repository-config refusal, reports root, arms, SBOM, validation limits/budget, current-host/external-peer selection, and gate-policy controls; returns run summary + exit code |
 | `sc_consolidate` | Combine prior runs / sealed Codex Security bundles into one gated report without re-running producers (revision-bound; import arms only) |
 | `sc_doctor` | Arm availability with reasons |
-| `sc_report` | Summarize/export a run: `json`, `md`, or `emass` |
+| `sc_report` | Summarize/export a run: `json`, `md`, `csv`, `html`, or `emass`; `system_name` for report identity; `bundle: triage\|gov\|all` writes the audience report set into `<run_dir>/exports` |
 | `sc_last_run` | Latest run's summary for a target |
 | `sc_baseline` | Show or set the operator baseline |
 | `sc_suppress` | Record a **human** suppression/accepted-risk (operator + justification required, expiring, root-cause-scoped) |

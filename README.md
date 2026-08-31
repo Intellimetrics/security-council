@@ -100,7 +100,7 @@ reads like a report a human wrote:
 - **Gate:** FAIL — gating findings present (exit 1)
 
 ## At a glance
-- **2 findings** (root-cause clusters): 1 high · 1 medium
+- **2 finding instances** (observed locations; recurring patterns may share a root cause): 1 high · 1 medium
 - **Corroboration:** 1 confirmed by ≥2 independent vendor families · 1 only one eligible arm
 
 | # | Severity | Title                          | Location          | Sources             |
@@ -113,7 +113,7 @@ exactly what the report highlights. The exit code (`1` here, because a
 high-severity finding is open) is what fails a CI build.
 
 Prefer a page? Every run also writes `summary.html` — the same report with a
-gate banner, tiles, and links to every output file. `security-council report
+decision banner, at-a-glance panels, and links to every output file. `security-council report
 --open` opens the latest one; `security-council runs` lists them all.
 
 **➡ Full walkthrough, including how to handle a false positive:

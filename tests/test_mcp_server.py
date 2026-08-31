@@ -183,3 +183,22 @@ def test_tool_registry_schemas_are_complete(root):
         assert desc and schema["type"] == "object"
         assert schema["additionalProperties"] is False
         assert callable(fn) and srv.HANDLERS[name] is fn
+
+
+def test_sc_report_parity_system_name_csv_and_bundle(root, monkeypatch):
+    _fake_arms(monkeypatch)
+    out = srv.sc_scan({"arms": "semgrep"})
+    run_dir = out["out_dir"]
+    # csv format
+    csv_out = srv.sc_report({"run_dir": run_dir, "format": "csv"})
+    assert csv_out["csv"].splitlines()[0].startswith('"finding_id"')
+    # system identity flows into the HTML exactly like `report --system-name`
+    page = srv.sc_report({"run_dir": run_dir, "format": "html",
+                          "system_name": "Investigative Management System"})
+    assert "Investigative Management System" in page["html"]
+    # bundle writes the audience set into <run_dir>/exports and lists it
+    bundle = srv.sc_report({"run_dir": run_dir, "bundle": "triage"})
+    assert sorted(bundle["written"]) == ["findings.csv", "summary.html", "summary.md"]
+    assert bundle["out_dir"].endswith("exports")
+    with pytest.raises(ValueError, match="unknown bundle"):
+        srv.sc_report({"run_dir": run_dir, "bundle": "everything"})
