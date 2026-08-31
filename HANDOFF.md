@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-31 (0.2.0 released; IMS dogfood branch reviewed, council-hardened R16, consolidate verb shipped — see §0.1). Read this first when resuming; it is the single entry point._
+_Last updated: 2026-08-31 (IMS dogfood branch MERGED to main at 6bb2396 as 0.3.0-unreleased after council rounds R16–R18; see §0.1). Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -174,11 +174,46 @@ rebuilt to construct their prior-run dir in-test. Live smokes: quick-profile
 docker scan of a staged seedrepo (exit 1), then `consolidate --import-run` of
 that run (identical 17 findings, sources carried, exit 1, sub-second).
 
-Still open from the dogfood list: pattern/recurrence rollup (item 1),
-representative sampling for repeated patterns (item 2 — selection metadata now
-exists in `manifest.validation`), `sc_report` CLI parity (item 4). Also open:
-a LIVE `consolidate --validate` run against real llm-council, and the 0.3.0
-version bump + CHANGELOG before any merge to main.
+### Merge gate and merge (2026-08-31, later the same day)
+
+All dogfood follow-ups landed: recurring-pattern rollup (`rollup.py` +
+"Recurring patterns" in markdown, Concentration box in HTML,
+`manifest.patterns`), representative validation sampling (pattern round-robin
+WITHIN severity bands; severity absolute across bands; histograms in
+`manifest.validation`), `sc_report` parity (csv/html/system_name/bundle), the
+0.3.0 bump, and a live `consolidate --validate` run through real llm-council
+(3/3 seats, quorum, `validated` earned under the stricter rule).
+
+The merge went through three council rounds on the R16 continuation thread:
+
+- **R17 (3/3 NO-SHIP):** six blockers, all fixed in `ee5807c` — sc_report
+  bundle symlink escape (a committable run dir could redirect writes outside
+  the MCP root), repo-controlled `reports.outdir` escape, cross-band severity
+  violation in the sampler, synthesized rule ids (`claude-security/<cwe>`,
+  `sc/<family>`, `*/unknown`) collapsing distinct agent findings into one
+  pattern/representative, demoted findings inflating the rollup, and
+  `validate-max <= 0` edge cases. One R17 find (rollup gating vs real gate
+  under `gate_baseline: new`) had been self-caught and fixed pre-round
+  (`6ba729a` — `policy.gating_findings` is the one report-side gate predicate).
+- **R17b re-gate (2/3 NO):** each of two fixes had shipped a regression —
+  the operator's MCP `reports_root` landed in the exact config key the new
+  repo-outdir guard discards (and any config marker is forgeable by the
+  scanned repo's YAML), so it became a `run_scan` PARAMETER with precedence
+  out_dir > reports_root > config; and the new `sc_report html` write went
+  through an unchecked `summary.html` symlink — now refused. Fixed in
+  `6bb2396`.
+- **Round 3 (3/3 SHIP):** all closures verified peer-by-peer.
+
+**MERGED:** main fast-forwarded d918a4e → `6bb2396` and pushed. 678 tests
+green; every council-named blocker is pinned by a test proven non-vacuous
+against its pre-fix source. Version is `0.3.0` with CHANGELOG section
+"unreleased" — cutting the release (tag + GitHub release + wheel rehearsal
+per §7.10) is a separate, deliberate step.
+
+Lesson worth keeping from R17b: two of six fixes introduced adjacent
+regressions that only the re-gate caught — after a must-fix pass, re-gate
+with the SAME reviewers before shipping, and hold the tree still while a
+round is reading it.
 
 ## 1. Where everything lives
 
