@@ -50,7 +50,19 @@ class Workspace:
         # Everything else — tracked modifications, untracked SOURCE files, and
         # the .security-council.yaml config file — still counts as dirty.
         def _tool_state_only(line: str) -> bool:
-            paths = [p.strip().strip('"') for p in line[3:].split(" -> ")]
+            # No whitespace normalization: a path may legitimately begin or end
+            # with spaces (git C-quotes those). Unquote explicitly; anything we
+            # cannot parse with certainty counts as dirty (fail closed).
+            paths = []
+            for part in line[3:].split(" -> "):
+                part = part.rstrip("\n")
+                if part.startswith('"') and part.endswith('"') and len(part) >= 2:
+                    try:
+                        part = part[1:-1].encode("latin-1", "backslashreplace") \
+                                         .decode("unicode_escape")
+                    except Exception:
+                        return False
+                paths.append(part)
             return all(p == ".security-council" or p.startswith(".security-council/")
                        for p in paths)
 

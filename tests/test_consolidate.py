@@ -119,3 +119,38 @@ def test_consolidate_works_on_default_layout_runs(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert rc == 1 and payload["degradations"] == []
     assert payload["counts"]["total"] == 2
+
+
+def test_whitespace_adjacent_dirs_cannot_impersonate_the_state_dir(tmp_path):
+    # R18 (council): a dir named " .security-council" or ".security-council "
+    # is SOURCE, not tool state — whitespace-normalizing the porcelain path
+    # would have let a planted leading-space dir read as clean
+    from security_council.workspace import prepare_workspace
+    target, _ = _git_target(tmp_path)
+    ws = prepare_workspace(target, mode="inplace")
+    (target / " .security-council").mkdir()
+    (target / " .security-council" / "backdoor.py").write_text("evil = 1\n")
+    assert ws.git_info()["dirty"] is True
+    subprocess.run(["rm", "-rf", str(target / " .security-council")], check=True)
+    (target / ".security-council ").mkdir()
+    (target / ".security-council " / "b.py").write_text("evil = 2\n")
+    assert ws.git_info()["dirty"] is True
+
+
+def test_subdirectory_target_state_dir_still_counts_dirty_fail_closed(tmp_path):
+    # a target that is a SUBDIR of a larger repo: porcelain paths are
+    # repo-root-relative, so its state dir does not match the prefix and the
+    # tree reads dirty — the residual is fail-closed (consolidate refuses),
+    # never fail-open. Documented limitation, not a bypass.
+    from security_council.workspace import prepare_workspace
+    repo = tmp_path / "mono"
+    (repo / "svc" / "api").mkdir(parents=True)
+    (repo / "svc" / "api" / "app.py").write_text("x = 1\n")
+    subprocess.run(["git", "init", "-q", "."], cwd=repo, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@x", "-c", "user.name=t",
+                    "commit", "-qm", "seed"], cwd=repo, check=True)
+    ws = prepare_workspace(repo / "svc" / "api", mode="inplace")
+    (repo / "svc" / "api" / ".security-council" / "runs").mkdir(parents=True)
+    (repo / "svc" / "api" / ".security-council" / "runs" / "x.json").write_text("[]")
+    assert ws.git_info()["dirty"] is True
