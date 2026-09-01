@@ -66,6 +66,21 @@ def _refutation_block_reason(op: PanelOpinion, anchors) -> str | None:
     return None
 
 
+def _peer_failure_text(peer) -> str:
+    """The seat's reason line (A5, llm-council >= 0.23.0 `error_kind`).
+
+    A content-policy refusal is labeled distinctly from a crash/timeout: the
+    operator's fix is to rephrase the panel question as verification (the R14
+    lesson — codex's provider filter trips on exploitation phrasing), not to
+    chase infrastructure. For every other peer the pre-A5 text is unchanged.
+    """
+    if getattr(peer, "error_kind", None) == "content_refused":
+        text = ("declined on content policy — rephrase the panel question as "
+                "verification, not exploitation")
+        return text + (f" ({peer.error[:120]})" if peer.error else "")
+    return peer.blockers[0] if peer.blockers else peer.error
+
+
 def _opinion(peer, prompt_sha256: str) -> PanelOpinion:
     role = ROLE_BY_STANCE.get(peer.stance or "", "adjudicator")
     cites, malformed = _citations(peer.evidence)
@@ -91,7 +106,7 @@ def _opinion(peer, prompt_sha256: str) -> PanelOpinion:
         # ``blockers``; dropping it made a degraded panel look unexplained in
         # the canonical finding and forced operators to chase an ephemeral
         # llm-council transcript.
-        rationale=(peer.blockers[0] if peer.blockers else peer.error),
+        rationale=_peer_failure_text(peer),
         model_id=peer.model, citations=cites, citation_pass_rate=pass_rate, status=status)
 
 
@@ -282,7 +297,8 @@ def validate_finding(finding: Finding, *, repo_root, runner=council_client.run_c
         # turns this into a run-level degradation so the report never claims a
         # cross-examination happened.
         why = cr.error.strip() if cr.error else (
-            "; ".join(f"{p.name}: {p.error or 'failed'}" for p in cr.results if not p.ok)
+            "; ".join(f"{p.name}: {_peer_failure_text(p) or 'failed'}"
+                      for p in cr.results if not p.ok)
             or "no panel output")
         failures.append({"finding_id": finding.id, "error": why[:300]})
     finding.disposition.state = _state_for(finding, val)

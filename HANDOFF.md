@@ -723,13 +723,14 @@ A1's default is behavior-changing (both peers agreed).
   carries the ceiling. Build note: same-file same-family fake findings cluster
   into ONE via the CWE-gated overlap tier — fixture findings need distinct
   families or the counts under test collapse.
-- **A5 (new, $0, from the llm-council 0.25.0 assessment 2026-09-01):**
-  `council_client` reads only `error` strings from `llm-council run --json`, so a
-  panel seat refused on content policy (`error_kind: content_refused`, emitted
-  per-peer since 0.23.0 at llm-council cli.py:3174) is indistinguishable from a
-  crashed seat. Map it to a distinct seat status/rationale so the summary can say
-  "declined on content policy — rephrase as verification" (the R14 lesson)
-  instead of a generic failure.
+- **A5 — DONE 2026-09-01** (`council_client.PeerResult.error_kind` parsed from
+  `llm-council run --json`; `panel._peer_failure_text` maps
+  `error_kind: content_refused` to "declined on content policy — rephrase the
+  panel question as verification, not exploitation", used for BOTH the absent
+  seat's rationale and the run-level `validator_*` degradation; 4 tests in
+  `tests/test_validate.py`, neutering the helper fails 3). A crashed/timed-out
+  seat keeps its plain reason — the label is refusal-only. Fail-safe verdict
+  unchanged (`needs_human`). 715 tests.
 
 ### 8.2 Phase B — fix-lane design round, then the cheapest live smoke
 

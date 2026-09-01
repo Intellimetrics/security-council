@@ -29,6 +29,11 @@ class PeerResult:
     blockers: list[str] = field(default_factory=list)
     evidence: list[dict] = field(default_factory=list)
     error: str = ""
+    # llm-council >= 0.23.0 classifies per-peer failures (cli.py emits
+    # `error_kind` in --json results). `content_refused` = the provider's
+    # content policy declined the prompt — an operator-actionable failure
+    # (rephrase as verification, R14), distinct from a crash or timeout.
+    error_kind: str | None = None
 
 
 @dataclass
@@ -49,7 +54,8 @@ def parse(payload: dict) -> CouncilResult:
             name=r.get("name"), ok=bool(r.get("ok")), label=r.get("label"),
             stance=r.get("stance"), model=r.get("model"), confidence=r.get("confidence"),
             blockers=list(r.get("blockers", []) or []),
-            evidence=list(r.get("evidence", []) or []), error=r.get("error", "") or ""))
+            evidence=list(r.get("evidence", []) or []), error=r.get("error", "") or "",
+            error_kind=r.get("error_kind") or None))
     return CouncilResult(
         ok=any(p.ok for p in peers), degraded=bool(meta.get("degraded")),
         results=peers, metadata=meta, transcript_path=payload.get("transcript"))

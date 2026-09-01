@@ -283,3 +283,61 @@ def test_host_seat_never_supplies_the_second_refuting_family():
         ("claude", "for", "no", [_cite()])]))
     assert f.validation.verdict != "false_positive"
     assert f.disposition.state != "refuted"
+
+
+# --------------------------------------------------------------------- #
+# A5: content-policy refusal is a distinct, operator-actionable seat reason
+# --------------------------------------------------------------------- #
+
+def _refused_runner(refused_peer="codex"):
+    """A council where one peer failed on the provider's content policy and
+    another crashed — mirrors llm-council >= 0.23.0 per-peer error_kind."""
+    def run(prompt, *, cwd, mode="consensus", max_cost_usd=None, timeout=600):
+        return CouncilResult(ok=False, degraded=True, results=[
+            PeerResult(name=refused_peer, ok=False, label=None, stance=None, model=None,
+                       confidence=None, error="flagged for possible cybersecurity risk",
+                       error_kind="content_refused"),
+            PeerResult(name="claude", ok=False, label=None, stance=None, model=None,
+                       confidence=None, error="launch failed: enoent"),
+        ])
+    return run
+
+
+def test_transport_parses_per_peer_error_kind():
+    payload = {"metadata": {}, "results": [
+        {"name": "codex", "ok": False, "error": "refused", "error_kind": "content_refused"},
+        {"name": "claude", "ok": True, "label": "yes"}]}
+    cr = council_client.parse(payload)
+    assert cr.results[0].error_kind == "content_refused"
+    assert cr.results[1].error_kind is None          # absent key -> None, not ""
+
+
+def test_content_refused_seat_carries_a_distinct_rationale():
+    f = _finding()
+    panel.validate_finding(f, repo_root=".", runner=_refused_runner())
+    seats = {op.participant: op for op in f.validation.panel}
+    refused = seats["codex"]
+    assert refused.status == "absent"
+    assert "content policy" in refused.rationale and "verification" in refused.rationale
+    assert "flagged for possible" in refused.rationale       # original error kept as context
+    # a crashed peer keeps the plain reason — the label is ONLY for refusals
+    assert "content policy" not in seats["claude"].rationale
+    assert "enoent" in seats["claude"].rationale
+
+
+def test_content_refused_reaches_the_run_level_failure(monkeypatch):
+    f = _finding()
+    failures = []
+    panel.validate_finding(f, repo_root=".", runner=_refused_runner(), failures=failures)
+    assert not f.validation.convened()
+    why = failures[0]["error"]
+    assert "content policy" in why                     # the operator sees WHY in the degradation
+    assert f.validation.verdict == "needs_human"       # fail-safe, never demoted
+
+
+def test_content_refused_renders_in_the_summary():
+    from security_council.export import markdown
+    f = _finding()
+    panel.validate_finding(f, repo_root=".", runner=_refused_runner())
+    md = markdown.to_markdown([f], {"schema_version": 1, "counts": {}})
+    assert "seat absent" in md and "rephrase the panel question as verification" in md

@@ -25,6 +25,15 @@ budget ceiling (`selected × --validate-budget`, an upper bound handed to
 recorded as `manifest.validation.budget_ceiling_usd` and rendered on the
 summary's "Validation selection coverage" line.
 
+**Content-policy panel refusals are labeled distinctly (R19 A5):** a
+validator seat the backend reports as refused on the provider's content
+policy (`error_kind: content_refused`, emitted per-peer by llm-council
+≥ 0.23.0) now renders as "declined on content policy — rephrase the panel
+question as verification, not exploitation" in the seat's absent-reason and
+in the run-level `validator_unavailable`/`validator_failed` degradation,
+instead of a generic failure string. The fail-safe verdict is unchanged
+(`needs_human`, never demoted).
+
 ## 0.3.0 — 2026-08-31
 
 **Upgrading from 0.2.0:** no data migration. The GitHub Action tag is `Intellimetrics/security-council@v0.3.0`. Existing signed decisions,
