@@ -45,6 +45,51 @@ def _print_validation_preview(p: dict) -> None:
     print(line, file=sys.stderr)
 
 
+def _print_verify_against(result) -> None:
+    pv = result.pv
+    ag = pv.get("against") or {}
+    print(f"security-council verify-patch --against {ag.get('run_dir')}")
+    print(f"  against run {ag.get('run_id')} @ base {ag.get('base_commit')}  "
+          f"manifest sha256 {(ag.get('manifest_sha256') or '')[:12]}")
+    print(f"  patch {pv.get('patch')} sha256 {(pv.get('patch_sha256') or '')[:12]} "
+          f"at current HEAD {pv.get('base_commit')}")
+    if pv.get("precondition"):
+        pc = pv["precondition"]
+        print(f"  precondition FAILED: {pc['reason']} — {pc['detail']}")
+    cnt = pv.get("counts") or {}
+    print(f"  verdicts: {cnt.get('fixed', 0)} fixed, {cnt.get('not_fixed', 0)} not fixed, "
+          f"{cnt.get('unproven', 0)} unproven — machine evidence, requires human review "
+          "(never closes a finding, never gates)")
+    for r in pv.get("results") or []:
+        print(f"    {r.get('finding_id')}  {r.get('verdict'):<10} {r.get('uri')}  "
+              f"{'; '.join(r.get('reasons') or [])[:160]}")
+    if result.degradations:
+        print(f"  degradations: {result.degradations}")
+    print(f"  evidence: {result.out_dir}/verify-against.json")
+
+
+def _run_verify_against(args, target, config, names, patch_file, ids) -> int:
+    """`scan --verify-patch FILE --against RUN_DIR`: verify the operator's patch
+    against an OLD run's finding population (R19 A2). Evidence-only, never gates,
+    so it always exits 0 once it runs — precondition failures are graded
+    `unproven`, not usage errors."""
+    from .orchestrator import run_verify_against
+    against = Path(args.against).resolve()
+    if not against.is_dir():
+        print(f"error: --against {against} is not a directory", file=sys.stderr)
+        return EXIT_USAGE
+    result = run_verify_against(
+        target, patch_file, against, _build_arms(names, config),
+        out_dir=Path(args.out).resolve() if args.out else None, finding_ids=ids)
+    if args.json:
+        print(json.dumps({"run_id": result.run_id, "out_dir": str(result.out_dir),
+                          "mode": "against", "verify_patch": result.pv,
+                          "degradations": result.degradations}, indent=2))
+    else:
+        _print_verify_against(result)
+    return 0
+
+
 def cmd_scan(args) -> int:
     target = Path(args.path).resolve()
     if not target.is_dir():
@@ -193,10 +238,16 @@ def cmd_scan(args) -> int:
             return EXIT_USAGE
         ids = [i.strip() for i in (getattr(args, "verify_for", None) or "").split(",")
                if i.strip()]
+        if getattr(args, "against", None):
+            return _run_verify_against(args, target, config, names, patch_file, ids or None)
         verify_patch = {"patch": str(patch_file), "finding_ids": ids or None}
     elif getattr(args, "verify_for", None):
         print("error: --for names the finding(s) for --verify-patch; pass a patch file",
               file=sys.stderr)
+        return EXIT_USAGE
+    elif getattr(args, "against", None):
+        print("error: --against RUN_DIR judges a --verify-patch FILE against an old run; "
+              "pass --verify-patch too", file=sys.stderr)
         return EXIT_USAGE
     run = run_scan(target, _build_arms(names, config, diff=diff), config,
                    # R12: must be ABSOLUTE — the scanner arms hand this path to
@@ -1106,6 +1157,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--for", dest="verify_for", metavar="IDS",
                    help="finding id(s) to check with --verify-patch (comma-separated, from "
                         "the summary; a unique prefix of 6+ characters is accepted)")
+    s.add_argument("--against", metavar="RUN_DIR",
+                   help="judge --verify-patch against the finding population of an OLD run at "
+                        "the SAME commit (R19 A2), instead of a fresh full scan. A control run "
+                        "of the CURRENT scanners on the unpatched tree guards against scanner "
+                        "drift; every precondition fails closed to unproven. Evidence-only: "
+                        "never closes a finding, never gates. Requires --verify-patch")
     s.add_argument("--min-arms", type=int)
     s.add_argument("--out", help="output directory")
     s.add_argument("--json", action="store_true")

@@ -176,9 +176,9 @@ def test_sc_doctor_reports_every_arm_without_raising(root, monkeypatch):
 
 def test_tool_registry_schemas_are_complete(root):
     names = [t[0] for t in srv.TOOLS]
-    assert names == ["sc_scan", "sc_consolidate", "sc_doctor", "sc_report", "sc_last_run",
-                     "sc_baseline", "sc_suppress", "sc_outcome_mark", "sc_decisions_verify",
-                     "sc_serve", "sc_config"]
+    assert names == ["sc_scan", "sc_consolidate", "sc_verify_patch", "sc_doctor", "sc_report",
+                     "sc_last_run", "sc_baseline", "sc_suppress", "sc_outcome_mark",
+                     "sc_decisions_verify", "sc_serve", "sc_config"]
     for name, desc, schema, fn in srv.TOOLS:
         assert desc and schema["type"] == "object"
         assert schema["additionalProperties"] is False
@@ -262,3 +262,69 @@ def test_sc_report_html_refuses_a_symlinked_summary(root, monkeypatch, tmp_path_
     with pytest.raises(ValueError, match="symlink"):
         srv.sc_report({"run_dir": str(run_dir), "format": "html"})
     assert not (outside / "steal.html").exists()
+
+
+# --------------------------------------------------------------------------- #
+# A3: sc_verify_patch — the against-mode verify tool over the MCP surface
+# --------------------------------------------------------------------------- #
+
+from tests.test_verify_against import _against, _arm, _fix, _main_id, _repo  # noqa: E402
+
+
+def _fake_scanner(monkeypatch):
+    monkeypatch.setattr(srv, "_arms", lambda names, config: [_arm()])
+
+
+def test_sc_verify_patch_returns_the_evidence_block(root, monkeypatch):
+    _fake_scanner(monkeypatch)
+    repo = _repo(root)
+    against = _against(root, repo, _arm())
+    out = srv.sc_verify_patch({"target": str(repo), "patch": str(_fix(root)),
+                               "against": str(against)})
+    assert out["mode"] == "against"
+    pv = out["verify_patch"]
+    assert pv["counts"] == {"fixed": 1, "not_fixed": 0, "unproven": 0}
+    assert pv["against"]["manifest_sha256"] and pv["against"]["run_id"]
+    assert pv["control_arms"] and pv["arms"]                # both sides bound
+
+
+def test_sc_verify_patch_refuses_when_nested(root, monkeypatch):
+    monkeypatch.setenv(srv.NESTED_ENV, "1")
+    with pytest.raises(ValueError, match="NestedScanRefused"):
+        srv.sc_verify_patch({"patch": "/x", "against": "/y"})
+
+
+def test_sc_verify_patch_patch_must_be_absolute_and_in_root(root, monkeypatch):
+    _fake_scanner(monkeypatch)
+    repo = _repo(root)
+    against = _against(root, repo, _arm())
+    # relative patch -> refused exactly like sc_consolidate's import paths
+    with pytest.raises(ValueError, match="PathMustBeAbsolute"):
+        srv.sc_verify_patch({"target": str(repo), "patch": "fix.patch", "against": str(against)})
+    # absolute but OUTSIDE the MCP root -> refused
+    with pytest.raises(ValueError, match="ProjectRootMismatch"):
+        srv.sc_verify_patch({"target": str(repo), "patch": "/etc/hosts", "against": str(against)})
+    # missing patch -> required
+    with pytest.raises(ValueError, match="patch is required"):
+        srv.sc_verify_patch({"target": str(repo), "against": str(against)})
+
+
+def test_sc_verify_patch_refuses_a_store_touching_patch(root, monkeypatch):
+    """The rehearsal's validator-refuses-a-store-touching-patch check, pinned on
+    the MCP path: a patch editing the decision store is refused and NEVER
+    applied, so it can never launder a verdict."""
+    _fake_scanner(monkeypatch)
+    repo = _repo(root)
+    against = _against(root, repo, _arm())
+    patch = root / "store.patch"
+    patch.write_text("diff --git a/.security-council/decisions/x.json "
+                     "b/.security-council/decisions/x.json\n"
+                     "--- a/.security-council/decisions/x.json\n"
+                     "+++ b/.security-council/decisions/x.json\n@@ -1 +1 @@\n-a\n+b\n")
+    out = srv.sc_verify_patch({"target": str(repo), "patch": str(patch),
+                               "against": str(against), "finding_ids": _main_id(root, repo)})
+    pv = out["verify_patch"]
+    assert pv["applied"] is False
+    assert pv["precondition"]["reason"] == "patch_refused"
+    assert any(".security-council" in f for f in pv["refused"])
+    assert all(r["verdict"] == "unproven" for r in pv["results"])

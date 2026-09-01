@@ -24,6 +24,57 @@ DEFAULT_EXCLUDES = frozenset({
 })
 
 
+def git_info(original: str | Path) -> dict:
+    """The R18-hardened repository state predicate for `original`.
+
+    Returns ``{"git_commit", "dirty", "branch"}``. ``dirty`` is the tri-state
+    the import gate reads: ``True`` (something uncommitted), ``False`` (clean),
+    or ``None`` (git failed — read as UNKNOWN, never as clean). The tool's own
+    ``.security-council`` state dir is EXEMPTED from dirtiness (a default-layout
+    scan writes runs there and a signed decision modifies the store there);
+    everything else — tracked modifications, untracked SOURCE files, and the
+    ``.security-council.yaml`` config file — still counts as dirty.
+
+    Extracted as a module function (R19 A2) so `verify_patch --against` can reuse
+    the SAME clean-tree precondition `consolidate` uses, byte-for-byte, instead
+    of reinventing a second dirty predicate that would drift.
+    """
+    original = str(original)
+    r = proc.run_command(["git", "-C", original, "rev-parse", "HEAD"], timeout=15)
+    if not r.ok:
+        return {"git_commit": None, "dirty": None, "branch": None}
+    st = proc.run_command(["git", "-C", original, "status", "--porcelain"], timeout=15)
+    br = proc.run_command(["git", "-C", original, "rev-parse", "--abbrev-ref", "HEAD"],
+                          timeout=15)
+    if not st.ok:
+        # a failed status command must read as UNKNOWN (refused by the
+        # import gate), never as clean — R18 final round's parting nit
+        return {"git_commit": r.stdout.strip(), "dirty": None,
+                "branch": br.stdout.strip() if br.ok else None}
+
+    def _tool_state_only(line: str) -> bool:
+        # No whitespace normalization: a path may legitimately begin or end
+        # with spaces (git C-quotes those). Unquote explicitly; anything we
+        # cannot parse with certainty counts as dirty (fail closed).
+        paths = []
+        for part in line[3:].split(" -> "):
+            part = part.rstrip("\n")
+            if part.startswith('"') and part.endswith('"') and len(part) >= 2:
+                try:
+                    part = part[1:-1].encode("latin-1", "backslashreplace") \
+                                     .decode("unicode_escape")
+                except Exception:
+                    return False
+            paths.append(part)
+        return all(p == ".security-council" or p.startswith(".security-council/")
+                   for p in paths)
+
+    dirty = any(ln.strip() and not _tool_state_only(ln)
+                for ln in st.stdout.splitlines())
+    return {"git_commit": r.stdout.strip(), "dirty": dirty,
+            "branch": br.stdout.strip() if br.ok else None}
+
+
 @dataclass
 class Workspace:
     root: Path              # where arms scan (copy, or the original for inplace)
@@ -36,45 +87,7 @@ class Workspace:
     excluded: list[str] = field(default_factory=list)
 
     def git_info(self) -> dict:
-        r = proc.run_command(["git", "-C", str(self.original), "rev-parse", "HEAD"], timeout=15)
-        if not r.ok:
-            return {"git_commit": None, "dirty": None, "branch": None}
-        st = proc.run_command(["git", "-C", str(self.original), "status", "--porcelain"], timeout=15)
-        br = proc.run_command(["git", "-C", str(self.original), "rev-parse", "--abbrev-ref", "HEAD"],
-                              timeout=15)
-        if not st.ok:
-            # a failed status command must read as UNKNOWN (refused by the
-            # import gate), never as clean — R18 final round's parting nit
-            return {"git_commit": r.stdout.strip(), "dirty": None,
-                    "branch": br.stdout.strip() if br.ok else None}
-
-        # The tool's own state dir must not dirty the tool's own precondition:
-        # a default-layout scan writes runs under .security-council/ and a
-        # signed decision modifies the store there, and `consolidate` would
-        # then refuse to import the very runs this scanner just produced.
-        # Everything else — tracked modifications, untracked SOURCE files, and
-        # the .security-council.yaml config file — still counts as dirty.
-        def _tool_state_only(line: str) -> bool:
-            # No whitespace normalization: a path may legitimately begin or end
-            # with spaces (git C-quotes those). Unquote explicitly; anything we
-            # cannot parse with certainty counts as dirty (fail closed).
-            paths = []
-            for part in line[3:].split(" -> "):
-                part = part.rstrip("\n")
-                if part.startswith('"') and part.endswith('"') and len(part) >= 2:
-                    try:
-                        part = part[1:-1].encode("latin-1", "backslashreplace") \
-                                         .decode("unicode_escape")
-                    except Exception:
-                        return False
-                paths.append(part)
-            return all(p == ".security-council" or p.startswith(".security-council/")
-                       for p in paths)
-
-        dirty = any(ln.strip() and not _tool_state_only(ln)
-                    for ln in st.stdout.splitlines())
-        return {"git_commit": r.stdout.strip(), "dirty": dirty,
-                "branch": br.stdout.strip() if br.ok else None}
+        return git_info(self.original)
 
     def cleanup(self) -> None:
         if self._tmp is not None and self._tmp.exists():
