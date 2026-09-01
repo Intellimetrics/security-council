@@ -265,6 +265,8 @@ def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: 
     want_ids = set(fix_spec.get("finding_ids") or [])
     model = fix_spec.get("model")
     verify = bool(fix_spec.get("verify"))
+    allow_network = bool(fix_spec.get("allow_network"))
+    egress_acknowledged = bool(fix_spec.get("egress_acknowledged"))
     fixable = [f for f in merged
                if f.disposition.lifecycle in ("open", "reopened")
                and f.disposition.state != "refuted"
@@ -275,7 +277,8 @@ def _run_fix_jobs(target: Path, merged: list[Finding], fix_spec: dict, out_dir: 
     for f in fixable:
         row = _td(f)
         for job in jobs:
-            arm = FixArm(job=job, finding=row, model=model)
+            arm = FixArm(job=job, finding=row, model=model,
+                         allow_network=allow_network, egress_acknowledged=egress_acknowledged)
             res = _safe_run(arm, target, out_dir, run_id, collected_at)
             artifacts += res.artifacts
             if not res.ok:

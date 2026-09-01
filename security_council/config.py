@@ -58,6 +58,14 @@ DEFAULT_CONFIG: dict = {
     # ON: the lenient default is the one attackers get (R13/R19).
     "decisions": {"require_signatures": "enforce", "signing_key": None,
                   "baseline_max_age_days": 365},
+    # Fix lane (B1/R19). allow_network is the STANDING half of the double
+    # opt-in for live vendor patch generation under the relaxed fence: the
+    # vendor agent gets the network (the model API) and a credential, fenced
+    # for filesystem writes but NOT for egress destinations. The per-run half
+    # is the CLI flag `--allow-unrestricted-fix-egress`; BOTH are required and
+    # the scanned repo's own config can supply NEITHER (a repo-sourced
+    # allow_network is refused). Default OFF; `gov` refuses the lane outright.
+    "fix": {"allow_network": False},
     "reports": {"outdir": ".security-council/runs"},
 }
 
@@ -267,4 +275,14 @@ def validate_config(data: dict) -> list[str]:
         en = arms.get("enabled")
         if en is not None and (not isinstance(en, list) or not all(isinstance(x, str) for x in en)):
             out.append("arms.enabled must be a list of arm names")
+    fix = data.get("fix")
+    if fix is not None:
+        if not isinstance(fix, dict):
+            return out + ["fix must be a mapping"]
+        for k in fix:
+            if k not in DEFAULT_CONFIG["fix"]:
+                out.append(f"unknown fix key {k!r}")
+        an = fix.get("allow_network")
+        if an is not None and not isinstance(an, bool):
+            out.append(f"fix.allow_network must be true/false, got {an!r}")
     return out

@@ -155,8 +155,32 @@ def cmd_scan(args) -> int:
         if getattr(args, "tier", None):
             from . import entitlements as _ent
             fix_model = _ent.tier_model(args.tier)
+        # B1/R19 double opt-in for the relaxed (open-network) fix posture. The
+        # standing half is `fix.allow_network` in config; the per-run half is
+        # this CLI flag. BOTH are required, and the SCANNED REPO's own config
+        # can supply NEITHER — a repo-sourced allow_network is refused (R17),
+        # and a CLI flag cannot come from a file at all.
+        egress_ack = bool(getattr(args, "allow_unrestricted_fix_egress", False))
+        allow_net = bool((config.get("fix") or {}).get("allow_network"))
+        if allow_net and (config.get("_source") or {}).get("kind") == "repository":
+            print("error: fix.allow_network from the scanned repository's own config is "
+                  "ignored; the relaxed fix posture must be enabled by operator config "
+                  "(--config) or defaults, never the repo under scan", file=sys.stderr)
+            return EXIT_USAGE
+        gov = getattr(args, "profile", None) == "gov" or config.get("profile") == "gov"
+        if allow_net and gov:
+            print("error: the gov profile refuses live vendor fix generation "
+                  "unconditionally (like the Red tier)", file=sys.stderr)
+            return 4                                        # entitlement/posture refusal
+        if egress_ack and not allow_net:
+            print("error: --allow-unrestricted-fix-egress needs the standing acknowledgement "
+                  "too: set `fix: {allow_network: true}` in operator config (--config). Both "
+                  "halves of the double opt-in are required for the relaxed posture.",
+                  file=sys.stderr)
+            return EXIT_USAGE
         fix_spec = {"jobs": [args.fix_job], "finding_ids": ids, "model": fix_model,
-                    "verify": bool(getattr(args, "verify_fix", False))}
+                    "verify": bool(getattr(args, "verify_fix", False)),
+                    "allow_network": allow_net, "egress_acknowledged": egress_ack}
     verify_patch = None
     if getattr(args, "verify_patch", None):
         patch_file = Path(args.verify_patch).resolve()
@@ -1053,11 +1077,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also generate a CycloneDX SBOM artifact (syft, $0, no network; "
                         "`report --format cyclonedx` then merges findings into it)")
     s.add_argument("--fix", metavar="IDS",
-                   help="[NOT FUNCTIONAL IN 0.2.0 — refuses honestly] generate reviewed .patch "
-                        "artifacts (NEVER applied); the no-network fence cannot reach a vendor "
-                        "CLI, see docs/reviews/R11-fix-lane-and-fence.md")
+                   help="generate reviewed .patch artifacts (NEVER applied). The strict "
+                        "no-network fence still refuses live vendors; live generation needs "
+                        "the relaxed posture (see --allow-unrestricted-fix-egress + "
+                        "fix.allow_network)")
     s.add_argument("--fix-job", choices=["suggest-patches", "fix-finding"],
                    default="suggest-patches", help="which vendor fix workflow (default: claude)")
+    s.add_argument("--allow-unrestricted-fix-egress", action="store_true",
+                   help="the per-run half of the double opt-in for the relaxed (open-network) "
+                        "fix posture: the vendor agent gets the model API and a credential, "
+                        "fenced for filesystem writes but NOT egress destinations, so the "
+                        "scratch repo copy could leave the machine. Also requires "
+                        "`fix.allow_network: true` in operator config; the scanned repo can "
+                        "supply neither; `gov` refuses the lane")
     s.add_argument("--verify-fix", action="store_true",
                    help="verify each patch --fix produces DETERMINISTICALLY: apply it to a "
                         "scratch copy and re-run the scanners that reported the finding "

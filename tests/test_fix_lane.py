@@ -246,3 +246,73 @@ def test_strict_posture_stamps_unshared_network(tmp_path, monkeypatch):
     p = res.coverage["posture"]
     assert p["network_access"] == "unshared" and p["code_disclosed_to"] is None
     assert p["operator_acknowledged_unrestricted_egress"] is None
+
+
+# --------------------------------------------------------------------- #
+# B1c: CLI double opt-in for the relaxed posture (repo config can't enable it)
+# --------------------------------------------------------------------- #
+
+def _cli_scan(monkeypatch, tmp_path, extra_args, config_text=None):
+    """Run `cli.main(scan ...)` with run_scan faked; return (rc, captured fix_spec)."""
+    from types import SimpleNamespace
+
+    from security_council import cli
+    target = tmp_path / "repo"
+    (target / "app").mkdir(parents=True)
+    (target / "app" / "x.py").write_text("x = 1\n")
+    if config_text is not None:
+        (target / ".security-council.yaml").write_text(config_text)
+    seen = {}
+
+    def fake_run_scan(target, arms, config, **kw):
+        seen["fix_spec"] = kw.get("fix_spec")
+        return SimpleNamespace(run_id="r", out_dir=tmp_path, exit_code=0,
+                               manifest={"counts": {}}, degradations=[])
+    monkeypatch.setattr(cli, "run_scan", fake_run_scan)
+    monkeypatch.setattr(cli, "_build_arms", lambda names, config=None, diff=None: [])
+    rc = cli.main(["scan", str(target), "--arms", "semgrep", "--json", *extra_args])
+    return rc, seen.get("fix_spec")
+
+
+def test_cli_ack_without_config_key_is_refused(monkeypatch, tmp_path):
+    rc, spec = _cli_scan(monkeypatch, tmp_path,
+                         ["--fix", "gating", "--fix-job", "fix-finding",
+                          "--allow-unrestricted-fix-egress"])
+    assert rc == 2 and spec is None                        # both halves required
+
+
+def test_cli_repo_config_cannot_enable_network(monkeypatch, tmp_path):
+    rc, spec = _cli_scan(monkeypatch, tmp_path,
+                         ["--fix", "gating", "--fix-job", "fix-finding",
+                          "--allow-unrestricted-fix-egress"],
+                         config_text="fix:\n  allow_network: true\n")
+    assert rc == 2 and spec is None                        # repo-sourced key refused
+
+
+def test_cli_gov_profile_refuses_the_lane(monkeypatch, tmp_path):
+    rc, spec = _cli_scan(monkeypatch, tmp_path,
+                         ["--fix", "gating", "--fix-job", "fix-finding",
+                          "--allow-unrestricted-fix-egress", "--profile", "gov",
+                          "--config", str(_operator_cfg(tmp_path))])
+    assert rc == 4 and spec is None                        # gov refuses like Red
+
+
+def test_cli_both_halves_via_operator_config_enables_relaxed(monkeypatch, tmp_path):
+    rc, spec = _cli_scan(monkeypatch, tmp_path,
+                         ["--fix", "gating", "--fix-job", "fix-finding",
+                          "--allow-unrestricted-fix-egress",
+                          "--config", str(_operator_cfg(tmp_path))])
+    assert rc == 0
+    assert spec["allow_network"] is True and spec["egress_acknowledged"] is True
+
+
+def test_cli_strict_when_neither_half_present(monkeypatch, tmp_path):
+    rc, spec = _cli_scan(monkeypatch, tmp_path, ["--fix", "gating", "--fix-job", "fix-finding"])
+    assert rc == 0
+    assert spec["allow_network"] is False and spec["egress_acknowledged"] is False
+
+
+def _operator_cfg(tmp_path):
+    p = tmp_path / "operator.yaml"
+    p.write_text("fix:\n  allow_network: true\n")
+    return p
