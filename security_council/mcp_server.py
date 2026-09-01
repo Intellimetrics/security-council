@@ -517,6 +517,37 @@ def sc_consolidate(arguments: dict) -> dict:
             "reports": run.manifest.get("reports")}
 
 
+def sc_verify_patch(arguments: dict) -> dict:
+    """Verify an operator's patch against an OLD run's finding population (R19 A2),
+    returning ONLY the evidence block.
+
+    The patch path must be ABSOLUTE and inside the MCP root — exactly the rule
+    `sc_consolidate` applies to import paths (`_resolve_file`). The `against` run
+    dir is resolved the same way `target` is. Re-runs the deterministic scanners
+    on scratch copies (control + patched), records non-closing machine evidence,
+    and NEVER closes a finding or gates. Refuses when nested inside an arm, since
+    it spawns scanner subprocesses.
+    """
+    if os.environ.get(NESTED_ENV):
+        raise ValueError(
+            "NestedScanRefused: this process is running inside a security-council arm; "
+            f"re-running scanners from here would recurse ({NESTED_ENV} is set).")
+    from .orchestrator import run_verify_against
+    target = _resolve_dir(arguments, "target")
+    patch = _resolve_file(arguments, "patch")          # absolute + in-root + is_file
+    if patch is None:
+        raise ValueError("patch is required (an absolute path inside the MCP root)")
+    against = _resolve_dir(arguments, "against", default_to_root=False)
+    config = load_config(target)
+    names = config["arms"]["enabled"]
+    ids_raw = arguments.get("finding_ids")
+    ids = [i.strip() for i in str(ids_raw).split(",") if i.strip()] if ids_raw else None
+    result = run_verify_against(target, patch, against, _arms(names, config),
+                                reports_root=_resolve_output_root(arguments), finding_ids=ids)
+    return {"run_id": result.run_id, "out_dir": str(result.out_dir), "mode": "against",
+            "verify_patch": result.pv, "degradations": result.degradations}
+
+
 def sc_serve(arguments: dict) -> dict:
     """start | stop | status of the read-only report viewer. The server lives
     as long as this MCP process (the assistant's session); loopback unless a
@@ -643,6 +674,24 @@ TOOLS: list[tuple[str, str, dict, Any]] = [
            "fail_on_severity": {"enum": ["critical", "high", "medium", "low", "info"]},
            "gate_baseline": {"enum": ["all", "new"]}}),
      sc_consolidate),
+    ("sc_verify_patch",
+     "Verify an operator's patch against an OLD security-council run's finding population at "
+     "the same commit (a control run of the current scanners guards against scanner/ruleset "
+     "drift). Every precondition fails closed to `unproven`. Returns machine evidence only — "
+     "never closes a finding, never gates. Refuses when nested inside a security-council arm.",
+     _obj({"target": _target_prop(),
+           "patch": {"type": "string", "description":
+                     "Absolute path to the patch file, inside the MCP root (same absolute-and-"
+                     "in-root rule as sc_consolidate's import paths)."},
+           "against": {"type": "string", "description":
+                       "Absolute path to the prior run directory, inside the MCP root."},
+           "finding_ids": {"type": "string", "description":
+                           "Comma-separated finding id(s) to check; default is every open "
+                           "finding in the files the patch touches."},
+           "reports_root": {"type": "string", "description":
+                            "Absolute reports root inside the MCP root; run id is appended."}},
+          ["patch", "against"]),
+     sc_verify_patch),
     ("sc_doctor", "Check which arms are available.",
      _obj({"target": _target_prop()}), sc_doctor),
     ("sc_report", "Summarize or export a run directory (json | md | csv | html | emass), "
