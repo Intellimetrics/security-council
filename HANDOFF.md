@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-09-01 (post-0.3.0 roadmap R19-reviewed and locked — see §8; 0.3.0 RELEASED — tag v0.3.0 at 02bbef0, live-verify 33407382496 green; see §7.10a). Read this first when resuming; it is the single entry point._
+_Last updated: 2026-09-01 (**0.4.0 RELEASED** — tag v0.4.0 at 5cd4728, live-verify 33518718528 green; see §7.10b. R19 roadmap Phases 1 + B0/B1/B2 + A2–A5 shipped). Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -547,6 +547,45 @@ analysis results fails the gate-unchanged test. **Live status: LIVE-VERIFIED 202
 **Known residuals, documented:** decision store signing is provenance, not assurance (R13: only load-bearing behind
 CODEOWNERS + required review; documented residuals in docs/signing.md); ADO/GitLab templates
 unproven on real infrastructure; CKLB never opened in a live STIG Viewer.
+
+## 7.10b Release state — 0.4.0 (RELEASED 2026-09-01)
+
+**Released:** tag `v0.4.0` at `5cd4728`,
+https://github.com/Intellimetrics/security-council/releases/tag/v0.4.0 (notes =
+CHANGELOG 0.4.0 section); **live-verify run 33518718528 GREEN** on that sha
+(clean-pass + detects-and-gates). 782 tests, ruff clean.
+
+**What 0.4.0 ships (the R19 roadmap, Phases 1 + A5 + B0/B1/B2 + A2/A3):** A1
+baseline max-age; A4 pre-run validation preview; A5 content-refused panel-seat
+label; B0/B1 the live vendor fix lane behind the relaxed bwrap fence (neutral
+runtime bind, writable ephemeral vendor home with credential copy, DNS wired,
+double opt-in consent) — live-verified with codex AND claude producing correct
+SQLi fixes; B2 the house-fix-prompt reframe (no vendor plugin); A2
+`--verify-patch --against RUN_DIR` + A3 `sc_verify_patch` MCP; the B1-residual
+signal-safe scratch cleanup; llm-council 0.25 tuning (okf_context on).
+
+**The build used a subagent fan-out** (two opus worktree agents, disjoint files):
+Lane 1 = A2/A3, Lane 2 = B2/residual; both merged after diff review. **Council
+R20/R20b gated the release across three rounds** (transcripts
+`.llm-council/runs/20260901_095305_*` and `_100531_*`): R20 was 3/3 quorum with
+codex NO carrying FIVE real defects the two YES votes missed — a data-loss bug
+(certify deleted a real `.sc-canary`), a vacuous-canary shell-quoting bug, a
+signal-handler deadlock, a latched-install bug, and a consent defense-in-depth
+gap — all fixed + vacuity-checked (`6d25eba`); R20b confirmed the five closed
+and raised one credential-cleanup nit, closed same-turn (`58902ae`). **Lesson
+(re-affirmed): weight the SUBSTANTIVE peer — a YES quorum that missed a
+data-loss bug is not a ship; re-gate after must-fixes with the same reviewers.**
+
+**Rehearsal (§7.10 method, from the 0.4.0 wheel):** doctor, setup --yes, default
+docker scan (17 clusters exit 1), runs, all 11 report formats + `--bundle all`,
+MCP stdio handshake (12 tools incl. `sc_verify_patch`), the fix double-opt-in
+refusals (exit 2/4/2), baseline max-age (fresh 0 / backdated-400d stale 1),
+`--verify-patch --against` (fixed with control-run evidence; dirty→unproven),
+current-tree verify-patch (comment→not_fixed), validation preview line, serve
+matrix (200/404/421/501). Every leg passed; no defect found. Gotchas: `baseline
+set` takes no `--config` (put `require_signatures: warn` in the repo config or
+sign it); `report --format` has no `sarif` (it's a scan artifact); the MCP
+entry point must be called by venv path, not bare name.
 
 ## 7.10a Release state — 0.3.0 (RELEASED 2026-08-31)
 
