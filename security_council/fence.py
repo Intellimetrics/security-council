@@ -32,16 +32,101 @@ from pathlib import Path
 
 FENCE_TTL_SECONDS = 3600
 _RO_SYSTEM_DIRS = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc")
+# B1 relaxed posture: neutral in-namespace roots for the vendor runtime, so a
+# bound binary never makes the real HOME path exist (the HOME_VISIBLE breach).
+_VENDOR_BIN = "/opt/sc-vendor/bin"
+_VENDOR_NODE = "/opt/sc-node"
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _is_elf(path: Path) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
+def resolve_runtime(command: str) -> "RuntimePlan | None":
+    """How to make `command` runnable at a NEUTRAL path inside the fence.
+
+    Two shapes, both verified live 2026-09-01 launching under bwrap with the
+    real HOME absent:
+    - a self-contained ELF (this host's `claude`): bind the single file at
+      `/opt/sc-vendor/bin/<command>` (its `ldd` closure is `/lib*`, already
+      fence-bound).
+    - a Node script (`#!/usr/bin/env node`, this host's `codex`): bind the whole
+      Node version root at `/opt/sc-node` — it carries the `node` interpreter,
+      the `bin/<command>` shim and the global `node_modules` package tree.
+
+    Returns None (arm refuses) if the command cannot be resolved to either shape,
+    so an unrecognised runtime is an honest `available()` failure, never a
+    silent unfenced run.
+    """
+    p = shutil.which(command)
+    if not p:
+        return None
+    real = Path(p).resolve()
+    if _is_elf(real):
+        sandbox = f"{_VENDOR_BIN}/{command}"
+        return RuntimePlan(
+            command=command, binds=((str(real), sandbox),), path_dirs=(_VENDOR_BIN,),
+            provenance={"command": command, "kind": "elf", "host_path": str(real),
+                        "sha256": _sha256_file(real)})
+    # a script — find its interpreter; support the Node shape we ship
+    try:
+        first = real.read_bytes()[:256].split(b"\n", 1)[0]
+    except OSError:
+        return None
+    if b"node" not in first:
+        return None
+    node = shutil.which("node")
+    if not node:
+        return None
+    node_real = Path(node).resolve()
+    node_root = node_real.parent.parent          # <version>/bin/node -> <version>
+    # the command's shim must live inside the node root, or binding the root
+    # would not expose it (a locally-installed script would need its own bind)
+    if not str(real).startswith(str(node_root).rstrip("/") + "/"):
+        return None
+    return RuntimePlan(
+        command=command, binds=((str(node_root), _VENDOR_NODE),),
+        path_dirs=(f"{_VENDOR_NODE}/bin",),
+        provenance={"command": command, "kind": "node", "host_path": str(real),
+                    "node_root": str(node_root), "node_sha256": _sha256_file(node_real)})
+
+
+@dataclass(frozen=True)
+class RuntimePlan:
+    """How to expose one vendor command inside the fence at a neutral path.
+
+    `binds` are `(host, sandbox)` ro-bind pairs for `bwrap_argv(runtime_binds=)`;
+    `path_dirs` go on the fenced `PATH`; `provenance` (kind + host path + hashes)
+    is recorded in the manifest so a run says exactly which runtime it launched.
+    """
+    command: str
+    binds: tuple[tuple[str, str], ...]
+    path_dirs: tuple[str, ...]
+    provenance: dict = field(default_factory=dict)
 
 
 def reachable_in_fence(cmd: str) -> tuple[bool, str]:
-    """Whether `cmd` resolves to a path the fence actually binds.
+    """Whether `cmd` resolves to a path the STRICT (no-network) fence binds.
 
-    R10 (verified live): the fence binds only `_RO_SYSTEM_DIRS`, but the vendor
-    CLIs live outside them — `codex` under `~/.nvm/versions/node/*/bin`,
-    `claude` and `agy` under `~/.local/bin`. A fenced run of one produced
-    `bwrap: execvp codex: No such file or directory` several minutes into the
-    lane. Checking up front turns that into an honest `available()` refusal.
+    R10 (verified live): the strict fence binds only `_RO_SYSTEM_DIRS`, but the
+    vendor CLIs live outside them — `codex` under `~/.nvm/versions/node/*/bin`,
+    `claude`/`agy` under `~/.local/bin` — so a fenced run of one produced
+    `bwrap: execvp codex: No such file or directory` minutes in. Checking up
+    front turns that into an honest `available()` refusal. The RELAXED posture
+    (B1) instead binds the runtime at a neutral path via `resolve_runtime`;
+    that path does not consult this function.
     """
     p = shutil.which(cmd)
     if not p:
@@ -65,9 +150,20 @@ def bwrap_available() -> tuple[bool, str]:
         return False, f"bwrap --version failed: {e}"
 
 
-def bwrap_argv(*, work_dir: Path, home: Path, allow_network: bool = False) -> list[str]:
+def bwrap_argv(*, work_dir: Path, home: Path, allow_network: bool = False,
+               runtime_binds: tuple[tuple[str, str], ...] = ()) -> list[str]:
     """The bwrap wrapper argv (prefix a command after `--`). Writable: only
-    `work_dir` and a tmpfs `home`. Everything else ro or absent."""
+    `work_dir` and a tmpfs `home`. Everything else ro or absent.
+
+    `runtime_binds` (B1, relaxed posture): each `(host_path, sandbox_path)`
+    ro-binds a vendor runtime file/tree at a NEUTRAL in-namespace path
+    (`sandbox_path`, e.g. `/opt/sc-vendor/...`), never at its real location.
+    Binding a vendor binary in place under `~/.local`/`~/.nvm` would make the
+    real `$HOME` path exist inside the namespace, which the canary's
+    `HOME_VISIBLE` probe correctly treats as a breach (verified live 2026-09-01:
+    in-place bind ⇒ breach, neutral bind ⇒ home absent). The pairs are part of
+    the hashed fence shape, so a vendor version bump re-certifies.
+    """
     argv = ["bwrap", "--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc",
             "--unshare-uts", "--unshare-cgroup-try", "--proc", "/proc", "--dev", "/dev"]
     if not allow_network:
@@ -75,6 +171,8 @@ def bwrap_argv(*, work_dir: Path, home: Path, allow_network: bool = False) -> li
     for d in _RO_SYSTEM_DIRS:
         if Path(d).exists():
             argv += ["--ro-bind", d, d]
+    for host_path, sandbox_path in runtime_binds:
+        argv += ["--ro-bind", str(host_path), str(sandbox_path)]
     argv += ["--tmpfs", "/tmp",
              "--bind", str(work_dir), str(work_dir),
              "--tmpfs", str(home),
@@ -112,14 +210,18 @@ def _config_hash(argv_template: list[str], *, ephemeral: tuple[str, ...] = ()) -
     return hashlib.sha256("\x00".join(shape).encode()).hexdigest()[:16]
 
 
-def config_hash_for(*, work_dir: Path, home: Path, allow_network: bool = False) -> str:
+def config_hash_for(*, work_dir: Path, home: Path, allow_network: bool = False,
+                    runtime_binds: tuple[tuple[str, str], ...] = ()) -> str:
     """The hash a run's fence WILL have — compare it to the certificate's."""
-    argv = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network)
+    argv = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network,
+                      runtime_binds=runtime_binds)
     return _config_hash(argv, ephemeral=(str(work_dir), str(home)))
 
 
 def verify_certificate(cert: "FenceCertificate | None", *, work_dir: Path, home: Path,
-                       allow_network: bool = False, now: float | None = None) -> str | None:
+                       allow_network: bool = False,
+                       runtime_binds: tuple[tuple[str, str], ...] = (),
+                       now: float | None = None) -> str | None:
     """None if `cert` covers exactly this fence; otherwise why it does not.
 
     R11: `fix.py` checked only `cert is None` — `cert.live()` and
@@ -131,22 +233,26 @@ def verify_certificate(cert: "FenceCertificate | None", *, work_dir: Path, home:
         return "no certificate"
     if not cert.live(now=now):
         return "certificate expired"
-    want = config_hash_for(work_dir=work_dir, home=home, allow_network=allow_network)
+    want = config_hash_for(work_dir=work_dir, home=home, allow_network=allow_network,
+                           runtime_binds=runtime_binds)
     if cert.config_hash != want:
         return f"certificate is for a different fence (hash {cert.config_hash} != {want})"
     return None
 
 
 def run_in_fence(cmd: list[str], *, work_dir: Path, home: Path, timeout: int = 3600,
-                 allow_network: bool = False, env: dict | None = None):
+                 allow_network: bool = False,
+                 runtime_binds: tuple[tuple[str, str], ...] = (), env: dict | None = None):
     from . import proc
-    argv = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network) + ["--", *cmd]
+    argv = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network,
+                      runtime_binds=runtime_binds) + ["--", *cmd]
     return proc.run_command(argv, timeout=timeout, cwd=str(work_dir), env=env,
                             success_exit_codes=tuple(range(0, 256)))
 
 
 def certify(*, work_dir: Path, original: Path, home: Path | None = None,
             allow_network: bool = False,
+            runtime_binds: tuple[tuple[str, str], ...] = (),
             now: float | None = None) -> tuple[FenceCertificate | None, dict]:
     """Run the canary inside THE fence config the run will use; mint a
     certificate only if every escape is provably blocked AND every positive
@@ -162,8 +268,15 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
     ok_bw, ver = bwrap_available()
     own_home = home is None
     home = home or (work_dir.parent / "sc-fence-home")
-    argv_template = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network)
-    report: dict = {"bwrap": ver, "bwrap_ok": ok_bw, "allow_network": allow_network}
+    argv_template = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network,
+                               runtime_binds=runtime_binds)
+    report: dict = {"bwrap": ver, "bwrap_ok": ok_bw, "allow_network": allow_network,
+                    # B1: state the network posture the certificate attests. An
+                    # open network is a DECLARED relaxation, not a passed check —
+                    # record it as waived so the report never reads like the
+                    # unshared canary passed a network-isolation probe.
+                    "network": "open:waived_by_posture" if allow_network else "unshared",
+                    "runtime_binds": [list(b) for b in runtime_binds]}
     if not ok_bw:
         report["refused"] = "bwrap unavailable"
         return None, report
@@ -185,12 +298,16 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
     home.mkdir(parents=True, exist_ok=True)
     try:
         r = run_in_fence(["/bin/sh", "-c", probe], work_dir=work_dir, home=home,
-                         allow_network=allow_network, timeout=60)
+                         allow_network=allow_network, runtime_binds=runtime_binds, timeout=60)
     finally:
         if own_home:
             shutil.rmtree(home, ignore_errors=True)
         (work_dir / ".sc-work-write").unlink(missing_ok=True)
     out = (r.stdout or "") + (r.stderr or "")
+    # HOME_VISIBLE stays a breach in EVERY posture: it is what makes an in-place
+    # runtime bind refuse to certify (B1). NET_VISIBLE is a breach only when the
+    # network was supposed to be unshared; under the declared open posture it is
+    # expected and recorded as waived above, never a breach.
     breaches = [tag for tag in ("WROTE_ORIGINAL", "HOME_VISIBLE") if tag in out]
     if not allow_network and "NET_VISIBLE" in out:
         breaches.append("NET_VISIBLE")

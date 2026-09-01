@@ -80,3 +80,87 @@ def test_allowlisted_env_drops_tokens_keeps_vendor(monkeypatch):
 def test_bwrap_is_present_on_this_machine():
     # documents the R6 finding that the fence is certifiable here
     assert _HAVE_BWRAP, "expected bubblewrap installed for the fix-lane fence"
+
+
+# --------------------------------------------------------------------- #
+# B1: relaxed posture — neutral-path runtime binds + declared open network
+# --------------------------------------------------------------------- #
+
+def test_bwrap_argv_carries_runtime_binds_and_open_network():
+    argv = fence.bwrap_argv(work_dir="/w", home="/h", allow_network=True,
+                            runtime_binds=(("/real/claude", "/opt/sc-vendor/bin/claude"),))
+    assert "--unshare-net" not in argv                     # network declared open
+    # the runtime is bound at its NEUTRAL sandbox path, never its real path
+    joined = " ".join(argv)
+    assert "--ro-bind /real/claude /opt/sc-vendor/bin/claude" in joined
+
+
+def test_runtime_bind_is_part_of_the_hashed_shape():
+    base = fence.config_hash_for(work_dir="/w", home="/h", allow_network=True)
+    withrt = fence.config_hash_for(work_dir="/w", home="/h", allow_network=True,
+                                   runtime_binds=(("/real/x", "/opt/sc-vendor/bin/x"),))
+    assert base != withrt                                  # a different runtime re-certifies
+    # network posture is also part of the shape (strict != relaxed)
+    assert fence.config_hash_for(work_dir="/w", home="/h", allow_network=False) != base
+
+
+def test_resolve_runtime_elf_and_unknown(tmp_path, monkeypatch):
+    elf = tmp_path / "bin" / "toolx"
+    elf.parent.mkdir()
+    elf.write_bytes(b"\x7fELF" + b"\x00" * 40)
+    monkeypatch.setattr(fence.shutil, "which", lambda c: str(elf) if c == "toolx" else None)
+    plan = fence.resolve_runtime("toolx")
+    assert plan is not None and plan.provenance["kind"] == "elf"
+    assert plan.binds == ((str(elf), "/opt/sc-vendor/bin/toolx"),)
+    assert plan.path_dirs == ("/opt/sc-vendor/bin",) and plan.provenance["sha256"]
+    assert fence.resolve_runtime("nope") is None           # not on PATH -> refuse
+
+
+def test_resolve_runtime_node_script(tmp_path, monkeypatch):
+    root = tmp_path / "node" / "v1"
+    (root / "bin").mkdir(parents=True)
+    (root / "lib" / "node_modules" / "toolz" / "bin").mkdir(parents=True)
+    node = root / "bin" / "node"
+    node.write_bytes(b"\x7fELF" + b"\x00" * 40)
+    script = root / "lib" / "node_modules" / "toolz" / "bin" / "toolz.js"
+    script.write_text("#!/usr/bin/env node\nconsole.log('x')\n")
+    def which(c):
+        return {"toolz": str(script), "node": str(node)}.get(c)
+    monkeypatch.setattr(fence.shutil, "which", which)
+    plan = fence.resolve_runtime("toolz")
+    assert plan is not None and plan.provenance["kind"] == "node"
+    assert plan.binds == ((str(root), "/opt/sc-node"),)    # whole node root
+    assert plan.path_dirs == ("/opt/sc-node/bin",)
+
+
+@requires_bwrap
+def test_relaxed_certificate_records_waived_network(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    cert, report = fence.certify(work_dir=work, original=tmp_path / "orig", allow_network=True)
+    assert cert is not None, report
+    assert report["network"] == "open:waived_by_posture"   # not silently uncounted
+    assert report["breaches"] == []                        # NET_VISIBLE is not a breach here
+    # a relaxed certificate cannot satisfy a strict (no-network) run
+    assert fence.verify_certificate(cert, work_dir=work, home=tmp_path / "orig" / "sc-fence-home",
+                                    allow_network=False) is not None
+
+
+@requires_bwrap
+def test_in_place_runtime_bind_breaches_home_visible_but_neutral_does_not(tmp_path):
+    # B0/live proof: binding a vendor binary at its real ~/... path makes the
+    # real HOME exist in the namespace (a breach); a neutral path does not.
+    import os
+    work = tmp_path / "work"
+    work.mkdir()
+    real_home = os.path.expanduser("~")
+    inplace = fence.run_in_fence(
+        ["/bin/sh", "-c", f"[ -e {real_home} ] && echo VIS || echo abs"],
+        work_dir=work, home=tmp_path / "h1",
+        runtime_binds=((f"{real_home}", f"{real_home}"),))
+    assert "VIS" in inplace.stdout                          # in-place bind -> home visible
+    neutral = fence.run_in_fence(
+        ["/bin/sh", "-c", f"[ -e {real_home} ] && echo VIS || echo abs"],
+        work_dir=work, home=tmp_path / "h2",
+        runtime_binds=((f"{real_home}", "/opt/sc-vendor/bin/x"),))
+    assert "abs" in neutral.stdout                          # neutral bind -> home absent
