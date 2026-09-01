@@ -341,8 +341,18 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
                 prov.append(f"set by {_code(bd['operator'])}")
             if bd.get("set_at"):
                 age = bd.get("age_days")
-                prov.append(f"on {_cell(str(bd['set_at'])[:10])}"
-                            + (f" ({age} days ago)" if isinstance(age, int) else ""))
+                max_age = bd.get("max_age_days")
+                when = f"on {_cell(str(bd['set_at'])[:10])}"
+                if isinstance(age, int):
+                    when += (f" ({age} days ago, max {max_age})"
+                             if isinstance(max_age, int) else f" ({age} days ago)")
+                prov.append(when)
+            # R19 A1: an unbounded baseline is an operator choice that must be
+            # visible every run, not a silent default.
+            if bd.get("age_status") == "unbounded":
+                prov.append("⚠ max-age check disabled (`baseline_max_age_days: off`)")
+            elif bd.get("age_status") == "stale_soon":
+                prov.append("⚠ nearing max age — re-run `baseline set`")
             if bd.get("content_sha256"):
                 prov.append(f"digest {_code(str(bd['content_sha256'])[:12])}")
             if bd.get("integrity") == "unpinned":
@@ -353,6 +363,26 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
                 prov.append(f"⚠ signature {bd['signature']}")
             if prov:
                 out.append(f"  - baseline provenance: {' · '.join(prov)}")
+        bi = manifest.get("baseline_ignored")
+        if bi:
+            # R19 A1: the baseline existed but was refused (stale/future/
+            # tampered/unsigned-under-enforce). Its provenance stays visible
+            # so the operator can see WHOSE baseline stopped applying.
+            prov = [f"reason {_code(bi.get('reason', '?'))}"]
+            if bi.get("operator"):
+                prov.append(f"set by {_code(bi['operator'])}")
+            if bi.get("set_at"):
+                age = bi.get("age_days")
+                max_age = bi.get("max_age_days")
+                prov.append(f"on {_cell(str(bi['set_at'])[:10])}"
+                            + (f" ({age} days old, max {max_age})"
+                               if isinstance(age, int) and isinstance(max_age, int) else ""))
+            if bi.get("content_sha256"):
+                prov.append(f"digest {_code(str(bi['content_sha256'])[:12])}")
+            if bi.get("signature"):
+                prov.append(f"signature {_cell(str(bi['signature']))}")
+            out.append("- **Baseline NOT honoured** (all findings gate): "
+                       + " · ".join(prov))
         # R9 signing lane: say which level RAN and why, every run. A `warn`
         # nobody sees is `off`.
         sp = manifest.get("signature_policy") or {}

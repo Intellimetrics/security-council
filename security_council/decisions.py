@@ -965,6 +965,64 @@ def baseline_content_sha256(entries: list[dict]) -> str:
     return hashlib.sha256("\x00".join(keyed).encode()).hexdigest()
 
 
+# R19 A1: a signed baseline is the one signed artifact with no expiry at all,
+# so its replay window from git history was unbounded (the R13 residual). The
+# max-age knob bounds it. The stale-soon window keeps a default-on knob from
+# turning pipelines red overnight with no repo change: operators get 30 days
+# of visible warning to re-run `baseline set`.
+STALE_SOON_WINDOW_DAYS = 30
+# `set_at` further in the future than this is not clock skew, it is a forged
+# or corrupted timestamp: refuse rather than treat it as age 0 forever.
+FUTURE_TOLERANCE = timedelta(days=1)
+
+
+def baseline_age_status(baseline: dict, *, now_iso: str, max_age_days) -> dict:
+    """Age the baseline against `decisions.baseline_max_age_days`.
+
+    `set_at` is inside the signed `baseline_set` event fields, so when the
+    signature verifies the timestamp this ages is signature-covered; an edited
+    `set_at` already fails verification before this runs. With the knob off
+    ("off"/False/None) nothing is bounded — the caller stamps that loudly.
+    Timestamps are compared as datetimes (R13): exactly max_age is fresh,
+    one second past it is stale.
+    """
+    # identity, not `in (None, False, "off")`: 0 == False, so a membership
+    # test would let `baseline_max_age_days: 0` silently DISABLE the bound
+    disabled = max_age_days is None or max_age_days is False or max_age_days == "off"
+    if not disabled and (isinstance(max_age_days, bool) or not isinstance(max_age_days, int)
+                         or max_age_days <= 0):
+        # config validation refuses this shape at load; a caller handing a
+        # bad value programmatically must not silently disable the bound
+        return {"age_days": None, "max_age_days": None, "status": "unparseable",
+                "detail": f"baseline_max_age_days {max_age_days!r} is not a positive "
+                          "integer or 'off'"}
+    try:
+        set_at = _now(str(baseline.get("set_at")))
+        delta = _now(now_iso) - set_at
+    except (ValueError, TypeError):
+        if disabled:
+            return {"age_days": None, "max_age_days": None, "status": "unbounded",
+                    "detail": "baseline_max_age_days: off"}
+        return {"age_days": None, "max_age_days": max_age_days, "status": "unparseable",
+                "detail": f"set_at {baseline.get('set_at')!r} is not a parseable "
+                          "timestamp; its age cannot be bounded"}
+    if disabled:
+        return {"age_days": max(0, delta.days), "max_age_days": None, "status": "unbounded",
+                "detail": "baseline_max_age_days: off"}
+    if delta < -FUTURE_TOLERANCE:
+        return {"age_days": None, "max_age_days": max_age_days, "status": "future",
+                "detail": f"set_at {baseline.get('set_at')} is in the future"}
+    age_days = max(0, delta.days)
+    if delta > timedelta(days=max_age_days):
+        return {"age_days": age_days, "max_age_days": max_age_days, "status": "stale",
+                "detail": f"{age_days} days old > baseline_max_age_days {max_age_days}"}
+    if delta > timedelta(days=max_age_days - STALE_SOON_WINDOW_DAYS):
+        return {"age_days": age_days, "max_age_days": max_age_days, "status": "stale_soon",
+                "detail": f"{age_days} days old; stale at {max_age_days} days"}
+    return {"age_days": age_days, "max_age_days": max_age_days, "status": "fresh",
+            "detail": f"{age_days} days old"}
+
+
 def annotate_baseline(findings: list[Finding], baseline: dict, *, partial: bool = False) -> dict:
     """Greedy 1:1 match (root_cause -> context_hash -> path_cwe_sink); stamps
     `baseline_state` on every finding and returns the delta summary.

@@ -33,6 +33,15 @@ is by root-cause fingerprint, then context hash, then path+CWE+sink — stable
 across line drift. The baseline is an operator-set pointer; scans never move
 it themselves.
 
+A baseline also ages out: one older than `decisions.baseline_max_age_days`
+(default 365 days; the `ci` and `gov` profiles use 180) is not honoured —
+everything gates as new until you re-run `baseline set`. You get a
+`baseline_stale_soon` warning in the report for 30 days before that happens,
+and the ignored baseline's provenance (who set it, when, its digest) stays
+in the manifest. Set the key to `off` to disable the bound; every report
+then says so. A `set_at` timestamp in the future or one that does not parse
+is refused outright, like a tampered digest.
+
 ## Suppressing a false positive (human path)
 
 ```bash

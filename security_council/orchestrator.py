@@ -113,6 +113,18 @@ def _shadow_runs_completed(store, config: dict, out_dir: Path, run_id: str) -> i
     return min(counter, observed)
 
 
+def _baseline_provenance(bl: dict, age: dict | None, *, reason: str) -> dict:
+    """R19 A1: a loaded-but-not-honoured baseline keeps its provenance in the
+    manifest (who set it, when, digest, signature, age) — an ignored gate
+    input must stay auditable, not vanish from the record."""
+    return {"reason": reason, "run_id": bl.get("run_id"), "set_at": bl.get("set_at"),
+            "operator": bl.get("operator"), "integrity": bl.get("integrity"),
+            "content_sha256": bl.get("content_sha256_actual"),
+            "signature": bl.get("signature_status"),
+            "age_days": (age or {}).get("age_days"),
+            "max_age_days": (age or {}).get("max_age_days")}
+
+
 def _exit_code(merged: list[Finding], results: list[ArmResult], config: dict) -> tuple[int, list[dict]]:
     policy = config.get("policy", {})
     threshold = _SEV_RANK.get(policy.get("fail_on_severity", "high"), 4)
@@ -594,6 +606,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             store.bump_armed_runs(cfg_for_policy, run_id=run_id, now_iso=decided_at)
 
         baseline = store.load_baseline(signature_policy=sig_policy["effective"])
+        baseline_ignored = None       # provenance of a loaded-but-refused baseline
         if (baseline and baseline.get("integrity") == "intact"
                 and sig_policy["effective"] == "enforce"
                 and baseline.get("signature_status") != signing_mod.VERIFIED):
@@ -608,6 +621,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                                        "require_signatures is enforce, so the baseline is "
                                        "ignored (all findings gate). Re-run `baseline set` "
                                        "with --signing-key."})
+            baseline_ignored = _baseline_provenance(
+                baseline, None, reason=f"signature_{baseline.get('signature_status')}")
             baseline = None
         elif (baseline and baseline.get("integrity") == "intact"
                 and sig_policy["effective"] == "warn"
@@ -629,7 +644,42 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             pre_degr.append({"kind": "baseline_refused",
                              "detail": f"baseline/latest.json {why}; baseline ignored "
                                        "(all findings gate). Re-run `baseline set`."})
+            baseline_ignored = _baseline_provenance(
+                baseline, None, reason=baseline.get("integrity") or "tampered")
             baseline = None
+        # R19 A1: bound the baseline's replay window. `set_at` is inside the
+        # signed event fields, so a verified signature covers the timestamp
+        # this ages; the age lane runs AFTER the signature/integrity refusals
+        # so a forged-and-backdated file never reaches it under enforce.
+        bl_age = None
+        if baseline:
+            bl_age = decisions_mod.baseline_age_status(
+                baseline, now_iso=collected_at,
+                max_age_days=(config.get("decisions") or {}).get("baseline_max_age_days"))
+            if bl_age["status"] in ("future", "unparseable"):
+                # a timestamp that cannot honestly be aged cannot bound replay:
+                # refused, same class as a tampered digest (fail-safe)
+                pre_degr.append({"kind": "baseline_refused",
+                                 "detail": f"baseline/latest.json {bl_age['detail']}; "
+                                           "baseline ignored (all findings gate). "
+                                           "Re-run `baseline set`."})
+                baseline_ignored = _baseline_provenance(baseline, bl_age,
+                                                        reason=bl_age["status"])
+                baseline = None
+            elif bl_age["status"] == "stale":
+                pre_degr.append({"kind": "baseline_stale",
+                                 "detail": f"baseline/latest.json is {bl_age['detail']} "
+                                           f"(set {baseline.get('set_at')} by "
+                                           f"{baseline.get('operator') or 'unattributed'}); "
+                                           "baseline ignored (all findings gate). "
+                                           "Re-run `baseline set` to re-affirm it."})
+                baseline_ignored = _baseline_provenance(baseline, bl_age, reason="stale")
+                baseline = None
+            elif bl_age["status"] == "stale_soon":
+                pre_degr.append({"kind": "baseline_stale_soon",
+                                 "detail": f"baseline/latest.json is {bl_age['detail']}; "
+                                           "re-run `baseline set` before it stops "
+                                           "being honoured."})
         baseline_delta = (decisions_mod.annotate_baseline(merged, baseline, partial=partial)
                           if baseline else None)
         if baseline_delta:
@@ -646,14 +696,12 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                                            "predate per-location tracking: a copy of that "
                                            "finding in a new file would not gate as new "
                                            "under gate_baseline: new. Re-run `baseline set`."})
-            # R13: a signed baseline has no expiry (Q3's replay bound is the
-            # suppression's expires_at), so at least its AGE is printed.
-            try:
-                set_at = datetime.fromisoformat(str(baseline.get("set_at")).replace("Z", "+00:00"))
-                baseline_delta["age_days"] = max(
-                    0, (datetime.fromisoformat(collected_at.replace("Z", "+00:00")) - set_at).days)
-            except (ValueError, TypeError):
-                baseline_delta["age_days"] = None
+            # R19 A1: the age lane above is the single ager (R13 printed the
+            # age; the max-age knob now bounds it). A baseline that reaches
+            # here was honoured, so status is fresh/stale_soon/unbounded.
+            baseline_delta["age_days"] = bl_age["age_days"]
+            baseline_delta["max_age_days"] = bl_age["max_age_days"]
+            baseline_delta["age_status"] = bl_age["status"]
 
         # fix lane (M-V4a): serial, after the scan/policy phase, each job in its
         # own fenced fresh copy. Only fix open, non-refuted findings.
@@ -758,7 +806,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             started_at=collected_at, finished_at=finished_at, git=ws.git_info(),
             degradations=degradations, exit_code=exit_code, scan_scope=scan_scope,
             disposition_actions=policy_mod.decisions_summary(decisions),
-            baseline_delta=baseline_delta, prior_decisions=prior_decisions, artifacts=artifacts,
+            baseline_delta=baseline_delta, baseline_ignored=baseline_ignored,
+            prior_decisions=prior_decisions, artifacts=artifacts,
             calibration=cal_meta, signature_policy=sig_policy, history_audit=history_audit,
             verify_fix=verify_fix,
             validation=validation_meta,

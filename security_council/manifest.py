@@ -18,6 +18,7 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
                    exit_code: int | None = None,
                    disposition_actions: dict | None = None,
                    baseline_delta: dict | None = None,
+                   baseline_ignored: dict | None = None,
                    prior_decisions: list[dict] | None = None,
                    scan_scope: dict | None = None,
                    artifacts: list[dict] | None = None,
@@ -66,6 +67,9 @@ def build_manifest(*, run_id: str, target: str, arm_results: list, merged: list[
         "calibration": calibration or {"status": "off"},
         "disposition_actions": disposition_actions or {},
         "baseline_delta": baseline_delta,
+        # R19 A1: a baseline that was loaded but NOT honoured (stale, future,
+        # tampered, unsigned-under-enforce) keeps its provenance on the record.
+        "baseline_ignored": baseline_ignored,
         "prior_decisions": prior_decisions or [],
         # R9 signing lane: the level that RAN (configured vs effective, and why),
         # the verifier found, and any outcome marks that did not verify.

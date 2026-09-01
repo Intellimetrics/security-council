@@ -134,7 +134,12 @@ Residuals, stated plainly:
   it was removed, or a newer re-decision deleted so an older one applies.
   Expiry (90 days; 30 for crypto/critical) bounds this; a signed sequence
   counter was considered and dropped as a hot, merge-conflicting file that
-  is itself rollback-able.
+  is itself rollback-able. Baselines have no per-entry expiry, so their
+  replay window is bounded separately: a baseline older than
+  `decisions.baseline_max_age_days` (default 365; `ci`/`gov` profiles 180)
+  stops being honoured — everything gates as new, with a `baseline_stale`
+  degradation and a 30-day `baseline_stale_soon` warning first. `off`
+  disables the bound and is stamped in every report.
 - **`auto` is attacker-influenced.** Under the opt-in `auto` level, deleting
   `store.json` — or committing a first unsigned record without one — resolves
   the store to `warn` until the sunset date, always visibly (the reason is

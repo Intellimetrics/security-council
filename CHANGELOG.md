@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+**Behavior change (R19 A1):** baselines now age out. A baseline older than
+`decisions.baseline_max_age_days` (default **365**; `ci`/`gov` profiles
+**180**) is no longer honoured — everything gates as new, with a
+`baseline_stale` degradation. This bounds the replay window of a signed
+baseline restored from git history (baselines were the one signed artifact
+with no expiry). A `baseline_stale_soon` warning appears in reports for 30
+days before the limit, so no pipeline goes red without notice; re-running
+`baseline set` re-affirms it. Set the key to `off` to keep the old unbounded
+behavior — every report then states that the check is disabled. A baseline
+`set_at` timestamp in the future (beyond 1 day of clock skew) or one that
+does not parse is refused like a tampered digest. Staleness only stops the
+baseline from excusing findings: exit codes can flip 0→1, never 0→3. An
+ignored baseline's provenance (operator, set date, digest, signature, age)
+is preserved in `manifest.baseline_ignored` and rendered in the summary.
+
 ## 0.3.0 — 2026-08-31
 
 **Upgrading from 0.2.0:** no data migration. The GitHub Action tag is `Intellimetrics/security-council@v0.3.0`. Existing signed decisions,

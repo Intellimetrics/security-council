@@ -672,7 +672,19 @@ A1's default is behavior-changing (both peers agreed).
 
 ### 8.1 Phase 1 — A1 baseline max-age + A4 validation preview ($0)
 
-- **A1** `decisions.baseline_max_age_days`: **default 365**, `ci`/`gov` profiles 180,
+- **A1 — DONE 2026-09-01** (`baseline_age_status` in decisions.py, orchestrator age
+  lane after the signature/integrity refusals, `manifest.baseline_ignored`, summary
+  provenance lines; 20 tests in `tests/test_baseline_max_age.py`, stale-refusal
+  vacuity-checked by neutering — 3 fail; 703 total). Live-smoked through the CLI
+  with docker semgrep on a staged seedrepo copy: no-baseline 1 → fresh 0 →
+  backdated-400d 1 with `baseline_stale` + NOT-honoured provenance → 350d 0 with
+  `baseline_stale_soon` → 400d+`off` 0 with the disabled stamp. Two build notes:
+  `0 == False` in Python, so the off-check must use identity or
+  `baseline_max_age_days: 0` silently disables the bound (test pins it); and the
+  smoke's "exit 1" from system python3 outside the checkout was a
+  ModuleNotFoundError, not a gate — use `.venv/bin/python` for staged-copy smokes.
+  Spec as built:
+  `decisions.baseline_max_age_days`: **default 365**, `ci`/`gov` profiles 180,
   explicit `off` allowed but stamped loudly in manifest + summary. A
   `baseline_stale_soon` informational degradation opens 30 days before expiry (answers
   the pipelines-go-red-overnight objection to default-on). Stale ⇒ `baseline_stale`

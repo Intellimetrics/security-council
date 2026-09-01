@@ -49,7 +49,15 @@ DEFAULT_CONFIG: dict = {
     #   off     no verification
     # signing_key: path used by `suppress`, `outcome mark`, `baseline set`
     # (flag --signing-key and $SECURITY_COUNCIL_SIGNING_KEY override it).
-    "decisions": {"require_signatures": "enforce", "signing_key": None},
+    # baseline_max_age_days (R19 A1): a baseline older than this is not
+    # honoured — everything gates as new, with a `baseline_stale` degradation.
+    # Bounds the replay window of a signed baseline from git history (R13
+    # residual: baselines are the one signed artifact with no expiry). A
+    # `baseline_stale_soon` warning opens 30 days before the limit. Positive
+    # integer, or `off` to disable (stamped loudly in every report). Default
+    # ON: the lenient default is the one attackers get (R13/R19).
+    "decisions": {"require_signatures": "enforce", "signing_key": None,
+                  "baseline_max_age_days": 365},
     "reports": {"outdir": ".security-council/runs"},
 }
 
@@ -67,7 +75,8 @@ PROFILES: dict[str, dict] = {
     # R9 Q2: the gate profiles ENFORCE decision signatures — the level comes
     # from config, never from the store, so deleting store.json cannot lower it.
     "ci": {"policy": {"gate_baseline": "new"},
-           "decisions": {"require_signatures": "enforce"}},
+           "decisions": {"require_signatures": "enforce",
+                         "baseline_max_age_days": 180}},
     # Deep audit: adds the three house LLM-CLI reviewer arms (one per vendor
     # family, so corroboration is cross-vendor) and turns on the validation
     # panel. Real vendor cost, on your CLI subscriptions.
@@ -84,7 +93,8 @@ PROFILES: dict[str, dict] = {
     # Government / compliance posture: $0 arms + CI-style baseline gating; the
     # paperwork itself comes from `report <run> --bundle gov` afterwards.
     "gov": {"policy": {"gate_baseline": "new"},
-            "decisions": {"require_signatures": "enforce"}},
+            "decisions": {"require_signatures": "enforce",
+                          "baseline_max_age_days": 180}},
 }
 
 
@@ -187,6 +197,8 @@ def _normalize_yaml_booleans(data: dict) -> None:
     dec = data.get("decisions")
     if isinstance(dec, dict) and dec.get("require_signatures") is False:
         dec["require_signatures"] = "off"
+    if isinstance(dec, dict) and dec.get("baseline_max_age_days") is False:
+        dec["baseline_max_age_days"] = "off"      # same YAML-1.1 bare-`off` trap
 
 
 _POLICY_ENUMS = {"fail_on_severity": {"critical", "high", "medium", "low", "info"},
@@ -241,6 +253,13 @@ def validate_config(data: dict) -> list[str]:
         key = dec.get("signing_key")
         if key is not None and not isinstance(key, str):
             out.append(f"decisions.signing_key must be a path string, got {key!r}")
+        age = dec.get("baseline_max_age_days")
+        # 0 would refuse every baseline; an operator who wants no bound writes
+        # `off` explicitly (fail-closed on the ambiguous shape, R12 rule)
+        if age is not None and age != "off" and (isinstance(age, bool)
+                                                 or not isinstance(age, int) or age <= 0):
+            out.append("decisions.baseline_max_age_days must be a positive integer "
+                       f"or 'off', got {age!r}")
     arms = data.get("arms")
     if arms is not None:
         if not isinstance(arms, dict):
