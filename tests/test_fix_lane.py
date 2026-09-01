@@ -1,6 +1,8 @@
 """M-V4a fix arm: fail-closed on an uncertified fence; produces a validated
 `.patch` artifact (never applied); refuses in-place; secrets patch export-excluded."""
 import hashlib
+import signal
+from pathlib import Path
 
 import pytest
 
@@ -347,3 +349,125 @@ def test_relaxed_run_passes_devnull_stdin(tmp_path, monkeypatch):
                  egress_acknowledged=True)
     arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
     assert seen["stdin"] is subprocess.DEVNULL
+
+
+# --------------------------------------------------------------------- #
+# B2: the claude fix job runs a HOUSE prompt, not a vendor plugin/skill trigger
+# --------------------------------------------------------------------- #
+
+def test_fix_jobs_name_house_prompts_not_plugin_triggers():
+    # the mapping must no longer imply a reachable plugin/skill command (R10)
+    for job, (family, prompt_file) in fixmod.FIX_JOBS.items():
+        assert prompt_file.endswith(".md"), f"{job} should map to a house prompt file"
+        assert "/" not in prompt_file and "$" not in prompt_file
+        assert (fixmod.PROMPT_DIR / prompt_file).is_file()
+    blob = repr(fixmod.FIX_JOBS)
+    assert "/claude-security" not in blob and "$fix-finding" not in blob
+
+
+def test_claude_prompt_is_the_house_prompt_from_file():
+    # the CLAUDE leg (suggest-patches) is now a house instruction, not
+    # `/claude-security suggest-patches`; it comes from prompts/house-fix.md with
+    # the finding-specific slots filled in.
+    arm = FixArm(job="suggest-patches", finding=_finding_row("CWE-89", "injection", "app/db.py"))
+    p = arm._prompt()
+    assert "/claude-security" not in p and "$fix-finding" not in p
+    assert "CWE-89" in p and "app/db.py" in p
+    assert "{{CWE}}" not in p and "{{URI}}" not in p            # placeholders substituted
+    assert arm._prompt_path().name == "house-fix.md"
+    raw = (fixmod.PROMPT_DIR / "house-fix.md").read_text()
+    assert raw.replace("{{CWE}}", "CWE-89").replace("{{URI}}", "app/db.py").strip() == p
+
+
+def test_available_fails_closed_when_house_prompt_missing(monkeypatch):
+    # load-bearing guard: available() refuses if the house prompt file is absent
+    monkeypatch.setattr(fixmod._fence, "bwrap_available", lambda: (True, "bwrap 0.11.0"))
+    monkeypatch.setattr(fixmod.shutil, "which", lambda c: "/x/" + c)
+    arm = FixArm(job="suggest-patches", finding=_finding_row())
+    _, why = arm.available()
+    assert "house fix prompt missing" not in why               # present -> not this reason
+    # VACUITY: neuter by pointing at a nonexistent prompt -> available() refuses on it
+    arm.prompt_file = "no-such-prompt.md"
+    ok2, why2 = arm.available()
+    assert not ok2 and "house fix prompt missing" in why2
+
+
+# --------------------------------------------------------------------- #
+# B1-residual: scratch cleanup survives CATCHABLE signals; credential minimized
+# --------------------------------------------------------------------- #
+
+def test_signal_cleanup_rmtrees_registered_scratch_and_chains(tmp_path):
+    # a SIGTERM/SIGINT bypasses run()'s `finally`; the registered handler must
+    # rmtree the scratch (with its credential copy) and still chain the prior handler.
+    scratch = tmp_path / "sc-fix-sig"
+    (scratch / "vendor-home").mkdir(parents=True)
+    (scratch / "vendor-home" / "auth.json").write_text("SENSITIVE")
+    fixmod._register_scratch(scratch)
+    assert str(scratch) in fixmod._ACTIVE_SCRATCH
+    chained = {}
+    handler = fixmod._make_signal_cleanup(lambda s, f: chained.setdefault("prev", s))
+    handler(signal.SIGTERM, None)
+    assert not scratch.exists()                                # scratch + credential gone
+    assert str(scratch) not in fixmod._ACTIVE_SCRATCH
+    assert chained["prev"] == signal.SIGTERM                   # pre-existing handler chained
+
+
+def test_run_registers_scratch_during_and_cleans_up_after(tmp_path, monkeypatch):
+    _fake_cert(monkeypatch)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["active_during"] = set(fixmod._ACTIVE_SCRATCH)
+        (Path(kw["cwd"]) / "app" / "x.py").write_text("q = safe(name)\n")
+        return type("R", (), {"ok": True, "exit_code": 0, "stdout": "", "stderr": "",
+                              "elapsed_seconds": 1.0, "timed_out": False})()
+    monkeypatch.setattr(fixmod.proc, "run_command", fake_run)
+    arm = FixArm(job="suggest-patches", finding=_finding_row())
+    res = arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
+    assert res.ok
+    # exactly this run's scratch was registered while the vendor ran ...
+    new = [p for p in seen["active_during"] if "sc-fix-" in p]
+    assert len(new) == 1
+    scratch = new[0]
+    # ... and unregistered + removed afterwards (the normal `finally` path)
+    assert scratch not in fixmod._ACTIVE_SCRATCH
+    assert not Path(scratch).exists()
+
+
+def test_credential_copy_scrubbed_the_instant_the_vendor_returns(tmp_path, monkeypatch):
+    # minimize on-disk credential exposure: the COPIED credential exists only while
+    # the vendor authenticates, then is scrubbed BEFORE patch extraction.
+    _fake_plan(monkeypatch, "codex", "node")
+    _fake_relaxed_cert(monkeypatch)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+    fake_home = tmp_path / "fakehome"
+    (fake_home / ".codex").mkdir(parents=True)
+    (fake_home / ".codex" / "auth.json").write_text('{"token":"SENSITIVE"}')
+    monkeypatch.setattr(fixmod.Path, "home", classmethod(lambda cls: fake_home))
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        tmp_root = Path(kw["cwd"]).parent                      # work is <tmp_root>/work
+        cred = tmp_root / "vendor-home" / "auth.json"
+        seen["cred"] = cred
+        seen["present_during_run"] = cred.exists()             # delivered for auth
+        (Path(kw["cwd"]) / "app" / "x.py").write_text("fixed = 1\n")
+        return type("R", (), {"ok": True, "exit_code": 0, "stdout": "", "stderr": "",
+                              "elapsed_seconds": 1.0, "timed_out": False})()
+    monkeypatch.setattr(fixmod.proc, "run_command", fake_run)
+
+    real_extract = fixmod._patches.extract_patch
+
+    def spy_extract(pristine, work, *, ceiling):
+        seen["present_at_extract"] = seen["cred"].exists()
+        return real_extract(pristine, work, ceiling=ceiling)
+    monkeypatch.setattr(fixmod._patches, "extract_patch", spy_extract)
+
+    arm = FixArm(job="fix-finding", finding=_finding_row(), allow_network=True,
+                 egress_acknowledged=True)
+    res = arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
+    assert res.ok
+    assert seen["present_during_run"] is True                  # present while vendor ran
+    assert seen["present_at_extract"] is False                 # scrubbed before extraction
+    assert (fake_home / ".codex" / "auth.json").read_text() == '{"token":"SENSITIVE"}'
