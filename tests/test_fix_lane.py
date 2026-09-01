@@ -133,3 +133,116 @@ def test_orchestrator_fix_only_open_findings(tmp_path, monkeypatch):
                    fix_spec={"jobs": ["suggest-patches"], "finding_ids": ["nonexistent"]})
     # no finding matched the id filter → no fix artifacts, no crash
     assert [a for a in run.manifest["artifacts"] if a.get("kind") == "fix"] == []
+
+
+# --------------------------------------------------------------------- #
+# B1: relaxed posture (open network, neutral-path runtime, structured stamps)
+# --------------------------------------------------------------------- #
+
+def _fake_plan(monkeypatch, command="codex", kind="node"):
+    from security_council.fence import RuntimePlan
+    plan = RuntimePlan(command=command,
+                       binds=((f"/real/{command}", "/opt/sc-node"),),
+                       path_dirs=("/opt/sc-node/bin",),
+                       provenance={"command": command, "kind": kind, "host_path": f"/real/{command}"})
+    monkeypatch.setattr(fixmod._fence, "resolve_runtime", lambda c: plan)
+    return plan
+
+
+def _fake_relaxed_cert(monkeypatch):
+    from security_council import fence
+
+    def _certify(**kw):
+        h = fence.config_hash_for(
+            work_dir=kw["work_dir"], home=kw["home"], allow_network=kw.get("allow_network", False),
+            runtime_binds=kw.get("runtime_binds", ()), writable_binds=kw.get("writable_binds", ()))
+        cert = fence.FenceCertificate(config_hash=h, bwrap_version="bwrap 0.11.0", host="t",
+                                      minted_at=9e18)
+        return cert, {"bwrap": "bwrap 0.11.0", "breaches": [], "controls_missing": [],
+                      "canary_done": True, "network": "open:waived_by_posture"}
+    monkeypatch.setattr(fixmod._fence, "certify", _certify)
+
+
+def test_relaxed_available_refuses_without_acknowledgement(monkeypatch):
+    _fake_plan(monkeypatch)
+    monkeypatch.setattr(fixmod.shutil, "which", lambda c: "/x/" + c)
+    monkeypatch.setattr(fixmod._fence, "bwrap_available", lambda: (True, "bwrap 0.11.0"))
+    arm = FixArm(job="fix-finding", finding=_finding_row(), allow_network=True)
+    ok, why = arm.available()
+    assert not ok and "acknowledgement" in why
+    arm2 = FixArm(job="fix-finding", finding=_finding_row(), allow_network=True,
+                  egress_acknowledged=True)
+    assert arm2.available()[0] is True
+
+
+def test_relaxed_run_stamps_structured_posture(tmp_path, monkeypatch):
+    _fake_plan(monkeypatch, "codex", "node")
+    _fake_relaxed_cert(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")           # api-key path: no credential copy
+
+    def fake_run(cmd, **kw):
+        from pathlib import Path
+        (Path(kw["cwd"]) / "app" / "x.py").write_text("q = db.execute('SELECT ...', [name])\n")
+        return type("R", (), {"ok": True, "exit_code": 0, "stdout": "", "stderr": "",
+                              "elapsed_seconds": 1.0, "timed_out": False})()
+    monkeypatch.setattr(fixmod.proc, "run_command", fake_run)
+
+    arm = FixArm(job="fix-finding", finding=_finding_row(), allow_network=True,
+                 egress_acknowledged=True)
+    res = arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
+    assert res.ok
+    p = res.coverage["posture"]
+    assert p["network_access"] == "unrestricted"
+    assert p["execution_boundary"] == "orchestrator_bwrap"
+    assert p["operator_acknowledged_unrestricted_egress"] is True
+    assert p["real_home_visible"] is False
+    assert p["vendor_home"] == "api-key"                       # env key present -> no copy
+    assert p["code_disclosed_to"] == "openai"
+    assert p["vendor_sandbox"] == "workspace-write"
+    assert p["tests_ran"] is False and p["runtime"]["kind"] == "node"
+    assert p["cert_hash"]
+    assert res.artifacts[0]["patch"]["posture"]["network_access"] == "unrestricted"
+
+
+def test_relaxed_run_copies_credential_when_no_api_key(tmp_path, monkeypatch):
+    _fake_plan(monkeypatch, "codex", "node")
+    _fake_relaxed_cert(monkeypatch)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+    fake_home = tmp_path / "fakehome"
+    (fake_home / ".codex").mkdir(parents=True)
+    (fake_home / ".codex" / "auth.json").write_text('{"token":"SENSITIVE"}')
+    monkeypatch.setattr(fixmod.Path, "home", classmethod(lambda cls: fake_home))
+    captured = {}
+
+    def fake_run(cmd, **kw):
+        from pathlib import Path
+        # the credential COPY is reachable at the neutral CODEX_HOME, not the real one
+        captured["env"] = kw.get("env", {})
+        (Path(kw["cwd"]) / "app" / "x.py").write_text("fixed = 1\n")
+        return type("R", (), {"ok": True, "exit_code": 0, "stdout": "", "stderr": "",
+                              "elapsed_seconds": 1.0, "timed_out": False})()
+    monkeypatch.setattr(fixmod.proc, "run_command", fake_run)
+
+    arm = FixArm(job="fix-finding", finding=_finding_row(), allow_network=True,
+                 egress_acknowledged=True)
+    res = arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
+    assert res.ok
+    assert res.coverage["posture"]["vendor_home"] == "oauth-file-copy"
+    assert captured["env"]["CODEX_HOME"] == "/sc-codex"        # neutral, not the real ~/.codex
+    # the real credential file is untouched (we copied, never moved/bound the dir)
+    assert (fake_home / ".codex" / "auth.json").read_text() == '{"token":"SENSITIVE"}'
+
+
+def test_strict_posture_stamps_unshared_network(tmp_path, monkeypatch):
+    _fake_cert(monkeypatch)
+    monkeypatch.setattr(fixmod.proc, "run_command",
+                        lambda cmd, **kw: type("R", (), {"ok": True, "exit_code": 0, "stdout": "",
+                                                         "stderr": "", "elapsed_seconds": 1.0,
+                                                         "timed_out": False})())
+    arm = FixArm(job="suggest-patches", finding=_finding_row())   # allow_network defaults False
+    res = arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
+    # no change -> degrades, but the posture stamp still records the strict shape
+    p = res.coverage["posture"]
+    assert p["network_access"] == "unshared" and p["code_disclosed_to"] is None
+    assert p["operator_acknowledged_unrestricted_egress"] is None

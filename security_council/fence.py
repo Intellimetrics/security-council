@@ -151,7 +151,8 @@ def bwrap_available() -> tuple[bool, str]:
 
 
 def bwrap_argv(*, work_dir: Path, home: Path, allow_network: bool = False,
-               runtime_binds: tuple[tuple[str, str], ...] = ()) -> list[str]:
+               runtime_binds: tuple[tuple[str, str], ...] = (),
+               writable_binds: tuple[tuple[str, str], ...] = ()) -> list[str]:
     """The bwrap wrapper argv (prefix a command after `--`). Writable: only
     `work_dir` and a tmpfs `home`. Everything else ro or absent.
 
@@ -176,8 +177,16 @@ def bwrap_argv(*, work_dir: Path, home: Path, allow_network: bool = False,
     argv += ["--tmpfs", "/tmp",
              "--bind", str(work_dir), str(work_dir),
              "--tmpfs", str(home),
-             "--setenv", "HOME", str(home),
-             "--chdir", str(work_dir)]
+             "--setenv", "HOME", str(home)]
+    # writable binds (B1): an orchestrator-prepared, ephemeral dir mounted rw at
+    # a neutral path — the vendor's config HOME carrying at most a COPIED
+    # credential. It is under the orchestrator's scratch root, never the real
+    # home or the original tree, so it does not widen the escape surface the
+    # canary certifies (write-outside-work stays blocked). Mounted AFTER the
+    # tmpfs home so a nested target (e.g. under HOME) lands on the tmpfs.
+    for host_path, sandbox_path in writable_binds:
+        argv += ["--bind", str(host_path), str(sandbox_path)]
+    argv += ["--chdir", str(work_dir)]
     return argv
 
 
@@ -211,16 +220,21 @@ def _config_hash(argv_template: list[str], *, ephemeral: tuple[str, ...] = ()) -
 
 
 def config_hash_for(*, work_dir: Path, home: Path, allow_network: bool = False,
-                    runtime_binds: tuple[tuple[str, str], ...] = ()) -> str:
+                    runtime_binds: tuple[tuple[str, str], ...] = (),
+                    writable_binds: tuple[tuple[str, str], ...] = ()) -> str:
     """The hash a run's fence WILL have — compare it to the certificate's."""
     argv = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network,
-                      runtime_binds=runtime_binds)
-    return _config_hash(argv, ephemeral=(str(work_dir), str(home)))
+                      runtime_binds=runtime_binds, writable_binds=writable_binds)
+    # the writable bind's HOST path is ephemeral (a per-run scratch dir); its
+    # SANDBOX path is the certified shape, so strip only the host side.
+    eph = (str(work_dir), str(home), *(str(h) for h, _ in writable_binds))
+    return _config_hash(argv, ephemeral=eph)
 
 
 def verify_certificate(cert: "FenceCertificate | None", *, work_dir: Path, home: Path,
                        allow_network: bool = False,
                        runtime_binds: tuple[tuple[str, str], ...] = (),
+                       writable_binds: tuple[tuple[str, str], ...] = (),
                        now: float | None = None) -> str | None:
     """None if `cert` covers exactly this fence; otherwise why it does not.
 
@@ -234,7 +248,7 @@ def verify_certificate(cert: "FenceCertificate | None", *, work_dir: Path, home:
     if not cert.live(now=now):
         return "certificate expired"
     want = config_hash_for(work_dir=work_dir, home=home, allow_network=allow_network,
-                           runtime_binds=runtime_binds)
+                           runtime_binds=runtime_binds, writable_binds=writable_binds)
     if cert.config_hash != want:
         return f"certificate is for a different fence (hash {cert.config_hash} != {want})"
     return None
@@ -242,10 +256,11 @@ def verify_certificate(cert: "FenceCertificate | None", *, work_dir: Path, home:
 
 def run_in_fence(cmd: list[str], *, work_dir: Path, home: Path, timeout: int = 3600,
                  allow_network: bool = False,
-                 runtime_binds: tuple[tuple[str, str], ...] = (), env: dict | None = None):
+                 runtime_binds: tuple[tuple[str, str], ...] = (),
+                 writable_binds: tuple[tuple[str, str], ...] = (), env: dict | None = None):
     from . import proc
     argv = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network,
-                      runtime_binds=runtime_binds) + ["--", *cmd]
+                      runtime_binds=runtime_binds, writable_binds=writable_binds) + ["--", *cmd]
     return proc.run_command(argv, timeout=timeout, cwd=str(work_dir), env=env,
                             success_exit_codes=tuple(range(0, 256)))
 
@@ -253,6 +268,7 @@ def run_in_fence(cmd: list[str], *, work_dir: Path, home: Path, timeout: int = 3
 def certify(*, work_dir: Path, original: Path, home: Path | None = None,
             allow_network: bool = False,
             runtime_binds: tuple[tuple[str, str], ...] = (),
+            writable_binds: tuple[tuple[str, str], ...] = (),
             now: float | None = None) -> tuple[FenceCertificate | None, dict]:
     """Run the canary inside THE fence config the run will use; mint a
     certificate only if every escape is provably blocked AND every positive
@@ -269,14 +285,15 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
     own_home = home is None
     home = home or (work_dir.parent / "sc-fence-home")
     argv_template = bwrap_argv(work_dir=work_dir, home=home, allow_network=allow_network,
-                               runtime_binds=runtime_binds)
+                               runtime_binds=runtime_binds, writable_binds=writable_binds)
     report: dict = {"bwrap": ver, "bwrap_ok": ok_bw, "allow_network": allow_network,
                     # B1: state the network posture the certificate attests. An
                     # open network is a DECLARED relaxation, not a passed check —
                     # record it as waived so the report never reads like the
                     # unshared canary passed a network-isolation probe.
                     "network": "open:waived_by_posture" if allow_network else "unshared",
-                    "runtime_binds": [list(b) for b in runtime_binds]}
+                    "runtime_binds": [list(b) for b in runtime_binds],
+                    "writable_binds": [list(b) for b in writable_binds]}
     if not ok_bw:
         report["refused"] = "bwrap unavailable"
         return None, report
@@ -295,10 +312,17 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
         "( awk -F: 'NR>2{print $1}' /proc/net/dev 2>/dev/null | tr -d ' ' "
         "| grep -qv '^lo$' && echo NET_VISIBLE ); "
         "echo CANARY_DONE")
-    home.mkdir(parents=True, exist_ok=True)
+    # best-effort: a strict-posture home is a real host tmp dir; a relaxed
+    # posture may pass a neutral in-namespace path (e.g. /sc-home) the tmpfs
+    # mount creates on its own, which is not writable on the host.
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     try:
         r = run_in_fence(["/bin/sh", "-c", probe], work_dir=work_dir, home=home,
-                         allow_network=allow_network, runtime_binds=runtime_binds, timeout=60)
+                         allow_network=allow_network, runtime_binds=runtime_binds,
+                         writable_binds=writable_binds, timeout=60)
     finally:
         if own_home:
             shutil.rmtree(home, ignore_errors=True)
@@ -324,7 +348,11 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
                              if (breaches or controls_missing) else "did not complete")
         return None, report
     cert = FenceCertificate(
-        config_hash=_config_hash(argv_template, ephemeral=(str(work_dir), str(home))),
+        # SAME ephemeral set as config_hash_for, or a run's later hash would not
+        # match its own certificate: the writable bind's per-run host path is
+        # ephemeral (its neutral SANDBOX path is the certified shape).
+        config_hash=_config_hash(argv_template, ephemeral=(
+            str(work_dir), str(home), *(str(h) for h, _ in writable_binds))),
         bwrap_version=ver, host=os.uname().nodename if hasattr(os, "uname") else "?",
         minted_at=now or time.time(), canary=dict(report))
     return cert, report

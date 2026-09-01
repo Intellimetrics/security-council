@@ -37,6 +37,22 @@ FIX_JOBS = {
     "fix-finding": ("codex", "$fix-finding"),
 }
 
+# B1 relaxed posture: where each vendor's ephemeral config home is mounted
+# inside the namespace, and the env var that points the CLI at it. Neutral,
+# non-/tmp paths (codex refuses to create helper aliases under /tmp — verified
+# live 2026-09-01). Nothing from the real ~/.codex / ~/.claude is bound except,
+# at most, the single credential FILE (never the directory — B0).
+_VENDOR_HOME = {
+    "codex": ("/sc-codex", "CODEX_HOME", "auth.json"),
+    "claude": ("/sc-claude", "CLAUDE_CONFIG_DIR", ".credentials.json"),
+}
+_CODE_DISCLOSED_TO = {"codex": "openai", "claude": "anthropic"}
+# vendor API-key env vars that make a credential-file bind unnecessary (B0's
+# preferred auth path — a dedicated, spend-capped key delivered via the env
+# allowlist rather than a copied login file)
+_VENDOR_API_KEYS = {"codex": ("OPENAI_API_KEY", "CODEX_API_KEY"),
+                    "claude": ("ANTHROPIC_API_KEY",)}
+
 
 def prepare_fix_copies(target: Path, tmp_root: Path) -> tuple[Path, Path]:
     """(work, pristine) fresh copies; work is a git repo with a baseline commit
@@ -71,7 +87,8 @@ class FixArm:
     supports_diff = False
 
     def __init__(self, *, job: str, finding: dict, model: str | None = None,
-                 max_cost_usd: float = 5.0, timeout: int = 3600) -> None:
+                 max_cost_usd: float = 5.0, timeout: int = 3600,
+                 allow_network: bool = False, egress_acknowledged: bool = False) -> None:
         if job not in FIX_JOBS:
             raise ValueError(f"unknown fix job {job!r}; known: {sorted(FIX_JOBS)}")
         self.job = job
@@ -82,6 +99,13 @@ class FixArm:
         self.timeout = int(timeout)
         self.name = f"{self.family}-fix:{job}"
         self.command = "claude" if self.family == "claude" else "codex"
+        # B0/R19 relaxed posture: live vendor patch generation needs the network
+        # (the model API), so the strict no-network fence cannot host it. The
+        # relaxed posture keeps the orchestrator bwrap write-boundary + home
+        # invisibility but declares the network open — gated on a double
+        # opt-in the operator supplies, never the scanned repo.
+        self.allow_network = bool(allow_network)
+        self.egress_acknowledged = bool(egress_acknowledged)
 
     def available(self) -> tuple[bool, str]:
         ok, detail = _fence.bwrap_available()
@@ -89,32 +113,93 @@ class FixArm:
             return False, f"fix lane needs bwrap: {detail}"
         if not shutil.which(self.command):
             return False, f"{self.command} not on PATH"
-        # R10: refuse up front rather than burning minutes and vendor spend to
-        # end in a vague `no_patch`. The fence as configured cannot run any
-        # vendor CLI: the binary is outside its bind set, `--unshare-net` blocks
-        # the model API the generation depends on, and the tmpfs HOME drops
-        # ~/.codex/auth.json. All three were verified live 2026-08-25.
-        reach, why = _fence.reachable_in_fence(self.command)
-        if not reach:
-            return False, f"fix lane cannot run fenced: {why}"
-        return True, f"fenced: bwrap {detail}; {self.command} {self.skill}"
+        if not self.allow_network:
+            # STRICT lane (unchanged): the no-network fence binds only system
+            # dirs, so a vendor CLI under ~/.local/~/.nvm is invisible AND the
+            # model API is unreachable. Refuse up front (R10) rather than burn
+            # minutes/spend to a vague no_patch. Live generation needs the
+            # relaxed posture below.
+            reach, why = _fence.reachable_in_fence(self.command)
+            if not reach:
+                return False, (f"fix lane cannot run fenced (strict, no network): {why}. "
+                               "Live vendor patch generation needs the relaxed posture "
+                               "(fix.allow_network + the egress acknowledgement).")
+            return True, f"fenced (strict): bwrap {detail}; {self.command} {self.skill}"
+        # RELAXED lane: consent is required and the runtime must resolve to a
+        # neutral-path bind (never in-place — that would breach HOME_VISIBLE).
+        if not self.egress_acknowledged:
+            return False, ("relaxed fix posture (open network) needs the operator's egress "
+                           "acknowledgement; it is refused without it (repo config can never "
+                           "supply it).")
+        plan = _fence.resolve_runtime(self.command)
+        if plan is None:
+            return False, (f"cannot resolve {self.command} to a neutral-path runtime bind; "
+                           "the relaxed fence will not run an unresolved runtime.")
+        return True, (f"fenced (relaxed, open network): {self.command} runtime "
+                      f"{plan.provenance.get('kind')} at {plan.path_dirs[0]}")
 
-    def _cmd(self, home: Path) -> list[str]:
+    def _cmd(self) -> list[str]:
         prompt = (f"{self.skill} for finding at "
                   f"{(self.finding.get('locations') or [{}])[0].get('uri','?')}. "
                   "Produce a minimal fix and write the changed files. "
                   "I understand it may take a while and use tokens; proceed without asking.")
         if self.family == "codex":
-            base = ["codex", "exec", "--sandbox", "workspace-write", "-C", str(home),
+            # codex keeps its OWN kernel sandbox INSIDE the orchestrator fence
+            # (defense in depth, B0); HOME/CODEX_HOME come from the fenced env.
+            base = ["codex", "exec", "--sandbox", "workspace-write",
                     "--skip-git-repo-check", prompt]
             if self.model:
                 base[2:2] = ["--model", self.model]
             return base
-        cmd = ["claude", "-p", prompt, "--output-format", "json",
-               "--dangerously-skip-permissions", "--no-session-persistence", "--strict-mcp-config"]
+        # claude has no kernel sandbox flag; in the relaxed posture it runs
+        # EDIT-ONLY with NO --dangerously-skip-permissions (its own help scopes
+        # that flag to no-network sandboxes, which the relaxed posture is not) —
+        # no Bash, no WebFetch/WebSearch (B0 cond. 2; tests come from the
+        # deterministic verify lane, not the agent).
+        if self.allow_network:
+            cmd = ["claude", "-p", prompt, "--output-format", "json",
+                   "--permission-mode", "acceptEdits",
+                   "--allowedTools", "Read,Glob,Grep,Edit,Write",
+                   "--disallowedTools", "Bash,WebFetch,WebSearch",
+                   "--no-session-persistence", "--strict-mcp-config"]
+        else:
+            cmd = ["claude", "-p", prompt, "--output-format", "json",
+                   "--dangerously-skip-permissions", "--no-session-persistence",
+                   "--strict-mcp-config"]
         if self.model:
             cmd += ["--model", self.model]
         return cmd
+
+    def _auth_delivery(self, tmp_root: Path) -> tuple[tuple[tuple[str, str], ...], dict, str]:
+        """(writable vendor-home binds, extra env, auth_kind) for the relaxed run.
+
+        The vendor config HOME is an orchestrator-prepared, ephemeral dir bound
+        rw at a neutral path — writable so the CLI can write logs/session state
+        and refresh a token WITHOUT that reaching the real home. What lands in
+        it, in preference order (B0):
+        - `api-key`: a vendor API key is already in the environment (the env
+          allowlist carries it) — the dir stays empty, nothing from the real
+          home is copied or bound.
+        - `oauth-file-copy`: no key, so COPY the single credential FILE (never
+          the directory — it also holds other projects' history and hooks the
+          CLI executes) into the ephemeral dir.
+        - `none`: neither — the CLI will fail to authenticate and produce no
+          patch (fail-safe); the live leg surfaces this before spend.
+        """
+        import os
+        mount, env_var, cred_name = _VENDOR_HOME[self.command]
+        vhome = tmp_root / "vendor-home"
+        vhome.mkdir(mode=0o700, exist_ok=True)
+        binds = ((str(vhome), mount),)
+        env = {env_var: mount}
+        if any(os.environ.get(k) for k in _VENDOR_API_KEYS.get(self.command, ())):
+            return binds, env, "api-key"
+        src = Path.home() / (".codex" if self.command == "codex" else ".claude") / cred_name
+        if src.is_file():
+            shutil.copy2(src, vhome / cred_name)
+            (vhome / cred_name).chmod(0o600)
+            return binds, env, "oauth-file-copy"
+        return binds, env, "none"
 
     def run(self, target: Path, out_dir: Path, *, run_id: str, collected_at: str) -> ArmResult:
         import tempfile
@@ -122,26 +207,72 @@ class FixArm:
         tmp_root = Path(tempfile.mkdtemp(prefix="sc-fix-"))
         raw_dir = Path(out_dir) / "raw" / self.name.replace(":", "_")
         raw_dir.mkdir(parents=True, exist_ok=True)
-        posture = _entitlements.safeguard_posture_for(self.model)
+        safeguard = _entitlements.safeguard_posture_for(self.model)
         tier = _entitlements.classify_model(self.model)
-        cov = {"job": self.job, "safeguard_posture": posture, "fenced": True}
+        allow_net = self.allow_network
+        # resolve the runtime + credential delivery for the relaxed posture
+        runtime_binds: tuple[tuple[str, str], ...] = ()
+        writable_binds: tuple[tuple[str, str], ...] = ()
+        extra_env: dict = {}
+        auth_kind = "n/a"
+        plan = None
+        if allow_net:
+            plan = _fence.resolve_runtime(self.command)
+            if plan is None:
+                return self._fail(f"runtime_unresolved: cannot bind {self.command} at a "
+                                  "neutral path", {"job": self.job})
+            writable_binds, extra_env, auth_kind = self._auth_delivery(tmp_root)
+            runtime_binds = tuple(plan.binds)
+        # B1/R12: host isolation posture is a STRUCTURED stamp, never a boolean.
+        # `safeguard_posture` stays the model-tier field; `posture` is host
+        # isolation + egress, so the two are never conflated.
+        posture = {
+            "execution_boundary": "orchestrator_bwrap",
+            "network_access": "unrestricted" if allow_net else "unshared",
+            "egress_destination_control": "none" if allow_net else "n/a",
+            "operator_acknowledged_unrestricted_egress": (self.egress_acknowledged
+                                                          if allow_net else None),
+            "real_home_visible": False,          # certified by the canary below
+            "vendor_home": auth_kind,
+            "code_disclosed_to": _CODE_DISCLOSED_TO[self.command] if allow_net else None,
+            "vendor_sandbox": ("workspace-write" if self.command == "codex"
+                               else ("edit-only-tools" if allow_net else "none")),
+            "project_command_network": "unverified",   # only a live run can confirm
+            "tests_ran": False,          # never set from vendor prose (B0 cond. 8)
+            "runtime": (plan.provenance if plan else None),
+        }
+        cov = {"job": self.job, "safeguard_posture": safeguard, "posture": posture}
         try:
             work, pristine = prepare_fix_copies(target, tmp_root)
-            home = tmp_root / "home"
-            home.mkdir()
+            # relaxed posture mounts the vendor HOME at a neutral non-/tmp path
+            # (codex refuses helper aliases under /tmp); strict keeps the tmp home
+            home = Path("/sc-home") if allow_net else tmp_root / "home"
+            if not allow_net:
+                home.mkdir()
             # M1: fail closed unless the fence canary certifies against THIS work
-            # dir, THIS home and THIS network posture — and the certificate is
-            # live and matches the fence we are about to run (R11).
+            # dir, THIS home, THIS network posture AND THESE runtime binds — and
+            # the certificate is live and matches the fence we are about to run (R11).
             cert, report = _fence.certify(work_dir=work, original=target, home=home,
-                                          allow_network=False)
-            cov["fence"] = {k: report.get(k) for k in ("bwrap", "breaches",
-                                                       "controls_missing", "canary_done")}
-            why = _fence.verify_certificate(cert, work_dir=work, home=home, allow_network=False)
+                                          allow_network=allow_net, runtime_binds=runtime_binds,
+                                          writable_binds=writable_binds)
+            cov["fence"] = {k: report.get(k) for k in ("bwrap", "breaches", "controls_missing",
+                                                       "canary_done", "network")}
+            why = _fence.verify_certificate(cert, work_dir=work, home=home,
+                                            allow_network=allow_net, runtime_binds=runtime_binds,
+                                            writable_binds=writable_binds)
             if why is not None:
                 return self._fail(f"fence_unverified: {report.get('refused') or why}", cov)
+            posture["cert_hash"] = cert.config_hash
             env = _fence.allowlisted_env(home=str(home))
-            cmd = self._cmd(home)
-            fcmd = _fence.bwrap_argv(work_dir=work, home=home, allow_network=False) + ["--", *cmd]
+            if allow_net:
+                # PATH must point at the NEUTRAL runtime bins; the host PATH
+                # (~/.local/bin, ~/.nvm) does not exist inside the namespace.
+                env["PATH"] = ":".join((*plan.path_dirs, "/usr/bin", "/bin"))
+                env.update(extra_env)
+            cmd = self._cmd()
+            fcmd = _fence.bwrap_argv(work_dir=work, home=home, allow_network=allow_net,
+                                     runtime_binds=runtime_binds,
+                                     writable_binds=writable_binds) + ["--", *cmd]
             r = proc.run_command(fcmd, timeout=self.timeout, cwd=str(work), env=env,
                                  success_exit_codes=tuple(range(0, 256)))
             diff = _patches.extract_patch(pristine, work, ceiling=tmp_root)
@@ -163,11 +294,14 @@ class FixArm:
                 kind="fix", title=f"Patch for {loc.get('uri','?')}", path=rel,
                 producer=self.name, family=self.family, dual_use=False,
                 export_excluded=excluded, created_at=collected_at, model_id=self.model,
-                entitlement=tier.name if tier else None, safeguard_posture=posture,
+                entitlement=tier.name if tier else None, safeguard_posture=safeguard,
                 format="patch", related_finding_ids=[self.finding.get("id")] if self.finding.get("id") else [])
             meta = {"sha256": report_p.sha256, "secret_in_patch": report_p.secret_in_patch,
                     "review_required": report_p.review_required, "files": report_p.files,
-                    "base_commit": (report or {}).get("base_commit"), "exit_code": r.exit_code}
+                    "base_commit": (report or {}).get("base_commit"), "exit_code": r.exit_code,
+                    # the host-isolation posture rides with the patch so a
+                    # reviewer sees the egress conditions the fix was made under
+                    "posture": posture}
             cov.update({"patch": meta, "elapsed": r.elapsed_seconds})
             return ArmResult(name=self.name, kind=self.kind, family=self.family, ok=True,
                              exit_code=r.exit_code, error="", findings=[],
