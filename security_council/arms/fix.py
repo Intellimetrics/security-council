@@ -22,7 +22,10 @@ needs spend and degrades safely to `no_patch` / `tests_ran: false`.
 
 from __future__ import annotations
 
+import atexit
 import shutil
+import signal
+import threading
 from pathlib import Path
 
 from .. import entitlements as _entitlements
@@ -32,10 +35,105 @@ from .. import proc
 from ..artifacts import Artifact, artifact_id
 from .base import ArmResult
 
+# B2 (R10 precedent, M-V3): a fix job is (vendor family, HOUSE prompt file) — NOT
+# a vendor plugin/skill trigger. The R10 lesson (and B1's live codex finding) is
+# that `/claude-security …` and `$fix-finding` are literal text in headless
+# `-p`/`exec` mode, never reachable commands; the claude fix job used to name the
+# `/claude-security suggest-patches` PLUGIN command, and plugins are on B0's
+# never-copy roster. Both jobs now drive OUR own instruction (`prompts/house-fix.md`)
+# through the plain CLI, exactly as the analysis lane reframed its jobs onto house
+# prompts (see arms/artifact_runner.py). The producer stays a house arm.
 FIX_JOBS = {
-    "suggest-patches": ("claude", "/claude-security suggest-patches"),
-    "fix-finding": ("codex", "$fix-finding"),
+    "suggest-patches": ("claude", "house-fix.md"),
+    "fix-finding": ("codex", "house-fix.md"),
 }
+
+PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+
+# --------------------------------------------------------------------------- #
+# B1-residual: scratch cleanup that survives CATCHABLE termination signals.
+#
+# `FixArm.run` cleans its scratch (`tmp_root`, which holds the COPIED vendor
+# credential at 0600) in a `finally: shutil.rmtree`. A `finally` block does NOT
+# run when the process is killed by a signal, so a SIGTERM/SIGINT (a `timeout`,
+# a Ctrl-C, a harness cap) mid-run leaves a `/tmp/sc-fix-*` dir with the
+# credential copy behind (hit live 2026-09-01). We register every active scratch
+# root and rmtree the set on SIGTERM/SIGINT and at interpreter exit, chaining any
+# handler that was already installed so we do not swallow the caller's behaviour.
+#
+# HONEST LIMIT: SIGKILL (signal 9) and a hard crash cannot be caught by any
+# process — no handler runs, so a `kill -9` (or OOM-kill) mid-run can still
+# strand one scratch dir. The credential copy exists ONLY while the vendor
+# process runs (it is scrubbed the instant that process returns; see `run`), so
+# that residue is bounded to the live-run window, is 0600, and lives under a
+# 0700 mkdtemp dir. There is no in-process defence against SIGKILL; an operator
+# wrapper should prefer SIGTERM (which this catches) and reap `/tmp/sc-fix-*`.
+# --------------------------------------------------------------------------- #
+
+_SCRATCH_LOCK = threading.Lock()
+_ACTIVE_SCRATCH: set[str] = set()
+_CLEANUP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+_handlers_installed = False
+
+
+def _cleanup_all_scratch() -> None:
+    with _SCRATCH_LOCK:
+        paths = list(_ACTIVE_SCRATCH)
+        _ACTIVE_SCRATCH.clear()
+    for p in paths:
+        shutil.rmtree(p, ignore_errors=True)
+
+
+def _make_signal_cleanup(prev):
+    def _handler(signum, frame):
+        _cleanup_all_scratch()
+        # chain: a previously-registered Python handler still runs (e.g. SIGINT's
+        # default_int_handler raises KeyboardInterrupt); SIG_IGN stays ignored;
+        # SIG_DFL / None (no prior Python handler) performs the signal's default
+        # action so the exit status still reflects the signal we were sent.
+        if callable(prev):
+            return prev(signum, frame)
+        if prev == signal.SIG_IGN:
+            return None
+        signal.signal(signum, signal.SIG_DFL)
+        import os
+        os.kill(os.getpid(), signum)
+        return None
+    return _handler
+
+
+def _install_signal_cleanup() -> None:
+    """Install the scratch-cleanup handlers once, chaining whatever was there.
+
+    Signal handlers can only be set from the main thread; when the fix lane runs
+    off the main thread (an MCP server worker, a test executor) we fall back to
+    `atexit` alone rather than raising — the credential copy is scrubbed post-run
+    regardless, so the signal handler is defence in depth, not the only cleanup.
+    """
+    global _handlers_installed
+    if _handlers_installed:
+        return
+    atexit.register(_cleanup_all_scratch)   # normal exit / unhandled-exception exit
+    try:
+        for sig in _CLEANUP_SIGNALS:
+            prev = signal.getsignal(sig)
+            signal.signal(sig, _make_signal_cleanup(prev))
+    except (ValueError, OSError):
+        # not the main thread (or the platform refuses): atexit still armed
+        pass
+    _handlers_installed = True
+
+
+def _register_scratch(path: Path) -> None:
+    _install_signal_cleanup()
+    with _SCRATCH_LOCK:
+        _ACTIVE_SCRATCH.add(str(path))
+
+
+def _unregister_scratch(path: Path) -> None:
+    with _SCRATCH_LOCK:
+        _ACTIVE_SCRATCH.discard(str(path))
+
 
 # B1 relaxed posture: where each vendor's ephemeral config home is mounted
 # inside the namespace, and the env var that points the CLI at it. Neutral,
@@ -92,7 +190,7 @@ class FixArm:
         if job not in FIX_JOBS:
             raise ValueError(f"unknown fix job {job!r}; known: {sorted(FIX_JOBS)}")
         self.job = job
-        self.family, self.skill = FIX_JOBS[job]
+        self.family, self.prompt_file = FIX_JOBS[job]
         self.finding = finding
         self.model = model
         self.max_cost_usd = float(max_cost_usd)
@@ -113,6 +211,8 @@ class FixArm:
             return False, f"fix lane needs bwrap: {detail}"
         if not shutil.which(self.command):
             return False, f"{self.command} not on PATH"
+        if not self._prompt_path().is_file():
+            return False, f"house fix prompt missing: {self.prompt_file}"
         if not self.allow_network:
             # STRICT lane (unchanged): the no-network fence binds only system
             # dirs, so a vendor CLI under ~/.local/~/.nvm is invisible AND the
@@ -124,7 +224,8 @@ class FixArm:
                 return False, (f"fix lane cannot run fenced (strict, no network): {why}. "
                                "Live vendor patch generation needs the relaxed posture "
                                "(fix.allow_network + the egress acknowledgement).")
-            return True, f"fenced (strict): bwrap {detail}; {self.command} {self.skill}"
+            return True, (f"fenced (strict): bwrap {detail}; {self.command} house prompt "
+                          f"{self.prompt_file}")
         # RELAXED lane: consent is required and the runtime must resolve to a
         # neutral-path bind (never in-place — that would breach HOME_VISIBLE).
         if not self.egress_acknowledged:
@@ -138,17 +239,20 @@ class FixArm:
         return True, (f"fenced (relaxed, open network): {self.command} runtime "
                       f"{plan.provenance.get('kind')} at {plan.path_dirs[0]}")
 
+    def _prompt_path(self) -> Path:
+        return PROMPT_DIR / self.prompt_file
+
     def _prompt(self) -> str:
         uri = (self.finding.get("locations") or [{}])[0].get("uri", "?")
         cwe = ", ".join(str(c) for c in ((self.finding.get("taxonomy") or {}).get("cwe") or [])) \
             or "the reported weakness"
-        # B1 live-found: `$fix-finding`/`/claude-security …` are NOT reachable
-        # skill triggers in `-p`/`exec` mode (R10 already proved vendor skills
-        # unreachable) — a literal `$fix-finding` prefix is just confusing text.
-        # Use a plain, self-contained instruction that names the file + CWE.
-        return (f"Fix the security finding ({cwe}) at {uri}. Make the minimal change that "
-                "resolves it and write the edited file(s) in place. Do not change unrelated "
-                "code. I understand this may take a while and use tokens; proceed without asking.")
+        # B2 (M-V3 precedent): the instruction is OUR house prompt, not a vendor
+        # plugin/skill trigger. `/claude-security …` and `$fix-finding` are just
+        # literal text in `-p`/`exec` mode (R10; B1 live-found), so the job drives
+        # prompts/house-fix.md through the plain CLI. `str.replace` (not `.format`)
+        # so any literal braces in the prompt body are left untouched.
+        template = self._prompt_path().read_text()
+        return template.replace("{{CWE}}", cwe).replace("{{URI}}", uri).strip()
 
     def _cmd(self) -> list[str]:
         prompt = self._prompt()
@@ -214,6 +318,9 @@ class FixArm:
         import tempfile
         target = Path(target).resolve()
         tmp_root = Path(tempfile.mkdtemp(prefix="sc-fix-"))
+        # B1-residual: track this scratch root so a CATCHABLE signal (SIGTERM/
+        # SIGINT) rmtrees it even though it bypasses the `finally` below.
+        _register_scratch(tmp_root)
         raw_dir = Path(out_dir) / "raw" / self.name.replace(":", "_")
         raw_dir.mkdir(parents=True, exist_ok=True)
         safeguard = _entitlements.safeguard_posture_for(self.model)
@@ -286,6 +393,13 @@ class FixArm:
             r = proc.run_command(fcmd, timeout=self.timeout, cwd=str(work), env=env,
                                  success_exit_codes=tuple(range(0, 256)),
                                  stdin=_sp.DEVNULL)   # codex exec blocks reading stdin otherwise
+            # B1-residual (minimize on-disk credential exposure): a COPIED vendor
+            # credential is only needed while the vendor process authenticates.
+            # Scrub it the instant that process returns — before patch extraction/
+            # validation — so it is not resident during the rest of the run and a
+            # later uncatchable SIGKILL can strand at most a credential-free dir.
+            if auth_kind == "oauth-file-copy":
+                (tmp_root / "vendor-home" / _VENDOR_HOME[self.command][2]).unlink(missing_ok=True)
             diff = _patches.extract_patch(pristine, work, ceiling=tmp_root)
             if not diff.strip():
                 return self._fail("no_patch: the fix produced no change", cov, ok_degrade=True)
@@ -320,6 +434,7 @@ class FixArm:
                              raw_path=str(patch_path), coverage=cov,
                              artifacts=[{**art.to_dict(), "patch": meta}])
         finally:
+            _unregister_scratch(tmp_root)
             shutil.rmtree(tmp_root, ignore_errors=True)
 
     def _fail(self, error: str, cov: dict, *, ok_degrade: bool = False) -> ArmResult:
