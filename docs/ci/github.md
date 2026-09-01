@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest      # python3 + docker are preinstalled
     steps:
       - uses: actions/checkout@v4
-      - uses: Intellimetrics/security-council@v0.3.0
+      - uses: Intellimetrics/security-council@v0.4.0
         with:
           path: '.'
           arms: 'semgrep,gitleaks,osv-scanner'

@@ -127,7 +127,7 @@ practice repo that ships in this repository, so you can follow along safely.
 permissions: {contents: read, security-events: write}
 steps:
   - uses: actions/checkout@v4
-  - uses: Intellimetrics/security-council@v0.3.0
+  - uses: Intellimetrics/security-council@v0.4.0
     with: {fail-on-severity: high, gate-baseline: new}
 ```
 

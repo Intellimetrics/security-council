@@ -331,6 +331,12 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 - **codex-security arm** (`arms/codex_security.py`): resolves the CLI as env `SECURITY_COUNCIL_CODEX_SECURITY_CMD` > `codex-security` on PATH > the **npx cache** (`~/.npm/_npx/*/node_modules/@openai/codex-security/bin/codex-security.mjs` via `node`, v0.1.16 cached here) — it never auto-installs. Output dir must be outside the worktree, 0700, with trusted ancestors → the arm scans into `mkdtemp` and copies the sealed bundle to `raw/codex-security/`. `--max-cost` fuse (default 5 USD). Needs `~/.codex` at 700 (done). Exit 2 = incomplete coverage *or* runtime error → success is decided by the sealed `scan-manifest.json`. **Live 2026-08-21:** stdout is **empty** — progress + cost go to stderr (`--format json` shapes the bundle only), so cost is parsed from stderr lines and full stderr is kept as `raw/codex-security/stderr.log`; the served model is reported **nowhere** → `model_unattested` in coverage (a D8 pin can't be positively attested); 18 min on the 12-file fixture, cost-stopped at $5.43 est. during the post-seal "analyzing attack paths" phase while the core bundle still sealed `completed`+`complete` (surfaced as `cost_stopped`) — give it `max_cost_usd: 8` to keep that phase; sealed producer stamps `codex-security-plugin` **0.1.22** (≠ CLI 0.1.16), which is what lands in `tool_version` provenance.
 - **Trivy is banned as a default** (supply-chain compromised Mar 2026, GHSA-69fq-xp46-6x23). Use cdxgen/syft/grype for future SBOM/SCA.
 - **Project venv at `.venv`** (gitignored; `uv venv .venv && uv pip install -p .venv/bin/python -e ".[mcp,dev]"`): system python3 is PEP-668 externally managed, so the `mcp` SDK (2.0.0) lives only there. The suite runs on both — the MCP handshake test skips wherever `mcp` is absent.
+- **Never `pip install semgrep` into the project/wheel venv** (found by the B2
+  subagent 2026-09-01): semgrep pins `mcp<2` (it imports
+  `mcp.server.fastmcp.FastMCP`), the project needs `mcp>=2,<3` — installing
+  semgrep into `.venv` silently downgrades mcp and breaks `test_mcp_handshake`.
+  Scans use DOCKER semgrep anyway; for a live pip-semgrep run put it in a
+  separate venv on PATH. The wheel rehearsal is unaffected (docker arms).
 - **llm-council 0.25.0 assessed 2026-09-01** (uv tool already 0.25.0; the MCP server
   lags until the session restarts). Applied to `.llm-council.yaml`: `defaults.
   okf_context: true` (0.24.0 blast-radius on include_diff runs — okf-rs installed,
@@ -852,12 +858,36 @@ A1's default is behavior-changing (both peers agreed).
     completed before a refresh; no hostile fixture staged) — cover in B2/a
     hardening pass. The destination-egress proxy (graduation criterion) is still
     unbuilt — required before private-code runs.
-- **B2 (claude leg, fuse $5):** claude runs the fix job under the edit-only
-  policy (likely a house prompt, see B0 cond. 4). Standing instruction for ANY
-  future paid codex-security run: grep stderr + sealed bundle for a served-model
-  field (closes or re-confirms §7.3 for $0 extra).
+  - **B1-residual DONE (B2 lane, commit 9c3ad9d + R20 6d25eba):** SIGTERM/SIGINT
+    + atexit scratch cleanup (handler-chained, main-thread-guarded, non-blocking
+    lock after R20-SIGNAL-01), credential scrubbed the instant the vendor returns
+    AND the copy is inside the try/finally (R20b nit). SIGKILL stays uncatchable
+    (documented). Still open: auth-refresh ephemerality + hostile-hooks fixture
+    not exercised; destination-egress proxy (graduation criterion) unbuilt.
+- **B2 — DONE + LIVE-VERIFIED 2026-09-01 (commit 9c3ad9d).** The claude fix job
+  (`suggest-patches`) is reframed off the `/claude-security suggest-patches`
+  plugin onto `prompts/house-fix.md`, shared by both legs (M-V3 precedent);
+  `FIX_JOBS` maps job→(family, prompt file), `available()` fails closed on a
+  missing prompt. Live: claude produced a correct minimal SQLi fix (verify-fix
+  `fixed`); codex re-verified on the same shared prompt (`fixed`). The claude
+  leg runs edit-only (no `--dangerously-skip-permissions`). Was a subagent lane
+  (Lane 2 of the R19 release fan-out).
 
 ### 8.3 Phase 1b — A2 `--verify-patch --against RUN_DIR` + A3 MCP exposure ($0, after B1)
+
+**A2/A3 — DONE 2026-09-01 (commits 00f0b57 A2, b2ba8a7 A3; subagent Lane 1 of
+the R19 fan-out).** `--verify-patch --against RUN_DIR` judges a patch against an
+old run via a control (unpatched) + patched re-scan at the CURRENT scanner
+version; `fixed` needs the old run's verified coverage + control reproduction +
+verified patched absence; every precondition fails closed to graded
+`unproven (<reason>)`; evidence binds against-run id/commit/manifest sha256 +
+both sides' scanner versions/coverage; `fixed` is evidence-only. MCP
+`sc_verify_patch` (against-mode only, absolute+in-root path). Design decisions
+council-blessed (R20 Q1–Q3): the moved-sink baseline is the CONTROL population
+(same scanner version), the old run supplies selection/coverage/identity;
+MCP is against-only; store evidence recorded only on a real verification. The
+`--against`-mode dirty predicate reuses `workspace.git_info` (the consolidate
+path). Original spec preserved below for reference.
 
 - **A2** preconditions, all fail-closed: run base commit == HEAD (sha equality; shallow
   clones are a non-issue, rebases invalidate — the principled LATER relaxation is

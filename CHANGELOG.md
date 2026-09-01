@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-09-01
+
+**Upgrading from 0.3.0:** no data migration; existing signed decisions,
+baselines, and run artifacts still verify. The GitHub Action tag is
+`Intellimetrics/security-council@v0.4.0`. New behavior to know about: baselines
+now age out (`decisions.baseline_max_age_days`, default 365 / ci·gov 180 — set
+`off` to keep the old unbounded behavior), and `scan --fix` can now reach a
+live vendor CLI, but ONLY behind the double opt-in (`fix.allow_network: true`
+in operator config AND `--allow-unrestricted-fix-egress`); the scanned repo can
+enable neither and `gov` refuses the lane. Reviewed to ship by council R20/R20b
+(three rounds; five must-fixes in the fence canary and signal cleanup found and
+closed before release).
 
 **Live vendor fix generation, behind a relaxed fence and a double opt-in
 (R19 B0/B1).** `scan --fix` can now reach a live vendor CLI to produce a
@@ -52,6 +63,32 @@ question as verification, not exploitation" in the seat's absent-reason and
 in the run-level `validator_unavailable`/`validator_failed` degradation,
 instead of a generic failure string. The fail-safe verdict is unchanged
 (`needs_human`, never demoted).
+
+**Verify a patch against an old run (R19 A2/A3):** `scan --verify-patch FILE
+--against RUN_DIR` judges a patch against a previous run's finding population
+instead of a fresh full scan. It runs the vouching scanners twice on scratch
+copies of the current tree — a control (unpatched) and a patched pass — and
+only reports `fixed` when the old run had verified coverage, the control
+reproduces the finding now (guarding scanner/ruleset drift), and the patched
+pass is a verified absence. Every precondition fails closed to a graded
+`unproven (<reason>)` — base commit mismatch, dirty tree, non-full scope,
+unverified coverage, a run dir committed into the repo under scan, an
+inconsistent manifest, the control not reproducing, or an unapplyable patch —
+never a false `fixed`. Evidence binds the old run id, base commit, and
+`manifest.json` sha256 plus both sides' scanner versions and coverage. The
+`sc_verify_patch` MCP tool exposes this against-mode (patch path absolute and
+inside the MCP root). `fixed` stays evidence-only — never a disposition or the
+gate.
+
+**Live fix generation is host-portable and cleaned up (R19 B2 + residual):**
+the vendor fix jobs drive security-council's own house prompt
+(`prompts/house-fix.md`) through the plain CLI rather than a vendor
+plugin/skill trigger (which is unreachable in headless mode), so the claude
+fix job no longer depends on the claude-security plugin. Scratch directories
+that hold a copied credential are cleaned on `SIGTERM`/`SIGINT` and at exit
+(not only via a `finally` a signal would bypass), and the credential copy is
+scrubbed the instant the vendor process returns. `SIGKILL` remains uncatchable
+(documented); prefer `SIGTERM`.
 
 ## 0.3.0 — 2026-08-31
 
