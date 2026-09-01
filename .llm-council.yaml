@@ -21,6 +21,11 @@ defaults:
   catalog_auto_refresh: true
   auto_open_browser: false
   cost_warn_usd: null
+  # llm-council >= 0.24.0: one-hop caller/callee blast radius appended to
+  # include_diff runs from an ephemeral okf-rs bundle (installed; parses this
+  # repo: 1762 concepts). Fail-soft, byte-identical when no diff is attached.
+  # Motivation: R17/R15b both shipped regressions "one hop out" of the diff.
+  okf_context: true
 participants:
   claude:
     type: cli
@@ -38,6 +43,7 @@ participants:
     - --exclude-dynamic-system-prompt-sections
     model: null
     timeout: 480
+    terse_retry_on_timeout: false   # 0.25.0 stats: fired 3x here, recovered 0 — doomed retries
     max_prompt_chars: 120000
     stdin_prompt: true
     env_passthrough:
@@ -64,7 +70,9 @@ participants:
     - model_reasoning_effort=medium   # council peer must not inherit ~/.codex ultra (773s vs 151s on the same prompt)
     - '-'
     model: null
-    timeout: 600
+    timeout: 900   # 0.25.0 stats: 18 timeouts, 0 terse-retry recoveries (most predate the
+                   # effort=medium pin; post-pin codex completes in 150-260s, so this is
+                   # cheap insurance — quorum-met skip keeps fast rounds fast)
     max_prompt_chars: 120000
     stdin_prompt: true
     env_passthrough:

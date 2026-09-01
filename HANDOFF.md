@@ -331,6 +331,17 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 - **codex-security arm** (`arms/codex_security.py`): resolves the CLI as env `SECURITY_COUNCIL_CODEX_SECURITY_CMD` > `codex-security` on PATH > the **npx cache** (`~/.npm/_npx/*/node_modules/@openai/codex-security/bin/codex-security.mjs` via `node`, v0.1.16 cached here) — it never auto-installs. Output dir must be outside the worktree, 0700, with trusted ancestors → the arm scans into `mkdtemp` and copies the sealed bundle to `raw/codex-security/`. `--max-cost` fuse (default 5 USD). Needs `~/.codex` at 700 (done). Exit 2 = incomplete coverage *or* runtime error → success is decided by the sealed `scan-manifest.json`. **Live 2026-08-21:** stdout is **empty** — progress + cost go to stderr (`--format json` shapes the bundle only), so cost is parsed from stderr lines and full stderr is kept as `raw/codex-security/stderr.log`; the served model is reported **nowhere** → `model_unattested` in coverage (a D8 pin can't be positively attested); 18 min on the 12-file fixture, cost-stopped at $5.43 est. during the post-seal "analyzing attack paths" phase while the core bundle still sealed `completed`+`complete` (surfaced as `cost_stopped`) — give it `max_cost_usd: 8` to keep that phase; sealed producer stamps `codex-security-plugin` **0.1.22** (≠ CLI 0.1.16), which is what lands in `tool_version` provenance.
 - **Trivy is banned as a default** (supply-chain compromised Mar 2026, GHSA-69fq-xp46-6x23). Use cdxgen/syft/grype for future SBOM/SCA.
 - **Project venv at `.venv`** (gitignored; `uv venv .venv && uv pip install -p .venv/bin/python -e ".[mcp,dev]"`): system python3 is PEP-668 externally managed, so the `mcp` SDK (2.0.0) lives only there. The suite runs on both — the MCP handshake test skips wherever `mcp` is absent.
+- **llm-council 0.25.0 assessed 2026-09-01** (uv tool already 0.25.0; the MCP server
+  lags until the session restarts). Applied to `.llm-council.yaml`: `defaults.
+  okf_context: true` (0.24.0 blast-radius on include_diff runs — okf-rs installed,
+  parses this repo at 1762 concepts; fail-soft, byte-identical without a diff;
+  motivated by R17/R15b "regression one hop out"), codex `timeout: 900` and claude
+  `terse_retry_on_timeout: false` (both from the new `stats` recommendations
+  block). NOT changed: agy stays without `--dangerously-skip-permissions` — its
+  headless `command`-permission failures are the ACCEPTED cost of llm-council's
+  hard read-only posture (upstream defaults.py: "do NOT re-add it", canary-tested)
+  — keep planning quorum around claude+codex. `setup --write-instructions`
+  skipped: CLAUDE.md's hand-written council section is richer than the snippet.
 - **OWASP Benchmark checkout at `.corpora/BenchmarkJava`** (gitignored — GPL-2.0, converter-only per R7; shallow clone, sha `0db793a`; `results/`+`scorecard/`+`data/` deleted locally to keep semgrep runs clean/fast). Its local `.security-council.yaml` enables `score.calibration: auto` — the live smoke config for the fitted record. Re-fit after a semgrep version bump: scan the checkout, run `calibrate`, copy the record into `security_council/data/` (the `auto` pin check refuses stale records loudly).
 
 ## 7. Known limitations / deferred (honest list)
@@ -712,6 +723,13 @@ A1's default is behavior-changing (both peers agreed).
   carries the ceiling. Build note: same-file same-family fake findings cluster
   into ONE via the CWE-gated overlap tier — fixture findings need distinct
   families or the counts under test collapse.
+- **A5 (new, $0, from the llm-council 0.25.0 assessment 2026-09-01):**
+  `council_client` reads only `error` strings from `llm-council run --json`, so a
+  panel seat refused on content policy (`error_kind: content_refused`, emitted
+  per-peer since 0.23.0 at llm-council cli.py:3174) is indistinguishable from a
+  crashed seat. Map it to a distinct seat status/rationale so the summary can say
+  "declined on content policy — rephrase as verification" (the R14 lesson)
+  instead of a generic failure.
 
 ### 8.2 Phase B — fix-lane design round, then the cheapest live smoke
 
