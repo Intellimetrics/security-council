@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+**Live vendor fix generation, behind a relaxed fence and a double opt-in
+(R19 B0/B1).** `scan --fix` can now reach a live vendor CLI to produce a
+reviewed `.patch` artifact (never applied). The vendor agent runs inside the
+orchestrator's bubblewrap fence, which keeps kernel write-denial outside the
+scratch copy and real-`$HOME` invisibility but declares the network open (the
+model API is unreachable otherwise); the vendor runtime is bound at a neutral
+path (never in place under `~`, which would make the real home visible), and
+auth is a spend-capped API key via the env allowlist or a copy of the single
+credential file into an ephemeral vendor home — never the real config
+directory. Reaching this posture requires BOTH `fix.allow_network: true` in
+operator config AND the per-run `--allow-unrestricted-fix-egress` flag; the
+scanned repository can supply neither, and the `gov` profile refuses the lane.
+The host-isolation posture (network, egress control, credential kind, vendor
+sandbox, runtime hash) is stamped structurally on the run and the patch. The
+open egress is a documented residual: a compromised agent could transmit the
+scratch copy and the delivered credential; a destination-constrained egress
+proxy is the named prerequisite before the lane runs on private code.
+
+
 **Behavior change (R19 A1):** baselines now age out. A baseline older than
 `decisions.baseline_max_age_days` (default **365**; `ci`/`gov` profiles
 **180**) is no longer honoured — everything gates as new, with a

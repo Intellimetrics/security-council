@@ -794,14 +794,49 @@ A1's default is behavior-changing (both peers agreed).
   files; real vendor dirs byte-identical before/after (snapshot assert); hostile
   hooks/MCP/nested-agent fixture cannot execute; vendor ToS permit lane-scoped
   key use (operator to confirm).
-- **B1 (build + codex leg first, fuse $8–10):** implement the B0 posture
-  (neutral-path binds, ephemeral vendor home, edit-only claude policy, ack flag,
-  structured stamps, canary waiver), run the $0 checks, then the codex
-  `fix-finding` live leg — codex is preferred first (kernel sandbox nests as
-  depth). Under ChatGPT auth `max_cost_usd` is a token-volume fuse, not a dollar
-  cap (§6). Define "contract smoke" (may only prove refusal/cost behavior)
-  separately from "happy-path completed patch". Chain any produced `.patch` into
-  the existing current-run `--verify-patch` (no dependency on A2).
+- **B1 — BUILT + $0-VERIFIED 2026-09-01 (commits 6b177cd fence, 2e024c8 arm,
+  c86cdae consent); the live codex leg is the remaining spend gate.** The whole
+  B0 posture is implemented and offline/live-$0 verified; 730 tests. Pieces:
+  - **B1a fence** (`fence.py`): `runtime_binds` (ro, neutral vendor runtime) +
+    `writable_binds` (rw, ephemeral vendor home) threaded through
+    bwrap_argv/certify/verify/config_hash; both part of the hashed shape (host
+    paths ephemeral, sandbox paths certified). `resolve_runtime` maps a command
+    to its plan — self-contained ELF (claude) binds one file; node script
+    (codex) binds the whole node root. Canary records open network as
+    `network: open:waived_by_posture`.
+  - **B1b arm** (`arms/fix.py`): `FixArm(allow_network, egress_acknowledged)`.
+    Relaxed lane resolves the runtime to a neutral bind, opens network, delivers
+    auth as an API key via the env allowlist OR a COPY of the single credential
+    file into a writable ephemeral vendor HOME at neutral `CODEX_HOME`/
+    `CLAUDE_CONFIG_DIR` (never the real dir). codex keeps `--sandbox
+    workspace-write`; claude drops `--dangerously-skip-permissions` for an
+    edit-only roster. `cov["fenced"]=True` replaced by the structured `posture`
+    stamp (also on the patch artifact). Strict lane unchanged.
+  - **B1c consent** (`config.py`/`cli.py`/`orchestrator.py`): double opt-in —
+    `fix.allow_network` (config) AND `--allow-unrestricted-fix-egress` (CLI);
+    repo-sourced `allow_network` refused; `gov` refuses (exit 4). MCP does not
+    expose the lane (CLI-only consent, per council).
+  - **$0 checks passed:** in-place bind ⇒ HOME_VISIBLE breach, neutral ⇒ absent
+    (pinned by live test); both real runtimes launch relocated; relaxed codex
+    fence certifies with the writable vendor home (credential readable, home
+    absent, write lands in the copy not `~/.codex`); claude honors a neutral
+    `CLAUDE_CONFIG_DIR`; cert-hash bug found+fixed (certify must strip the
+    writable host path like config_hash_for).
+  - **STILL NEEDS THE LIVE LEG (spend + operator):** does `codex exec --sandbox
+    workspace-write` init its Landlock sandbox nested inside bwrap (and stay
+    net-denied for project commands while model transport works); does auth
+    refresh write only the ephemeral copy; does the hostile-hooks/nested-agent
+    fixture stay inert. And OPERATOR: confirm vendor ToS permit lane-scoped key
+    use; decide API key (preferred) vs the auth.json copy. To RUN it:
+    `printf 'fix:\n  allow_network: true\n' > op.yaml` then
+    `scan <public/synthetic repo with a real finding> --arms semgrep --fix gating
+    --fix-job fix-finding --allow-unrestricted-fix-egress --config op.yaml`
+    (fuse via `arms.options.'codex-fix:fix-finding'`? no — pass model/budget as
+    designed). Under ChatGPT auth `max_cost_usd` is a token-volume fuse, not a
+    dollar cap (§6). Define "contract smoke" (may only prove refusal/cost)
+    separately from "happy-path completed patch". Chain any produced `.patch`
+    into the existing current-run `--verify-patch`. First live runs on
+    public/synthetic repos ONLY (open egress).
 - **B2 (claude leg, fuse $5):** claude runs the fix job under the edit-only
   policy (likely a house prompt, see B0 cond. 4). Standing instruction for ANY
   future paid codex-security run: grep stderr + sealed bundle for a served-model
