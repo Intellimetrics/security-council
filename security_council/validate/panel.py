@@ -332,6 +332,30 @@ def select_for_validation(findings: list[Finding], *, max_findings: int | None =
     return ranked, (ranked[:max_findings] if max_findings else ranked)
 
 
+SELECTION_STRATEGY = "pattern_round_robin_within_severity_band"
+
+
+def validation_preview(findings: list[Finding], *, max_findings: int | None = None,
+                       budget_usd: float | None = None,
+                       skip_families: frozenset = SKIP_VALIDATION_FAMILIES) -> dict:
+    """R19 A4 (IMS follow-up #2): the PRE-run half of validation selection.
+
+    What would be validated and what it may cost, computable before any panel
+    convenes. Reads the same `select_for_validation` the loop and the manifest
+    read (the boolean-coverage lesson: parallel accounting drifts). The ceiling
+    is the per-finding budget fuse × selected — an upper bound handed to
+    `llm-council --max-cost-usd`, not a prediction of actual spend (native CLI
+    peers bill ~nothing; hosted peers can reach the fuse)."""
+    eligible, selected = select_for_validation(findings, max_findings=max_findings,
+                                               skip_families=skip_families)
+    priced = isinstance(budget_usd, (int, float)) and not isinstance(budget_usd, bool)
+    return {"eligible": len(eligible), "selected": len(selected),
+            "max_findings": max_findings,
+            "strategy": SELECTION_STRATEGY,
+            "per_finding_budget_usd": budget_usd if priced else None,
+            "budget_ceiling_usd": round(len(selected) * budget_usd, 2) if priced else None}
+
+
 def validate_findings(findings: list[Finding], *, repo_root, runner=council_client.run_council,
                       max_findings: int | None = None,
                       skip_families: frozenset = SKIP_VALIDATION_FAMILIES,

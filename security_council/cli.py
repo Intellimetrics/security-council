@@ -30,6 +30,21 @@ def _positive_int(value: str) -> int:
     return n
 
 
+def _print_validation_preview(p: dict) -> None:
+    """R19 A4: one stderr line BEFORE any panel convenes — what `--validate`
+    is about to attempt and its budget ceiling (stderr so `--json` stdout
+    stays parseable)."""
+    cap = p.get("max_findings")
+    line = (f"validation: {p['selected']} of {p['eligible']} eligible finding(s) "
+            f"selected (cap {cap if cap else 'none'}, "
+            f"strategy {p['strategy'].replace('_', ' ')})")
+    if p.get("budget_ceiling_usd") is not None:
+        line += (f"; budget ceiling ${p['budget_ceiling_usd']:.2f} "
+                 f"({p['selected']} × ${p['per_finding_budget_usd']:.2f}/finding fuse — "
+                 "an upper bound, not a spend prediction)")
+    print(line, file=sys.stderr)
+
+
 def cmd_scan(args) -> int:
     target = Path(args.path).resolve()
     if not target.is_dir():
@@ -170,7 +185,8 @@ def cmd_scan(args) -> int:
                    validate_budget_usd=args.validate_budget, diff=diff,
                    analysis_arms=analysis_arms, fix_spec=fix_spec,
                    vendor_validate=bool(getattr(args, "vendor_validate", False)),
-                   verify_patch=verify_patch)
+                   verify_patch=verify_patch,
+                   on_validation_preview=_print_validation_preview)
     if getattr(args, "open", False):
         _open_report(run.out_dir)
     if args.json:
@@ -239,7 +255,8 @@ def cmd_consolidate(args) -> int:
                    out_dir=Path(args.out).resolve() if args.out else None,
                    validate=args.validate,
                    validate_max_findings=args.validate_max,
-                   validate_budget_usd=args.validate_budget)
+                   validate_budget_usd=args.validate_budget,
+                   on_validation_preview=_print_validation_preview)
     if getattr(args, "open", False):
         _open_report(run.out_dir)
     if args.json:

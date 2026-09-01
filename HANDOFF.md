@@ -698,10 +698,20 @@ A1's default is behavior-changing (both peers agreed).
   tests: exactly 365d, +1s, future, malformed, each signature status, gate all/new.
   _Divergence recorded: codex preferred profile-only (default off); default-on chosen per
   the R13 precedent — the lenient default is the one attackers get._
-- **A4** (new, from claude's Q4 item 7, absence verified): the IMS follow-up's PRE-run
-  validation-selection preview never landed — eligible count, configured cap, selection
-  strategy, estimated cost, surfaced BEFORE panels convene (post-run histograms exist,
-  the preview does not).
+- **A4 — DONE 2026-09-01** (`panel.validation_preview` — pure, reads the same
+  `select_for_validation` as the loop and the manifest; `run_scan(...,
+  on_validation_preview=)` callback fired before any panel convenes, wired by both
+  CLI call sites to one stderr line; `manifest.validation.budget_ceiling_usd`;
+  ceiling on the summary's coverage line; 8 tests in
+  `tests/test_validation_preview.py`, incl. an order test proving preview-before-
+  panel against a convening fake runner). The "cost" is the honest one we HAVE:
+  `selected × --validate-budget` — the per-finding `--max-cost-usd` fuse ceiling,
+  labeled "an upper bound, not a spend prediction" (native CLI peers bill ~$0).
+  Live-verified on the staged smoke repo with real llm-council: preview line
+  `1 of 2 eligible … ceiling $0.50` on stderr, 1 panel convened, summary line
+  carries the ceiling. Build note: same-file same-family fake findings cluster
+  into ONE via the CWE-gated overlap tier — fixture findings need distinct
+  families or the counts under test collapse.
 
 ### 8.2 Phase B — fix-lane design round, then the cheapest live smoke
 

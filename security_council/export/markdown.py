@@ -321,6 +321,9 @@ def _summary(findings: list[Finding], manifest: dict) -> list[str]:
                     f"{vm.get('external_failed', 0)} failed to convene · "
                     f"{vm.get('not_selected', 0)} not selected · "
                     f"{vm.get('deterministic_skipped', 0)} deterministic-family skipped"
+                    + (f" · budget ceiling ${vm['budget_ceiling_usd']:.2f} "
+                       f"(${vm['max_cost_usd_per_finding']:.2f}/finding fuse)"
+                       if isinstance(vm.get("budget_ceiling_usd"), (int, float)) else "")
                 )
         else:
             out.append("- **Validator panel:** not run (`--validate` to cross-examine findings)")

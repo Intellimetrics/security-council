@@ -330,7 +330,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
              validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None,
              fix_spec: dict | None = None, vendor_validate: bool = False,
              verify_patch: dict | None = None, validator_runner=None,
-             validator_timeout: int = 600, reports_root: str | Path | None = None) -> ScanRun:
+             validator_timeout: int = 600, reports_root: str | Path | None = None,
+             on_validation_preview=None) -> ScanRun:
     target = Path(target).resolve()
     if fix_spec and not isolate:
         raise ValueError("the fix lane requires isolation (an in-place fix would edit the "
@@ -496,6 +497,15 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                                        "(fail-closed)."})
 
         validation_failures: list[dict] = []
+        if validate and on_validation_preview is not None:
+            # R19 A4 (IMS follow-up #2): selection + budget ceiling surfaced
+            # BEFORE any panel convenes — the operator sees what the run is
+            # about to attempt while it can still be interrupted, including
+            # a run that selected nothing.
+            from .validate import panel as _vpanel
+            on_validation_preview(_vpanel.validation_preview(
+                merged, max_findings=validate_max_findings,
+                budget_usd=validate_budget_usd))
         if validate and merged:
             from .validate import panel as _vpanel
             vrunner = (_vpanel.make_vendor_runner(ws.root) if vendor_validate else None)
@@ -741,7 +751,8 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             return hist
 
         from .rollup import pattern_key as _pattern_key
-        from .validate.panel import SKIP_VALIDATION_FAMILIES, select_for_validation
+        from .validate.panel import (SELECTION_STRATEGY, SKIP_VALIDATION_FAMILIES,
+                                     select_for_validation, validation_preview)
         with_validation = [f for f in merged if f.validation is not None]
         host_validated = [f for f in with_validation if any(
             op.is_host and op.status != "absent" for op in f.validation.panel)]
@@ -756,11 +767,16 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
                                if f.id in selected_ids and f.validation.convened()]
         external_quorum = [f for f in externally_convened
                            if len(f.validation.external_families()) >= 2]
+        # R19 A4: the ceiling arithmetic is single-sourced in validation_preview
+        # so the pre-run printout and this record cannot drift apart
+        _preview = (validation_preview(merged, max_findings=validate_max_findings,
+                                       budget_usd=validate_budget_usd) if validate else None)
         validation_meta = {
             "requested": validate,
             "eligible": len(eligible_ranked),
             "max_findings": validate_max_findings,
             "max_cost_usd_per_finding": validate_budget_usd if validate else None,
+            "budget_ceiling_usd": _preview["budget_ceiling_usd"] if _preview else None,
             "timeout_seconds_per_finding": validator_timeout if validate else None,
             "host_records": len(host_validated),
             "external_selected": len(selected_external),
@@ -770,8 +786,7 @@ def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path
             "not_selected": len(eligible_ranked) - len(selected_external),
             "deterministic_skipped": len(skipped_validation),
             "no_validation_record": len(merged) - len(with_validation),
-            "selection_strategy": ("pattern_round_robin_within_severity_band"
-                                   if validate else None),
+            "selection_strategy": SELECTION_STRATEGY if validate else None,
             "selected_by_severity": _sev_hist(selected_external),
             "not_selected_by_severity": _sev_hist(
                 [f for f in eligible_ranked if f.id not in selected_ids]),

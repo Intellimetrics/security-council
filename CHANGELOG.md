@@ -17,6 +17,14 @@ baseline from excusing findings: exit codes can flip 0→1, never 0→3. An
 ignored baseline's provenance (operator, set date, digest, signature, age)
 is preserved in `manifest.baseline_ignored` and rendered in the summary.
 
+**Validation selection preview (R19 A4):** `scan --validate` and
+`consolidate --validate` now print one stderr line BEFORE any panel
+convenes — selected/eligible counts, the cap, the selection strategy, and a
+budget ceiling (`selected × --validate-budget`, an upper bound handed to
+`llm-council --max-cost-usd`, not a spend prediction). The ceiling is also
+recorded as `manifest.validation.budget_ceiling_usd` and rendered on the
+summary's "Validation selection coverage" line.
+
 ## 0.3.0 — 2026-08-31
 
 **Upgrading from 0.2.0:** no data migration. The GitHub Action tag is `Intellimetrics/security-council@v0.3.0`. Existing signed decisions,

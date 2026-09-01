@@ -274,6 +274,7 @@ def test_validate_without_a_backend_is_a_visible_degradation(tmp_path, monkeypat
         "eligible": 1,
         "max_findings": 1,
         "max_cost_usd_per_finding": 0.5,
+        "budget_ceiling_usd": 0.5,
         "timeout_seconds_per_finding": 600,
         "host_records": 0,
         "external_selected": 1,
