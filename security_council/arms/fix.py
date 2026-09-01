@@ -351,44 +351,44 @@ class FixArm:
         # B1-residual: track this scratch root so a CATCHABLE signal (SIGTERM/
         # SIGINT) rmtrees it even though it bypasses the `finally` below.
         _register_scratch(tmp_root)
-        raw_dir = Path(out_dir) / "raw" / self.name.replace(":", "_")
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        safeguard = _entitlements.safeguard_posture_for(self.model)
-        tier = _entitlements.classify_model(self.model)
-        allow_net = self.allow_network
-        # resolve the runtime + credential delivery for the relaxed posture
-        runtime_binds: tuple[tuple[str, str], ...] = ()
-        writable_binds: tuple[tuple[str, str], ...] = ()
-        extra_env: dict = {}
-        auth_kind = "n/a"
-        plan = None
-        if allow_net:
-            plan = _fence.resolve_runtime(self.command)
-            if plan is None:
-                return self._fail(f"runtime_unresolved: cannot bind {self.command} at a "
-                                  "neutral path", {"job": self.job})
-            writable_binds, extra_env, auth_kind = self._auth_delivery(tmp_root)
-            runtime_binds = tuple(plan.binds)
-        # B1/R12: host isolation posture is a STRUCTURED stamp, never a boolean.
-        # `safeguard_posture` stays the model-tier field; `posture` is host
-        # isolation + egress, so the two are never conflated.
-        posture = {
-            "execution_boundary": "orchestrator_bwrap",
-            "network_access": "unrestricted" if allow_net else "unshared",
-            "egress_destination_control": "none" if allow_net else "n/a",
-            "operator_acknowledged_unrestricted_egress": (self.egress_acknowledged
-                                                          if allow_net else None),
-            "real_home_visible": False,          # certified by the canary below
-            "vendor_home": auth_kind,
-            "code_disclosed_to": _CODE_DISCLOSED_TO[self.command] if allow_net else None,
-            "vendor_sandbox": ("workspace-write" if self.command == "codex"
-                               else ("edit-only-tools" if allow_net else "none")),
-            "project_command_network": "unverified",   # only a live run can confirm
-            "tests_ran": False,          # never set from vendor prose (B0 cond. 8)
-            "runtime": (plan.provenance if plan else None),
-        }
-        cov = {"job": self.job, "safeguard_posture": safeguard, "posture": posture}
         try:
+            raw_dir = Path(out_dir) / "raw" / self.name.replace(":", "_")
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            safeguard = _entitlements.safeguard_posture_for(self.model)
+            tier = _entitlements.classify_model(self.model)
+            allow_net = self.allow_network
+            # resolve the runtime + credential delivery for the relaxed posture
+            runtime_binds: tuple[tuple[str, str], ...] = ()
+            writable_binds: tuple[tuple[str, str], ...] = ()
+            extra_env: dict = {}
+            auth_kind = "n/a"
+            plan = None
+            if allow_net:
+                plan = _fence.resolve_runtime(self.command)
+                if plan is None:
+                    return self._fail(f"runtime_unresolved: cannot bind {self.command} at a "
+                                      "neutral path", {"job": self.job})
+                writable_binds, extra_env, auth_kind = self._auth_delivery(tmp_root)
+                runtime_binds = tuple(plan.binds)
+            # B1/R12: host isolation posture is a STRUCTURED stamp, never a boolean.
+            # `safeguard_posture` stays the model-tier field; `posture` is host
+            # isolation + egress, so the two are never conflated.
+            posture = {
+                "execution_boundary": "orchestrator_bwrap",
+                "network_access": "unrestricted" if allow_net else "unshared",
+                "egress_destination_control": "none" if allow_net else "n/a",
+                "operator_acknowledged_unrestricted_egress": (self.egress_acknowledged
+                                                              if allow_net else None),
+                "real_home_visible": False,          # certified by the canary below
+                "vendor_home": auth_kind,
+                "code_disclosed_to": _CODE_DISCLOSED_TO[self.command] if allow_net else None,
+                "vendor_sandbox": ("workspace-write" if self.command == "codex"
+                                   else ("edit-only-tools" if allow_net else "none")),
+                "project_command_network": "unverified",   # only a live run can confirm
+                "tests_ran": False,          # never set from vendor prose (B0 cond. 8)
+                "runtime": (plan.provenance if plan else None),
+            }
+            cov = {"job": self.job, "safeguard_posture": safeguard, "posture": posture}
             work, pristine = prepare_fix_copies(target, tmp_root)
             # relaxed posture mounts the vendor HOME at a neutral non-/tmp path
             # (codex refuses helper aliases under /tmp); strict keeps the tmp home

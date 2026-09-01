@@ -524,3 +524,31 @@ def test_run_refuses_relaxed_without_acknowledgement(tmp_path, monkeypatch):
     res = arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
     assert not res.ok and "egress_not_acknowledged" in res.error
     assert set(glob.glob("/tmp/sc-fix-*")) == before      # no scratch dir created
+
+
+def test_credential_copy_is_cleaned_if_a_later_step_raises(tmp_path, monkeypatch):
+    # R20B-CREDENTIAL-01: the credential copy happens inside the try/finally now,
+    # so an exception AFTER _auth_delivery still rmtrees the scratch (and the
+    # copied credential) immediately, not only at process exit.
+    import glob
+    _fake_plan(monkeypatch, "codex", "node")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+    fake_home = tmp_path / "fh"
+    (fake_home / ".codex").mkdir(parents=True)
+    (fake_home / ".codex" / "auth.json").write_text('{"token":"SECRET"}')
+    monkeypatch.setattr(fixmod.Path, "home", classmethod(lambda cls: fake_home))
+    # blow up AFTER the credential is copied (prepare_fix_copies runs after
+    # _auth_delivery inside the try)
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(fixmod, "prepare_fix_copies", boom)
+
+    before = set(glob.glob("/tmp/sc-fix-*"))
+    arm = FixArm(job="fix-finding", finding=_finding_row(), allow_network=True,
+                 egress_acknowledged=True)
+    with pytest.raises(RuntimeError, match="disk full"):
+        arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
+    # the scratch dir (holding the copied credential) is gone, cleaned by finally
+    assert set(glob.glob("/tmp/sc-fix-*")) == before
+    assert not fixmod._ACTIVE_SCRATCH            # and unregistered
