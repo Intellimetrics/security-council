@@ -204,3 +204,24 @@ def test_strip_level_follows_the_headers(tmp_path):
     ok, err = apply_patch(work, plain)
     assert ok and (work / "sub" / "x.py").read_text() == "b\n"
     assert (work / "x.py").read_text() == "a\n"           # -p1 was never tried
+
+
+def test_extract_patch_excludes_agent_created_cache_junk(tmp_path):
+    # B1 live-found: codex under workspace-write ran the code and left
+    # __pycache__/*.pyc, which git diff reports as a binary hunk and the
+    # validator then refuses. The diff must exclude generated junk.
+    from security_council import patches
+    pris = tmp_path / "pristine"
+    work = tmp_path / "work"
+    for d in (pris, work):
+        (d / "app").mkdir(parents=True)
+        (d / "app" / "x.py").write_text("q = 'SELECT ' + name\n")
+    # the agent edits the source AND leaves a compiled cache file behind
+    (work / "app" / "x.py").write_text("q = db.execute('SELECT ...', [name])\n")
+    (work / "app" / "__pycache__").mkdir()
+    (work / "app" / "__pycache__" / "x.cpython-311.pyc").write_bytes(b"\x00\x01\x02BINARY\x00")
+    diff = patches.extract_patch(pris, work, ceiling=tmp_path)
+    assert "db.execute" in diff                     # the real edit is present
+    assert "Binary files" not in diff and "__pycache__" not in diff   # junk excluded
+    rep = patches.validate_patch(diff, target_files={"app/x.py"})
+    assert rep.ok and not rep.refused               # no longer refused for a binary hunk

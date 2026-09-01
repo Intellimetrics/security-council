@@ -316,3 +316,34 @@ def _operator_cfg(tmp_path):
     p = tmp_path / "operator.yaml"
     p.write_text("fix:\n  allow_network: true\n")
     return p
+
+
+def test_prompt_has_no_bogus_skill_trigger_and_names_cwe():
+    # B1 live-found: `$fix-finding`/`/claude-security ...` are NOT reachable in
+    # -p/exec mode; a literal `$fix-finding` prefix is confusing text (R10).
+    arm = FixArm(job="fix-finding", finding=_finding_row("CWE-89", "injection", "app/r.py"))
+    p = arm._prompt()
+    assert "$fix-finding" not in p and "/claude-security" not in p
+    assert "CWE-89" in p and "app/r.py" in p
+
+
+def test_relaxed_run_passes_devnull_stdin(tmp_path, monkeypatch):
+    # B1 live-found: `codex exec` reads stdin and blocks on no EOF; the fenced
+    # run must pass stdin=DEVNULL.
+    import subprocess
+    _fake_plan(monkeypatch, "codex", "node")
+    _fake_relaxed_cert(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["stdin"] = kw.get("stdin")
+        from pathlib import Path
+        (Path(kw["cwd"]) / "app" / "x.py").write_text("fixed = 1\n")
+        return type("R", (), {"ok": True, "exit_code": 0, "stdout": "", "stderr": "",
+                              "elapsed_seconds": 1.0, "timed_out": False})()
+    monkeypatch.setattr(fixmod.proc, "run_command", fake_run)
+    arm = FixArm(job="fix-finding", finding=_finding_row(), allow_network=True,
+                 egress_acknowledged=True)
+    arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
+    assert seen["stdin"] is subprocess.DEVNULL

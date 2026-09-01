@@ -172,6 +172,22 @@ def bwrap_argv(*, work_dir: Path, home: Path, allow_network: bool = False,
     for d in _RO_SYSTEM_DIRS:
         if Path(d).exists():
             argv += ["--ro-bind", d, d]
+    if allow_network:
+        # B1 (live-found 2026-09-01): with the net shared but `/etc/resolv.conf`
+        # a symlink into `/run` (systemd-resolved: -> stub-resolv.conf), the
+        # target is absent in the fence and DNS fails ("failed to lookup address
+        # information"). Bind the real resolver file at ITS OWN resolved path so
+        # the `/etc/resolv.conf` symlink (brought by the /etc ro-bind) resolves —
+        # bwrap cannot mount over the dangling symlink itself. The stub
+        # nameserver 127.0.0.53 is reachable because the net namespace is shared.
+        try:
+            real_resolv = os.path.realpath("/etc/resolv.conf")
+            if real_resolv != "/etc/resolv.conf" and Path(real_resolv).is_file():
+                argv += ["--ro-bind", real_resolv, real_resolv]
+            elif Path("/etc/resolv.conf").is_file():   # not a symlink: bind in place
+                argv += ["--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf"]
+        except OSError:
+            pass
     for host_path, sandbox_path in runtime_binds:
         argv += ["--ro-bind", str(host_path), str(sandbox_path)]
     argv += ["--tmpfs", "/tmp",
@@ -300,10 +316,18 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
 
     canary_target = original / ".sc-canary"
     real_home = str(Path.home())
+    # B1: when the network is declared open, DNS must actually resolve inside
+    # the fence, or the vendor agent hangs reconnecting (live-found). Prove the
+    # resolver is wired with a POSITIVE control that needs no external call —
+    # resolv.conf present with a nameserver — so a broken relaxed fence refuses
+    # to certify instead of hanging at run time.
+    dns_probe = ("( grep -q '^nameserver' /etc/resolv.conf 2>/dev/null && echo DNS_OK ); "
+                 if allow_network else "")
     probe = (
         # positive controls — these MUST print, or the probe did not really run
         "( [ -d /usr ] && echo USR_OK ); "
         f"( touch {str(work_dir)!s}/.sc-work-write 2>/dev/null && echo WORK_WRITE_OK ); "
+        + dns_probe +
         # escapes — these must NOT print
         f"( touch {canary_target!s} 2>/dev/null && echo WROTE_ORIGINAL ); "
         # the real home must not merely be unreadable, it must not EXIST in the namespace
@@ -335,7 +359,8 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
     breaches = [tag for tag in ("WROTE_ORIGINAL", "HOME_VISIBLE") if tag in out]
     if not allow_network and "NET_VISIBLE" in out:
         breaches.append("NET_VISIBLE")
-    controls_missing = [tag for tag in ("USR_OK", "WORK_WRITE_OK") if tag not in out]
+    expect_controls = ["USR_OK", "WORK_WRITE_OK"] + (["DNS_OK"] if allow_network else [])
+    controls_missing = [tag for tag in expect_controls if tag not in out]
     if canary_target.exists():
         canary_target.unlink(missing_ok=True)      # never leave the marker behind
         breaches.append("WROTE_ORIGINAL_CONFIRMED")

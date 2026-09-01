@@ -28,7 +28,10 @@ class ProcResult:
 def run_command(cmd: list[str], *, timeout: int = 1800,
                 success_exit_codes: tuple[int, ...] = (0,),
                 cwd: str | None = None, env: dict | None = None,
-                kill_process_group: bool = False) -> ProcResult:
+                kill_process_group: bool = False, stdin=None) -> ProcResult:
+    # `stdin` defaults to inherit; pass subprocess.DEVNULL for a child that
+    # would otherwise BLOCK reading stdin (B1 live-found: `codex exec` reads
+    # stdin for an appended block even with a prompt arg, hanging on no EOF).
     # start_new_session isolates the child in its own session/process group.
     # ``subprocess.run(timeout=...)`` kills only the direct child and then waits
     # for captured pipes to close.  A validator such as llm-council owns native
@@ -38,7 +41,7 @@ def run_command(cmd: list[str], *, timeout: int = 1800,
     if not kill_process_group:
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                               cwd=cwd, env=env, check=False,
+                               cwd=cwd, env=env, check=False, stdin=stdin,
                                start_new_session=hasattr(os, "setsid"))
         except subprocess.TimeoutExpired as e:
             return ProcResult(False, None, e.stdout or "", (e.stderr or "") + "\n[timed out]",
@@ -53,7 +56,8 @@ def run_command(cmd: list[str], *, timeout: int = 1800,
           tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as err_file):
         try:
             p = subprocess.Popen(cmd, stdout=out_file, stderr=err_file, text=True,
-                                 cwd=cwd, env=env, start_new_session=hasattr(os, "setsid"))
+                                 cwd=cwd, env=env, stdin=stdin,
+                                 start_new_session=hasattr(os, "setsid"))
         except FileNotFoundError as e:
             return ProcResult(False, None, "", f"[not found] {e}",
                               time.monotonic() - start, False)

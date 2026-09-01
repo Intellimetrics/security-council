@@ -164,3 +164,34 @@ def test_in_place_runtime_bind_breaches_home_visible_but_neutral_does_not(tmp_pa
         work_dir=work, home=tmp_path / "h2",
         runtime_binds=((f"{real_home}", "/opt/sc-vendor/bin/x"),))
     assert "abs" in neutral.stdout                          # neutral bind -> home absent
+
+
+# --------------------------------------------------------------------- #
+# B1 live-found: DNS must resolve in the relaxed (open-network) fence
+# --------------------------------------------------------------------- #
+
+def test_relaxed_fence_binds_resolver_and_requires_dns_control():
+    import os
+    argv = fence.bwrap_argv(work_dir="/w", home="/h", allow_network=True)
+    real = os.path.realpath("/etc/resolv.conf")
+    joined = " ".join(argv)
+    # the dereferenced resolver file is bound at its own path so the /etc symlink resolves
+    assert f"--ro-bind {real} {real}" in joined or "--ro-bind /etc/resolv.conf /etc/resolv.conf" in joined
+    # the strict fence must NOT bind the resolver (no network)
+    assert "resolv.conf" not in " ".join(fence.bwrap_argv(work_dir="/w", home="/h"))
+
+
+@requires_bwrap
+def test_relaxed_canary_requires_dns_and_resolves(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    cert, report = fence.certify(work_dir=work, original=tmp_path / "orig", allow_network=True)
+    # DNS_OK is a required positive control in the relaxed posture; if resolv.conf
+    # were not wired the canary would refuse rather than let a run hang
+    assert cert is not None, report
+    assert "DNS_OK" not in report.get("controls_missing", [])
+    # and it genuinely resolves inside the fence
+    r = fence.run_in_fence(
+        ["/bin/sh", "-c", "getent hosts localhost >/dev/null 2>&1 && echo R || echo F"],
+        work_dir=work, home=tmp_path / "h", allow_network=True)
+    assert "R" in r.stdout

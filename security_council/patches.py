@@ -21,6 +21,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .workspace import DEFAULT_EXCLUDES as _WS_EXCLUDES
+
 # A fix for a code finding never legitimately edits these — refuse, don't flag.
 REFUSE_PATH_RES = [re.compile(p) for p in (
     r"(^|/)\.git($|/)", r"(^|/)\.security-council($|/)",
@@ -63,7 +65,14 @@ class PatchReport:
     sha256: str = ""
 
 
-_DIFF_EXCLUDE_DIRS = (".git", ".hg", ".svn", ".security-council", ".llm-council")
+# VCS/tool dirs plus the build/cache/vendor junk a fix agent can CREATE while
+# it works (B1 live-found: codex under `--sandbox workspace-write` ran the code
+# to check its fix and left `__pycache__/*.pyc`, which `git diff` reports as a
+# binary hunk and the validator then refuses the whole patch). The work copy
+# starts clean via DEFAULT_EXCLUDES; excluding the same set at diff time keeps
+# generated noise out of the patch so only the source edit survives.
+_DIFF_EXCLUDE_DIRS = tuple(sorted({".git", ".hg", ".svn", ".security-council",
+                                   ".llm-council", *_WS_EXCLUDES}))
 
 
 def extract_patch(pristine: Path, work: Path, *, ceiling: Path) -> str:

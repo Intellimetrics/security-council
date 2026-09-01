@@ -138,11 +138,20 @@ class FixArm:
         return True, (f"fenced (relaxed, open network): {self.command} runtime "
                       f"{plan.provenance.get('kind')} at {plan.path_dirs[0]}")
 
+    def _prompt(self) -> str:
+        uri = (self.finding.get("locations") or [{}])[0].get("uri", "?")
+        cwe = ", ".join(str(c) for c in ((self.finding.get("taxonomy") or {}).get("cwe") or [])) \
+            or "the reported weakness"
+        # B1 live-found: `$fix-finding`/`/claude-security …` are NOT reachable
+        # skill triggers in `-p`/`exec` mode (R10 already proved vendor skills
+        # unreachable) — a literal `$fix-finding` prefix is just confusing text.
+        # Use a plain, self-contained instruction that names the file + CWE.
+        return (f"Fix the security finding ({cwe}) at {uri}. Make the minimal change that "
+                "resolves it and write the edited file(s) in place. Do not change unrelated "
+                "code. I understand this may take a while and use tokens; proceed without asking.")
+
     def _cmd(self) -> list[str]:
-        prompt = (f"{self.skill} for finding at "
-                  f"{(self.finding.get('locations') or [{}])[0].get('uri','?')}. "
-                  "Produce a minimal fix and write the changed files. "
-                  "I understand it may take a while and use tokens; proceed without asking.")
+        prompt = self._prompt()
         if self.family == "codex":
             # codex keeps its OWN kernel sandbox INSIDE the orchestrator fence
             # (defense in depth, B0); HOME/CODEX_HOME come from the fenced env.
@@ -273,8 +282,10 @@ class FixArm:
             fcmd = _fence.bwrap_argv(work_dir=work, home=home, allow_network=allow_net,
                                      runtime_binds=runtime_binds,
                                      writable_binds=writable_binds) + ["--", *cmd]
+            import subprocess as _sp
             r = proc.run_command(fcmd, timeout=self.timeout, cwd=str(work), env=env,
-                                 success_exit_codes=tuple(range(0, 256)))
+                                 success_exit_codes=tuple(range(0, 256)),
+                                 stdin=_sp.DEVNULL)   # codex exec blocks reading stdin otherwise
             diff = _patches.extract_patch(pristine, work, ceiling=tmp_root)
             if not diff.strip():
                 return self._fail("no_patch: the fix produced no change", cov, ok_degrade=True)
