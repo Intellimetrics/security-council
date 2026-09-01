@@ -794,9 +794,12 @@ A1's default is behavior-changing (both peers agreed).
   files; real vendor dirs byte-identical before/after (snapshot assert); hostile
   hooks/MCP/nested-agent fixture cannot execute; vendor ToS permit lane-scoped
   key use (operator to confirm).
-- **B1 — BUILT + $0-VERIFIED 2026-09-01 (commits 6b177cd fence, 2e024c8 arm,
-  c86cdae consent); the live codex leg is the remaining spend gate.** The whole
-  B0 posture is implemented and offline/live-$0 verified; 730 tests. Pieces:
+- **B1 — DONE + LIVE-VERIFIED 2026-09-01 (commits 6b177cd fence, 2e024c8 arm,
+  c86cdae consent, f50997b live-leg fixes). The codex leg ran end to end.**
+  735 tests. NOTE: spend is NOT a gate for this project — it runs on internal
+  enterprise CLIs with their own sign-in, not metered APIs (memory
+  `security-council-deployment-context`); auth = the credential-file copy
+  (`oauth-file-copy`), not a metered key. Pieces:
   - **B1a fence** (`fence.py`): `runtime_binds` (ro, neutral vendor runtime) +
     `writable_binds` (rw, ephemeral vendor home) threaded through
     bwrap_argv/certify/verify/config_hash; both part of the hashed shape (host
@@ -822,21 +825,33 @@ A1's default is behavior-changing (both peers agreed).
     absent, write lands in the copy not `~/.codex`); claude honors a neutral
     `CLAUDE_CONFIG_DIR`; cert-hash bug found+fixed (certify must strip the
     writable host path like config_hash_for).
-  - **STILL NEEDS THE LIVE LEG (spend + operator):** does `codex exec --sandbox
-    workspace-write` init its Landlock sandbox nested inside bwrap (and stay
-    net-denied for project commands while model transport works); does auth
-    refresh write only the ephemeral copy; does the hostile-hooks/nested-agent
-    fixture stay inert. And OPERATOR: confirm vendor ToS permit lane-scoped key
-    use; decide API key (preferred) vs the auth.json copy. To RUN it:
+  - **LIVE LEG RESULT (2026-09-01, seedrepo copy, one SQLi finding):** codex ran
+    end to end inside the relaxed fence and produced a CORRECT minimal fix
+    (f-string SQL → parameterized query) as a `.patch` never applied; the
+    deterministic `--verify-patch` lane then confirmed it `fixed` (absent from a
+    verified re-scan). Confirmed live: codex's Landlock `workspace-write` NESTS
+    inside bwrap; the credential copy authenticates; codex writes all its state
+    (memories/history/logs/goals sqlite) into the EPHEMERAL vendor home — real
+    `~/.codex` untouched (no leak-back). The run surfaced FOUR contract defects,
+    all fixed in f50997b: (1) DNS dead — `/etc/resolv.conf` symlinks into `/run`
+    which the fence didn't bind → agent hung reconnecting; relaxed fence now
+    binds the dereferenced resolver + a `DNS_OK` canary control; (2) `codex exec`
+    blocks reading stdin even with a prompt arg → `proc.run_command(stdin=)`,
+    fenced run passes DEVNULL; (3) the vendor skill trigger isn't reachable in
+    exec mode (R10 again) → plain instruction naming file + CWE; (4) codex under
+    workspace-write left `__pycache__/*.pyc` → binary hunk refused; extract_patch
+    now shares the workspace junk-excludes. To re-run:
     `printf 'fix:\n  allow_network: true\n' > op.yaml` then
-    `scan <public/synthetic repo with a real finding> --arms semgrep --fix gating
-    --fix-job fix-finding --allow-unrestricted-fix-egress --config op.yaml`
-    (fuse via `arms.options.'codex-fix:fix-finding'`? no — pass model/budget as
-    designed). Under ChatGPT auth `max_cost_usd` is a token-volume fuse, not a
-    dollar cap (§6). Define "contract smoke" (may only prove refusal/cost)
-    separately from "happy-path completed patch". Chain any produced `.patch`
-    into the existing current-run `--verify-patch`. First live runs on
-    public/synthetic repos ONLY (open egress).
+    `scan <synthetic repo> --arms semgrep --fix <id> --fix-job fix-finding
+    --allow-unrestricted-fix-egress --config op.yaml` (each fix ~4 min on this
+    host's default reasoning; runs on synthetic repos only — open egress).
+  - **Residuals for later:** a SIGKILL (timeout/interrupt) bypasses the arm's
+    `finally: rmtree`, leaving a scratch dir with the credential COPY in /tmp
+    (0600) — add signal-cleanup. Auth-refresh-writes-only-ephemeral and the
+    hostile-hooks/nested-agent-fixture inertness were not exercised (the fix
+    completed before a refresh; no hostile fixture staged) — cover in B2/a
+    hardening pass. The destination-egress proxy (graduation criterion) is still
+    unbuilt — required before private-code runs.
 - **B2 (claude leg, fuse $5):** claude runs the fix job under the edit-only
   policy (likely a house prompt, see B0 cond. 4). Standing instruction for ANY
   future paid codex-security run: grep stderr + sealed bundle for a served-model
