@@ -715,19 +715,78 @@ A1's default is behavior-changing (both peers agreed).
 
 ### 8.2 Phase B — fix-lane design round, then the cheapest live smoke
 
-- **B0 (council, $0):** the fence/vendor contract is a fork, not a task: (a) vendor-managed
-  sandboxing outside our fence with write-denial kept by the copy+extract design;
-  (b) fence retained but with network + ro-bind creds allowed in a declared
-  relaxed posture; (c) keep the structural refusal and park the lane. Decide with
-  council; do NOT spend first.
-- **B1 (claude leg, fuse $5):** correct mapping — claude runs `suggest-patches`. Define
-  "contract smoke" (may only prove refusal/cost behavior) separately from "happy-path
-  completed patch" (budget more). Chain any produced `.patch` into the existing
-  current-run `--verify-patch` (no dependency on A2).
-- **B2 (codex leg, fuse $8–10):** codex runs `fix-finding` via the `codex` CLI. Under
-  ChatGPT auth `max_cost_usd` is a token-volume fuse, not a dollar cap (§6). Standing
-  instruction for ANY future paid codex-security run: grep stderr + sealed bundle for a
-  served-model field (closes or re-confirms §7.3 for $0 extra).
+- **B0 — DECIDED 2026-09-01 (council 2/2 YES on option (b); transcript
+  `.llm-council/runs/20260901_055957_*`, continuation of R19; antigravity failed
+  again on its headless `command` permission).** Live vendor patch generation is
+  enabled by RELAXING THE FENCE, not abandoning it: orchestrator-owned bwrap
+  keeps kernel write-denial + real-home invisibility; network becomes a declared,
+  certified, stamped posture. Binding conditions, all adopted:
+  1. **Vendor runtime ro-bound at NEUTRAL paths** (`/opt/security-council/vendor/…`),
+     never at real `~/.local/bin`/`~/.nvm` — in-place binding makes the real HOME
+     exist in the namespace, which the canary's `HOME_VISIBLE` probe rightly calls
+     a breach (my draft (b) was self-contradictory here; caught by claude-peer,
+     echoed by codex). Record runtime versions/hashes in the manifest.
+  2. **claude loses `--dangerously-skip-permissions`** (its own help scopes it to
+     no-internet sandboxes — exactly what (b) removes). v1 policy is codex-peer's
+     stricter shape: EDIT-ONLY allowlist (Read/Glob/Grep/Edit/Write), no Bash, no
+     WebFetch/WebSearch, no MCP/subagents/hooks; tests come later from the
+     deterministic verify lane. If claude cannot produce a patch under that
+     policy, park CLAUDE specifically, don't weaken the lane. (Divergence noted:
+     claude-peer would allow Bash minus fetch tools; the stricter roster won.)
+  3. **codex keeps `--sandbox workspace-write` INSIDE the fence** (defense in
+     depth) and is the preferred first live leg — after verifying Landlock nests
+     inside bwrap here and project commands stay net-denied while model
+     transport works.
+  4. **Auth: dedicated spend-capped API key via the env allowlist, preferred;**
+     else copy ONLY the exact credential file into the ephemeral vendor HOME
+     (`CLAUDE_CONFIG_DIR`/`CODEX_HOME` — MV4-11 finally wired). NEVER ro-bind the
+     real auth dirs (HOME-visibility conflict; `~/.claude` carries other
+     projects' history + hooks the CLI executes). Never copy: OAuth refresh
+     tokens, hooks/plugins/MCP config, history/memories/caches, any non-vendor
+     credential. Host note for B1: the claude job invokes the claude-security
+     PLUGIN command, and plugins are on the never-copy roster — so the claude
+     fix job likely reframes onto a HOUSE fix prompt (M-V3 precedent).
+  5. **Consent is double opt-in and repo-unforgeable:** `--fix` alone no longer
+     suffices — an explicit CLI acknowledgement flag is required (repo config can
+     NEVER supply it; R17 parameter-over-config lesson), refusal names what's
+     missing. `gov` refuses the lane unconditionally, as policy like Red.
+  6. **Posture stamping is structured, never boolean** — `cov["fenced"] = True`
+     is R12's boolean-coverage failure recurring. Stamp execution_boundary /
+     network_access / egress_destination_control / operator_acknowledged /
+     real_home_visible / vendor_home / code_disclosed_to / vendor_sandbox /
+     project_command_network / cert hash + runtime hashes. Do NOT overload
+     `safeguard_posture` (model tiers, not host isolation). The canary records
+     the NET probe as `waived_by_posture` — today it's silently uncounted, which
+     reads as "passed". Summary carries one plain-language residual sentence
+     (open egress = scratch copy + delivered credential could leave).
+  7. **The first control to ADD is destination-constrained egress** (host-side
+     proxy allowlisting the vendor's API endpoints; blocks loopback/RFC1918/
+     metadata; DNS-rebinding-resistant) — both peers named it independently. Too
+     heavy for the first probe, so it is the GRADUATION CRITERION named in the
+     manifest before the lane runs on private code. Interim release conditions:
+     spend-capped API keys only (no refresh tokens), first live runs on
+     public/synthetic repos only. Residual even WITH the allowlist: exfil via
+     attacker-supplied key to the same vendor endpoint (Files-API class).
+  8. `tests_ran` is set only by orchestrator-observed execution, never vendor prose.
+  $0 checks before any spend (from both peers): in-place bind ⇒ expect
+  HOME_VISIBLE breach; relocated runtime launches both CLIs; codex Landlock
+  nesting inside bwrap; claude honors `CLAUDE_CONFIG_DIR` with minimal
+  credential (or `ANTHROPIC_API_KEY` alone); auth refresh writes only ephemeral
+  files; real vendor dirs byte-identical before/after (snapshot assert); hostile
+  hooks/MCP/nested-agent fixture cannot execute; vendor ToS permit lane-scoped
+  key use (operator to confirm).
+- **B1 (build + codex leg first, fuse $8–10):** implement the B0 posture
+  (neutral-path binds, ephemeral vendor home, edit-only claude policy, ack flag,
+  structured stamps, canary waiver), run the $0 checks, then the codex
+  `fix-finding` live leg — codex is preferred first (kernel sandbox nests as
+  depth). Under ChatGPT auth `max_cost_usd` is a token-volume fuse, not a dollar
+  cap (§6). Define "contract smoke" (may only prove refusal/cost behavior)
+  separately from "happy-path completed patch". Chain any produced `.patch` into
+  the existing current-run `--verify-patch` (no dependency on A2).
+- **B2 (claude leg, fuse $5):** claude runs the fix job under the edit-only
+  policy (likely a house prompt, see B0 cond. 4). Standing instruction for ANY
+  future paid codex-security run: grep stderr + sealed bundle for a served-model
+  field (closes or re-confirms §7.3 for $0 extra).
 
 ### 8.3 Phase 1b — A2 `--verify-patch --against RUN_DIR` + A3 MCP exposure ($0, after B1)
 
