@@ -4,7 +4,7 @@
 > environment — machine-local paths and vendor cost observations included.
 > User documentation lives in [README.md](README.md) and [docs/](docs/).
 
-_Last updated: 2026-08-31 (0.3.0 RELEASED — tag v0.3.0 at 02bbef0, live-verify 33407382496 green; see §7.10a). Read this first when resuming; it is the single entry point._
+_Last updated: 2026-09-01 (post-0.3.0 roadmap R19-reviewed and locked — see §8; 0.3.0 RELEASED — tag v0.3.0 at 02bbef0, live-verify 33407382496 green; see §7.10a). Read this first when resuming; it is the single entry point._
 
 ## 0. TL;DR
 
@@ -341,13 +341,16 @@ paths are gitignored. `summary.md` is the human-readable report (also regenerabl
 4. **Calibration is fitted but deliberately narrow (R7).** Default stays `"prior"`; the opt-in record covers ONLY semgrep deterministic singletons, Java, four families — everything else (panel terms, other languages/arms) is still hand-set. Known honest gaps: fitted p is prevalence-conditional (~50%-real corpus); templated near-twins leak across the train/test split (CIs/ECE flatter); the 0.60 floor censors injection/path_traversal fitted values. The word "calibrated" stays banned everywhere (tested). Next corpora: a negative corpus, a non-Java benchmark, panel-sample fitting for the panel terms.
 5. **Reports:** SARIF + JSON + manifest + `summary.md` + **eMASS** + **OpenVEX** + **OSCAL AR/POA&M** + **CKLB (ASD STIG V6R4)** + **CycloneDX 1.6 VDR** + **CSV** + **HTML** (`report --format …` or `--bundle triage|gov|all`; all spec/reference-verified, schema-validated in tests). **SBOM: done** — `scan --sbom` (syft) emits a real CycloneDX inventory artifact and `report --format cyclonedx` merges findings into it (bare VDR only when no SBOM artifact exists). Honest residue: the CKLB is spec-shaped after STIG Manager's exporter but **not yet imported into a live STIG Viewer**; PDF = print the HTML (no native PDF writer).
 6. **CI: GitHub is live-verified; ADO and GitLab still need real infrastructure.** ~~GitHub Action unproven~~ — **live-verified 2026-08-24** (`.github/workflows/live-verify.yml`, run 32732965676: clean-pass exit 0 with a real code-scanning SARIF upload, detects-and-gates exit 1 on the fixture; re-runnable any time with `gh workflow run live-verify`). Still unproven: the ADO template needs an ADO Server instance, and the GitLab job template + MR notes need a GitLab project (+ a project access token — `CI_JOB_TOKEN` can't post notes). Their local halves are live-verified (annotations, schema-valid reports, REST payloads via fake openers). ~~MCP transport unproven~~ — live-handshaken 2026-08-22 (mcp 2.0.0, protocol 2025-11-25); `tests/test_mcp_handshake.py` keeps it verified wherever `.[mcp]` is installed.
-7a. **Fix lane (M-V4a) is offline-built; live vendor patch-generation unproven.** The bwrap
-   fence, canary, patch validator, and fail-closed `FenceCertificate` are live-verified here
-   (bwrap 0.11.0); but no real vendor fix run has been made through `arms/fix.py` — the vendor
-   `$fix-finding`/`suggest-patches` invocation is best-effort and needs spend to verify (degrades
-   to `no_patch`). Also verify: whether `codex-security patch` honours the passed `--sandbox` vs
-   spawning its own `codex exec`; whether suggest-patches' verifier needs network (→ `tests_ran:
-   false`, never open egress). **M-V4b verify-fix evidence: BUILT as the deterministic lane
+7a. **Fix lane (M-V4a) is offline-built; live vendor patch-generation structurally refused,
+   not merely unproven.** The bwrap fence, canary, patch validator, and fail-closed
+   `FenceCertificate` are live-verified here (bwrap 0.11.0); but `FixArm.available()` refuses
+   up front because the fence as configured cannot run ANY vendor CLI — binary outside the
+   bind set, `--unshare-net` blocks the model API the generation depends on, tmpfs HOME drops
+   `~/.codex/auth.json` (all three verified live 2026-08-25; `arms/fix.py:86-100`). So "spend
+   to verify" was never the gap: enabling the lane is a DESIGN decision (fence vs vendor
+   network/creds) — see §8 Phase B0. Correct job mapping (draft plans keep reversing it):
+   `FIX_JOBS` = `suggest-patches`→claude (`/claude-security suggest-patches`),
+   `fix-finding`→codex (`$fix-finding`), via the `claude`/`codex` CLIs — NOT codex-security. **M-V4b verify-fix evidence: BUILT as the deterministic lane
    (2026-08-26, see §7.9)** — `--verify-fix` and `--verify-patch` re-run the scanners on a
    patched scratch copy; the vendor verify arm is unwired. The CLI/MCP nesting
    guards are cooperative (the real boundary is the fence's write-denial on the original tree).
@@ -650,7 +653,117 @@ v0.2.0` + push, `gh release create v0.2.0` with the CHANGELOG section, then
 `gh workflow run live-verify` (runs against `@main`) and confirm both jobs
 green. `git ls-remote --tags origin` first — a stale tag bit 0.1.0.
 
-## 8. Recommended next steps (in rough priority)
+## 8. Roadmap after 0.3.0 (R19-reviewed 2026-09-01)
+
+**R19 council** (quick; claude tradeoff/risk-low, codex NO/risk-high, antigravity failed
+again on its known headless `command` permission; transcript
+`.llm-council/runs/20260901_050203_*`). Both peers accepted the four-lane structure;
+codex's NO was two draft errors, both VERIFIED in code before revising: the fix-job
+mapping was reversed (see §7.7a), and "Phase B = spend $5–15 to live-verify the fix lane"
+is impossible as written — `available()` refuses up front (fence cannot run any vendor
+CLI). Claude's key reorder: real vendor patch *shape* is an input contract for the
+verify-chain work (VP-1 refuses traditional `---/+++` patches; only a live run shows what
+vendors emit), so the cheap vendor smoke comes before A2/A3.
+
+**Locked order:** A1(+A4) → B0 design round → B1 claude smoke → A2/A3 → B2 codex leg →
+0.4.0 checkpoint → C when provisioned (provisioning requested NOW, runs when ready) →
+D behind its own design round (R20). Release checkpoint is **0.4.0**, not 0.3.1 —
+A1's default is behavior-changing (both peers agreed).
+
+### 8.1 Phase 1 — A1 baseline max-age + A4 validation preview ($0)
+
+- **A1** `decisions.baseline_max_age_days`: **default 365**, `ci`/`gov` profiles 180,
+  explicit `off` allowed but stamped loudly in manifest + summary. A
+  `baseline_stale_soon` informational degradation opens 30 days before expiry (answers
+  the pipelines-go-red-overnight objection to default-on). Stale ⇒ `baseline_stale`
+  degradation AND the baseline is not honoured (everything gates as new — fail-closed;
+  exit flips 0→1 only, NEVER 0→3: pin with a test). Age from the SIGNED event timestamp
+  when the signature verifies; unsigned baseline under `warn`/`off` falls back to record
+  `set_at` with a visible caveat and the same stale handling. `set_at` materially in the
+  future ⇒ `baseline_refused` (today's `max(0, …)` at `orchestrator.py:653` silently
+  clamps it to age 0 — codex). Preserve provenance (age, signer, digest) in the manifest
+  even when the baseline is ignored. `at` compared as datetimes (R13 lesson). Boundary
+  tests: exactly 365d, +1s, future, malformed, each signature status, gate all/new.
+  _Divergence recorded: codex preferred profile-only (default off); default-on chosen per
+  the R13 precedent — the lenient default is the one attackers get._
+- **A4** (new, from claude's Q4 item 7, absence verified): the IMS follow-up's PRE-run
+  validation-selection preview never landed — eligible count, configured cap, selection
+  strategy, estimated cost, surfaced BEFORE panels convene (post-run histograms exist,
+  the preview does not).
+
+### 8.2 Phase B — fix-lane design round, then the cheapest live smoke
+
+- **B0 (council, $0):** the fence/vendor contract is a fork, not a task: (a) vendor-managed
+  sandboxing outside our fence with write-denial kept by the copy+extract design;
+  (b) fence retained but with network + ro-bind creds allowed in a declared
+  relaxed posture; (c) keep the structural refusal and park the lane. Decide with
+  council; do NOT spend first.
+- **B1 (claude leg, fuse $5):** correct mapping — claude runs `suggest-patches`. Define
+  "contract smoke" (may only prove refusal/cost behavior) separately from "happy-path
+  completed patch" (budget more). Chain any produced `.patch` into the existing
+  current-run `--verify-patch` (no dependency on A2).
+- **B2 (codex leg, fuse $8–10):** codex runs `fix-finding` via the `codex` CLI. Under
+  ChatGPT auth `max_cost_usd` is a token-volume fuse, not a dollar cap (§6). Standing
+  instruction for ANY future paid codex-security run: grep stderr + sealed bundle for a
+  served-model field (closes or re-confirms §7.3 for $0 extra).
+
+### 8.3 Phase 1b — A2 `--verify-patch --against RUN_DIR` + A3 MCP exposure ($0, after B1)
+
+- **A2** preconditions, all fail-closed: run base commit == HEAD (sha equality; shallow
+  clones are a non-issue, rebases invalidate — the principled LATER relaxation is
+  `HEAD^{tree}` equality); clean target tree (reuse the R18-hardened dirty predicate with
+  the state-dir exemption); `scan_scope` full; vouching arms' coverage `verified`; refuse
+  run dirs containing git-tracked files (the committable-run-dir class, checked on the
+  symlink-RESOLVED path). Precondition failures are graded `unproven (base_mismatch/…)`
+  verdicts, never usage errors. **Control run (codex, load-bearing):** re-run each
+  vouching scanner on the UNPATCHED current tree too; if the original finding does not
+  reproduce in the control ⇒ `unproven (control_not_reproduced)` — otherwise
+  scanner/ruleset drift masquerades as `fixed`. Evidence binds: against-run id + commit +
+  `manifest.json` sha256 (run dirs are unsigned — this is the same trust class as the
+  pre-R9 store; full run-signing stays out of scope), patch digest, scanner
+  versions/rulesets both sides, both coverage verdicts. Refuse internally inconsistent
+  manifests. `fixed` stays evidence-only — never disposition, never gate.
+- **A3** MCP `sc_verify_patch`: patch path absolute + in-root (sc_consolidate's import
+  rule); keep the rehearsal's validator-refuses-store-touching-patch test on the MCP path.
+
+### 8.4 Phase C — real-infrastructure verification (blocks on operator; request now)
+
+- **C1 GitLab** (free-tier project + PROJECT access token — `CI_JOB_TOKEN` can't post
+  notes): shipped template verbatim; verify `artifacts:reports` accepted, MR Code-Quality
+  widget (Free-tier — 2-min doc check first), MR note, gate re-raise. SAST dashboard
+  needs Ultimate ⇒ residual, not defect.
+- **C2 Azure DevOps Services** as a PROXY for D4's first-class ADO Server target:
+  logissue escaping, uploadsummary, CodeAnalysisLogs, PR-thread REST api-version=6.0,
+  gate re-raise. **Does NOT close the ADO Server honest-list item** — Server deltas stay
+  residual until a Server instance materialises.
+- **C3 CKLB** into a real STIG Viewer 3 (DISA public download, $0).
+- Hygiene for all: disposable projects, least-privilege tokens, synthetic code only,
+  revoke credentials after.
+
+### 8.5 Phase D — calibration corpora (design round R20 first; charter pinned NOW)
+
+R20 must resolve, not re-discover: Juliet-Java does NOT satisfy §7.4's non-Java gap
+(the C/C++ suite would, but then arm/ruleset coverage for C is a question); Juliet is
+MORE templated than BenchmarkJava (near-twin train/test leakage gets worse) and its
+prevalence is equally unrealistic; the negative corpus attacks the prevalence caveat;
+panel-term fitting needs an outcome-dataset sampling/export story (privacy-reviewed,
+avoiding one repository's heavily-selected disputed cases) BEFORE the fit. Default
+stays `prior`; "calibrated" stays banned.
+
+### 8.6 Release checkpoint — 0.4.0
+
+After Phases 1 + B0/B1 (and A2/A3 if landed): bump pyproject + `__init__` + CHANGELOG,
+wheel rehearsal per §7.10 method, `git ls-remote --tags origin` first.
+
+### 8.7 Parked — BY NAME (silent parking is how items get lost)
+
+§7.1 SCA/dep-reachability validator (oldest honest-list item, R2) · §7.2 redacted-secret
+validation bluntness · entitlement deep-rung live verification (needs real entitled
+creds; declare permanently residual if never intended) · decisions export/import bundle
+(`--accept-foreign`) · serve TLS/token rotation · Red tier (D5) · vendor verify-fix arm
+(superseded by the deterministic lane).
+
+### 8.8 Completed pre-0.3.0 roadmap (historical)
 
 _Ordering council-reviewed 2026-08-22 (R3, `docs/reviews/R3-scope-eval-first.md`): eval gate
 before the decision store — never wire the history feedback loop onto an unmeasured scorer._
