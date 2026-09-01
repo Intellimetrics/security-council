@@ -328,6 +328,90 @@ def _verify_patch_lane(target: Path, merged: list[Finding], spec: dict, out_dir:
     return [block], arts, degr + v_degr
 
 
+@dataclass
+class VerifyAgainstRun:
+    run_id: str
+    out_dir: Path
+    pv: dict                      # PatchVerification.to_dict() (the evidence block)
+    artifacts: list[dict]
+    degradations: list[dict]
+
+
+def _verify_against_degradations(pv) -> list[dict]:
+    """Surface the against-mode outcome as informational degradations (this lane
+    never gates — `fixed` is evidence only)."""
+    from . import verify_patch as _vp
+    degr: list[dict] = []
+    if pv.precondition:
+        degr.append({"kind": "verify_patch_precondition", "arm": _vp.PRODUCER,
+                     "detail": f"{pv.precondition['reason']}: {pv.precondition['detail']} — "
+                               "every verdict is unproven"})
+    if pv.against and pv.against.get("unknown_ids"):
+        degr.append({"kind": "verify_patch_unknown_ids", "arm": _vp.PRODUCER,
+                     "detail": "no open finding in the against-run has id "
+                               + ", ".join(pv.against["unknown_ids"])})
+    if pv.precondition is None and not pv.results:
+        degr.append({"kind": "verify_patch_nothing_to_verify", "arm": _vp.PRODUCER,
+                     "detail": "the patch touches no open finding of the against-run; pass "
+                               "--for <finding-id> to name one"})
+    if pv.precondition is None and pv.results and pv.applied is False:
+        degr.append({"kind": "verify_patch_not_applied", "arm": _vp.PRODUCER,
+                     "detail": f"{pv.patch}: {pv.apply_error} — every verdict is unproven"})
+    for a in [*pv.control_arms, *pv.arms]:
+        if not a["ok"]:
+            degr.append({"kind": "verify_patch_arm_failed", "arm": a["name"],
+                         "detail": f"{a['name']} failed on a scratch copy: {a['error']}"})
+        elif a["coverage_verdict"] != coverage.VERIFIED:
+            degr.append({"kind": "verify_patch_coverage", "arm": a["name"],
+                         "detail": f"{a['name']} covered a scratch copy only "
+                                   f"'{a['coverage_verdict']}'; it cannot vouch for an absence"})
+    return degr
+
+
+def run_verify_against(target: str | Path, patch_path: str | Path, against_run_dir: str | Path,
+                       arms: list[Arm], *, out_dir: str | Path | None = None,
+                       reports_root: str | Path | None = None,
+                       finding_ids: list[str] | None = None,
+                       now_iso: str | None = None) -> VerifyAgainstRun:
+    """`--verify-patch FILE --against RUN_DIR` (R19 A2): verify the operator's own
+    patch against an OLD run's finding population, guarded by a control run of the
+    CURRENT scanners. Shared by the CLI and MCP so their behaviour cannot drift.
+
+    Evidence only: verdicts are recorded as non-closing `deterministic_verify_fix`
+    machine evidence (L1-ignored) and written to `verify-against.json`; nothing is
+    gated, no disposition changes. Runs OUTSIDE the scan run tree (its own
+    `verify-against/` dir), so it never becomes the target's `latest` run."""
+    from . import verify_patch as _vp
+    from .decisions import DecisionStore
+    target = Path(target).resolve()
+    run_id, collected_at = _utc_stamp()
+    now_iso = now_iso or collected_at
+    if out_dir is None and reports_root is not None:
+        out_dir = Path(reports_root) / run_id
+    if out_dir is None:
+        out_dir = target / ".security-council" / "verify-against" / run_id
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pv = _vp.verify_patch_against(target, patch_path, against_run_dir, arms=arms,
+                                  out_dir=out_dir, run_id=run_id, collected_at=collected_at,
+                                  finding_ids=finding_ids)
+    arts = _vp.evidence_artifacts(pv, run_id=run_id, collected_at=collected_at)
+    # store machine evidence only for a REAL verification (no global precondition
+    # failure), so precondition-failure noise never lands in the decision store
+    if pv.precondition is None and pv.results:
+        _, against_findings, _, _ = _vp._load_against(Path(against_run_dir).resolve())
+        store = DecisionStore(target / ".security-council")
+        _vp.record_evidence(store, pv, against_findings, now_iso=now_iso)
+    degr = _verify_against_degradations(pv)
+    block = pv.to_dict()
+    evidence = {"run_id": run_id, "out_dir": str(out_dir), "mode": "against",
+                "verify_patch": block, "artifacts": arts, "degradations": degr}
+    (out_dir / "verify-against.json").write_text(dumps(evidence))
+    return VerifyAgainstRun(run_id=run_id, out_dir=out_dir, pv=block, artifacts=arts,
+                            degradations=degr)
+
+
 def run_scan(target: str | Path, arms: list[Arm], config: dict, *, out_dir: Path | None = None,
              isolate: bool = True, validate: bool = False, validate_max_findings: int | None = None,
              validate_budget_usd: float = 0.5, diff=None, analysis_arms: list[Arm] | None = None,
