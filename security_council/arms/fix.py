@@ -73,13 +73,24 @@ PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 _SCRATCH_LOCK = threading.Lock()
 _ACTIVE_SCRATCH: set[str] = set()
 _CLEANUP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
-_handlers_installed = False
+_atexit_registered = False
+_signal_handlers_installed = False
 
 
 def _cleanup_all_scratch() -> None:
-    with _SCRATCH_LOCK:
+    # R20-SIGNAL-01: a signal is delivered on the main thread and can interrupt
+    # `_register_scratch`/`_unregister_scratch` WHILE they hold `_SCRATCH_LOCK`;
+    # a blocking acquire here would then deadlock the handler against the code it
+    # interrupted. Take the lock non-blocking — on failure the interrupted section
+    # is the only mutator and it is paused, so a lock-free snapshot is safe — and
+    # never block. rmtree runs outside the lock either way (it is idempotent).
+    got = _SCRATCH_LOCK.acquire(blocking=False)
+    try:
         paths = list(_ACTIVE_SCRATCH)
         _ACTIVE_SCRATCH.clear()
+    finally:
+        if got:
+            _SCRATCH_LOCK.release()
     for p in paths:
         shutil.rmtree(p, ignore_errors=True)
 
@@ -103,25 +114,35 @@ def _make_signal_cleanup(prev):
 
 
 def _install_signal_cleanup() -> None:
-    """Install the scratch-cleanup handlers once, chaining whatever was there.
+    """Install the scratch-cleanup handlers, chaining whatever was there.
 
     Signal handlers can only be set from the main thread; when the fix lane runs
     off the main thread (an MCP server worker, a test executor) we fall back to
     `atexit` alone rather than raising — the credential copy is scrubbed post-run
     regardless, so the signal handler is defence in depth, not the only cleanup.
+
+    R20-SIGNAL-02: the atexit and signal registrations are tracked SEPARATELY,
+    and `_signal_handlers_installed` is set ONLY after a successful install. The
+    old code set one "installed" flag even when the signal registration raised
+    (off-main-thread), so a LATER main-thread run never retried and stayed on
+    atexit alone (which does not run on SIGTERM). Now a later main-thread call
+    retries the signal install.
     """
-    global _handlers_installed
-    if _handlers_installed:
+    global _atexit_registered, _signal_handlers_installed
+    if not _atexit_registered:
+        atexit.register(_cleanup_all_scratch)   # normal / unhandled-exception exit
+        _atexit_registered = True
+    if _signal_handlers_installed:
         return
-    atexit.register(_cleanup_all_scratch)   # normal exit / unhandled-exception exit
     try:
         for sig in _CLEANUP_SIGNALS:
             prev = signal.getsignal(sig)
             signal.signal(sig, _make_signal_cleanup(prev))
+        _signal_handlers_installed = True       # only on a clean install of ALL
     except (ValueError, OSError):
-        # not the main thread (or the platform refuses): atexit still armed
+        # not the main thread (or the platform refuses): atexit is still armed,
+        # and a later main-thread call will retry the signal install
         pass
-    _handlers_installed = True
 
 
 def _register_scratch(path: Path) -> None:
@@ -316,6 +337,15 @@ class FixArm:
 
     def run(self, target: Path, out_dir: Path, *, run_id: str, collected_at: str) -> ArmResult:
         import tempfile
+        # R20-CONSENT-DEFENSE: enforce the egress acknowledgement HERE too, not
+        # only in `available()`/the orchestrator. A direct library call to run()
+        # that skipped `available()` would otherwise open the network and deliver
+        # a credential without the operator's consent — belt and braces, before
+        # any scratch, credential copy, or bwrap launch.
+        if self.allow_network and not self.egress_acknowledged:
+            return self._fail("egress_not_acknowledged: the relaxed (open-network) fix "
+                              "posture requires the operator egress acknowledgement",
+                              {"job": self.job})
         target = Path(target).resolve()
         tmp_root = Path(tempfile.mkdtemp(prefix="sc-fix-"))
         # B1-residual: track this scratch root so a CATCHABLE signal (SIGTERM/

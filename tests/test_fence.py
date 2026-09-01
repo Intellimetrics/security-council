@@ -195,3 +195,58 @@ def test_relaxed_canary_requires_dns_and_resolves(tmp_path):
         ["/bin/sh", "-c", "getent hosts localhost >/dev/null 2>&1 && echo R || echo F"],
         work_dir=work, home=tmp_path / "h", allow_network=True)
     assert "R" in r.stdout
+
+
+# --------------------------------------------------------------------- #
+# R20 must-fixes (codex): canary must not delete a real file, and paths
+# with shell metacharacters must not make the escape probes vacuous.
+# --------------------------------------------------------------------- #
+
+@requires_bwrap
+def test_certify_does_not_delete_a_preexisting_sc_canary(tmp_path):
+    # R20-FENCE-01: a repo legitimately containing `.sc-canary` must survive the
+    # read-only certify probe (the old fixed name was unconditionally unlinked).
+    work = tmp_path / "work"
+    work.mkdir()
+    original = tmp_path / "orig"
+    original.mkdir()
+    (original / ".sc-canary").write_text("REAL USER FILE")
+    cert, report = fence.certify(work_dir=work, original=original, home=tmp_path / "h")
+    assert cert is not None, report                       # not a false WROTE_ORIGINAL breach
+    assert (original / ".sc-canary").read_text() == "REAL USER FILE"   # untouched
+
+
+@requires_bwrap
+def test_certify_probe_is_robust_to_paths_with_spaces(tmp_path):
+    # R20-FENCE-02: a target/home path with a space must not make WROTE_ORIGINAL/
+    # HOME_VISIBLE vacuous while the positive controls still print.
+    base = tmp_path / "a b c"
+    (base).mkdir()
+    work = base / "work"
+    work.mkdir()
+    cert, report = fence.certify(work_dir=work, original=base / "orig", home=base / "h")
+    assert cert is not None, report
+    assert report["controls_missing"] == [] and report["breaches"] == []
+
+
+def test_certify_probe_passes_paths_as_positional_args(monkeypatch, tmp_path):
+    # the probe script must reference $1/$2/$3, and the paths ride as argv, not
+    # interpolated into the shell source (the vacuity/injection fix).
+    captured = {}
+    monkeypatch.setattr(fence, "bwrap_available", lambda: (True, "bwrap 0.11.0"))
+
+    def fake_run_in_fence(cmd, **kw):
+        captured["cmd"] = cmd
+        class _R:
+            stdout = "USR_OK\nWORK_WRITE_OK\nCANARY_DONE\n"
+            stderr = ""
+            timed_out = False
+        return _R()
+    monkeypatch.setattr(fence, "run_in_fence", fake_run_in_fence)
+    fence.certify(work_dir=tmp_path / "w", original=tmp_path / "o", home=tmp_path / "h")
+    cmd = captured["cmd"]
+    assert cmd[0] == "/bin/sh" and cmd[1] == "-c"
+    assert '"$1"' in cmd[2] and '"$2"' in cmd[2] and '"$3"' in cmd[2]
+    assert str(tmp_path / "w") in cmd and str(tmp_path / "o" / ".sc-canary") not in cmd
+    # the canary target is a UNIQUE name under original, passed positionally
+    assert any(a.startswith(str(tmp_path / "o" / ".sc-canary-")) for a in cmd)

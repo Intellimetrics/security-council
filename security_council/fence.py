@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import shutil
 import subprocess
 import time
@@ -314,28 +315,42 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
         report["refused"] = "bwrap unavailable"
         return None, report
 
-    canary_target = original / ".sc-canary"
+    # R20-FENCE-01: a UNIQUE canary name, never the fixed `.sc-canary`. The old
+    # name could collide with a real file already in the target — which this
+    # "read-only" probe then DELETED (and mis-flagged as a breach). A random
+    # per-call name cannot pre-exist, so a hit is unambiguously our probe and we
+    # only ever unlink what we created.
+    canary_target = original / f".sc-canary-{secrets.token_hex(8)}"
     real_home = str(Path.home())
+    # R20-FENCE-02: the probe interpolated user-controlled paths (the target,
+    # the real home) into a `sh -c` string UNQUOTED — a path with a space or a
+    # shell metacharacter could make the WROTE_ORIGINAL / HOME_VISIBLE escape
+    # probes test the wrong thing (or nothing) while the positive controls still
+    # printed, minting a certificate that never proved the escapes were blocked.
+    # Paths are now POSITIONAL args ($1 work dir, $2 canary target, $3 real home)
+    # and every use is quoted, so no path content can reshape the script.
     # B1: when the network is declared open, DNS must actually resolve inside
     # the fence, or the vendor agent hangs reconnecting (live-found). Prove the
     # resolver is wired with a POSITIVE control that needs no external call —
     # resolv.conf present with a nameserver — so a broken relaxed fence refuses
     # to certify instead of hanging at run time.
-    dns_probe = ("( grep -q '^nameserver' /etc/resolv.conf 2>/dev/null && echo DNS_OK ); "
+    dns_probe = ('( grep -q "^nameserver" /etc/resolv.conf 2>/dev/null && echo DNS_OK ); '
                  if allow_network else "")
     probe = (
         # positive controls — these MUST print, or the probe did not really run
-        "( [ -d /usr ] && echo USR_OK ); "
-        f"( touch {str(work_dir)!s}/.sc-work-write 2>/dev/null && echo WORK_WRITE_OK ); "
+        '( [ -d /usr ] && echo USR_OK ); '
+        '( touch "$1"/.sc-work-write 2>/dev/null && echo WORK_WRITE_OK ); '
         + dns_probe +
         # escapes — these must NOT print
-        f"( touch {canary_target!s} 2>/dev/null && echo WROTE_ORIGINAL ); "
+        '( touch "$2" 2>/dev/null && echo WROTE_ORIGINAL ); '
         # the real home must not merely be unreadable, it must not EXIST in the namespace
-        f"( [ -e {real_home!s} ] && echo HOME_VISIBLE ); "
+        '( [ -e "$3" ] && echo HOME_VISIBLE ); '
         # with the network unshared only `lo` exists; any other interface is a breach
         "( awk -F: 'NR>2{print $1}' /proc/net/dev 2>/dev/null | tr -d ' ' "
         "| grep -qv '^lo$' && echo NET_VISIBLE ); "
         "echo CANARY_DONE")
+    probe_argv = ["/bin/sh", "-c", probe, "sc-canary",
+                  str(work_dir), str(canary_target), real_home]
     # best-effort: a strict-posture home is a real host tmp dir; a relaxed
     # posture may pass a neutral in-namespace path (e.g. /sc-home) the tmpfs
     # mount creates on its own, which is not writable on the host.
@@ -344,7 +359,7 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
     except OSError:
         pass
     try:
-        r = run_in_fence(["/bin/sh", "-c", probe], work_dir=work_dir, home=home,
+        r = run_in_fence(probe_argv, work_dir=work_dir, home=home,
                          allow_network=allow_network, runtime_binds=runtime_binds,
                          writable_binds=writable_binds, timeout=60)
     finally:
@@ -362,7 +377,10 @@ def certify(*, work_dir: Path, original: Path, home: Path | None = None,
     expect_controls = ["USR_OK", "WORK_WRITE_OK"] + (["DNS_OK"] if allow_network else [])
     controls_missing = [tag for tag in expect_controls if tag not in out]
     if canary_target.exists():
-        canary_target.unlink(missing_ok=True)      # never leave the marker behind
+        # the unique per-call name (R20-FENCE-01) cannot be a pre-existing user
+        # file, so its presence means the fenced probe really wrote outside the
+        # work copy — a confirmed breach; remove only this marker we created.
+        canary_target.unlink(missing_ok=True)
         breaches.append("WROTE_ORIGINAL_CONFIRMED")
     report.update({"ran": not r.timed_out, "breaches": breaches,
                    "controls_missing": controls_missing,

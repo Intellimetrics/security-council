@@ -471,3 +471,56 @@ def test_credential_copy_scrubbed_the_instant_the_vendor_returns(tmp_path, monke
     assert seen["present_during_run"] is True                  # present while vendor ran
     assert seen["present_at_extract"] is False                 # scrubbed before extraction
     assert (fake_home / ".codex" / "auth.json").read_text() == '{"token":"SENSITIVE"}'
+
+
+# --------------------------------------------------------------------- #
+# R20 must-fixes (codex): signal-cleanup safety + consent enforced in run()
+# --------------------------------------------------------------------- #
+
+def test_cleanup_does_not_block_when_lock_is_held(tmp_path):
+    # R20-SIGNAL-01: a signal handler runs on the thread that may hold
+    # _SCRATCH_LOCK inside register/unregister; _cleanup_all_scratch must take it
+    # non-blocking so the handler cannot deadlock against the code it interrupted.
+    d = tmp_path / "scratch"
+    d.mkdir()
+    fixmod._ACTIVE_SCRATCH.add(str(d))
+    fixmod._SCRATCH_LOCK.acquire()      # simulate: interrupted mid-critical-section
+    try:
+        fixmod._cleanup_all_scratch()   # must RETURN (not hang) and still clean
+    finally:
+        if fixmod._SCRATCH_LOCK.locked():
+            fixmod._SCRATCH_LOCK.release()
+    assert not d.exists()
+
+
+def test_signal_install_retries_after_off_main_thread_failure(monkeypatch):
+    # R20-SIGNAL-02: a failed (off-main-thread) signal install must NOT latch the
+    # installed flag — a later main-thread call must retry and succeed.
+    monkeypatch.setattr(fixmod, "_atexit_registered", False)
+    monkeypatch.setattr(fixmod, "_signal_handlers_installed", False)
+    monkeypatch.setattr(fixmod.atexit, "register", lambda f: None)
+    off_thread = {"on": True}
+    installed = []
+
+    def fake_signal(sig, handler):
+        if off_thread["on"]:
+            raise ValueError("signal only works in main thread")   # simulate worker thread
+        installed.append(sig)
+    monkeypatch.setattr(fixmod.signal, "signal", fake_signal)
+    fixmod._install_signal_cleanup()
+    assert fixmod._signal_handlers_installed is False and not installed   # not latched
+    off_thread["on"] = False                                    # now the main thread
+    fixmod._install_signal_cleanup()
+    assert fixmod._signal_handlers_installed is True and installed == list(fixmod._CLEANUP_SIGNALS)
+
+
+def test_run_refuses_relaxed_without_acknowledgement(tmp_path, monkeypatch):
+    # R20-CONSENT-DEFENSE: a direct run() with allow_network but no ack must
+    # refuse BEFORE any scratch/credential/bwrap — not rely on available().
+    import glob
+    before = set(glob.glob("/tmp/sc-fix-*"))
+    arm = FixArm(job="fix-finding", finding=_finding_row(), allow_network=True,
+                 egress_acknowledged=False)
+    res = arm.run(_seed_target(tmp_path), tmp_path / "out", run_id="r", collected_at="t")
+    assert not res.ok and "egress_not_acknowledged" in res.error
+    assert set(glob.glob("/tmp/sc-fix-*")) == before      # no scratch dir created
