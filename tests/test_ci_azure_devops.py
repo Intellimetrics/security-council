@@ -104,6 +104,80 @@ def test_post_pr_thread_outside_pr_is_a_noop():
     assert out["posted"] is False and "not a PR build" in out["reason"]
 
 
+class _Resp200(io.StringIO):
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _capture_opener(seen):
+    def opener(req, timeout):
+        seen["url"] = req.full_url
+        return _Resp200()
+    return opener
+
+
+def test_post_pr_thread_encodes_project_name_with_spaces():
+    # Server project names routinely contain spaces; the raw name made
+    # http.client raise InvalidURL before the request was ever sent (live-found
+    # on ADO Server 2022). The segment must be percent-encoded.
+    env = {"SYSTEM_TEAMFOUNDATIONCOLLECTIONURI": "https://tfs.corp.local/DefaultCollection/",
+           "SYSTEM_TEAMPROJECT": "My Project", "BUILD_REPOSITORY_ID": "repo-guid",
+           "SYSTEM_PULLREQUEST_PULLREQUESTID": "42", "SYSTEM_ACCESSTOKEN": "tok"}
+    seen = {}
+    out = azdo.post_pr_thread(azdo.pr_thread_payload([_row()], MANIFEST), env,
+                              opener=_capture_opener(seen))
+    assert out["posted"]
+    assert "/My%20Project/_apis/git/" in seen["url"]
+    assert " " not in seen["url"]
+
+
+def test_post_pr_thread_prefers_project_id_guid():
+    # When System.TeamProjectId is present, use the GUID (never needs escaping)
+    # rather than the display name.
+    env = {"SYSTEM_TEAMFOUNDATIONCOLLECTIONURI": "https://tfs/col",
+           "SYSTEM_TEAMPROJECT": "My Project", "SYSTEM_TEAMPROJECTID": "proj-guid-123",
+           "BUILD_REPOSITORY_ID": "repo-guid",
+           "SYSTEM_PULLREQUEST_PULLREQUESTID": "7", "SYSTEM_ACCESSTOKEN": "tok"}
+    seen = {}
+    azdo.post_pr_thread({"comments": [], "status": "closed"}, env,
+                        opener=_capture_opener(seen))
+    assert "/proj-guid-123/_apis/git/" in seen["url"]
+    assert "My%20Project" not in seen["url"]
+
+
+def test_post_pr_thread_never_raises_on_post_error():
+    # A malformed URL / auth rejection / network blip must degrade, not raise —
+    # the annotate step must never fail the build.
+    env = {"SYSTEM_TEAMFOUNDATIONCOLLECTIONURI": "https://tfs/col",
+           "SYSTEM_TEAMPROJECT": "P", "BUILD_REPOSITORY_ID": "rg",
+           "SYSTEM_PULLREQUEST_PULLREQUESTID": "1", "SYSTEM_ACCESSTOKEN": "tok"}
+
+    def boom(req, timeout):
+        raise OSError("connection refused")
+
+    out = azdo.post_pr_thread({"comments": [], "status": "active"}, env, opener=boom)
+    assert out["posted"] is False and out["reason"].startswith("post failed")
+
+
+def test_main_never_fails_build_when_pr_post_raises(tmp_path, monkeypatch, capsys):
+    # Even if the PR post blows up entirely, main() returns 0 and surfaces a
+    # ##vso warning — the scan's exit code is the gate, not this step.
+    arms = [FakeArm("semgrep", "scanner", "semgrep",
+                    [orch_finding(source_id="semgrep", kind="scanner", vendor="semgrep")])]
+    run = orch_run(arms, tmp_path)
+    monkeypatch.setattr(azdo, "post_pr_thread",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("kaboom")))
+    assert azdo.main([str(run.out_dir), "--post-pr-thread"]) == 0
+    out = capsys.readouterr().out
+    assert "##vso[task.logissue type=warning]" in out
+    assert "PR thread not posted" in out
+
+
 def test_main_on_real_run_never_fails_build(tmp_path, capsys):
     arms = [FakeArm("semgrep", "scanner", "semgrep",
                     [orch_finding(source_id="semgrep", kind="scanner", vendor="semgrep")])]

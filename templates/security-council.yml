@@ -12,11 +12,31 @@
 #         gateBaseline: 'new'     # brownfield: gate only findings absent from
 #                                 # the committed baseline (security-council baseline set)
 #
-# Requirements on the agent: python 3.11+, `pip install security-council`,
-# and docker for the scanner arms. Install the "SARIF SAST Scans Tab"
-# marketplace extension to render the CodeAnalysisLogs artifact on the build.
-# For PR comment threads, grant the build service "Contribute to pull
+# Requirements on the agent: python 3.11+, `pip install security-council`, and
+# either the scanner binaries on PATH (semgrep/gitleaks/osv-scanner — preferred)
+# or docker (the arms fall back to docker images). Install the "SARIF SAST Scans
+# Tab" marketplace extension to render the CodeAnalysisLogs artifact on the
+# build. For PR comment threads, grant the build service "Contribute to pull
 # requests" on the repo and keep postPrThread true.
+#
+# Server notes (live-verified on Azure DevOps Server 2022, RHEL 9 agents):
+#   - `python3` on RHEL 9 agents is 3.9; security-council needs 3.11+. Add a
+#     pre-step that builds a 3.11+/3.12 venv and `##vso[task.prependpath]`s it
+#     so the `python3` below resolves to it (or point it at an explicit python).
+#   - The "SARIF SAST Scans Tab" VSIX cannot be installed on a disconnected
+#     Server without a Collection Admin; there the CodeAnalysisLogs artifact is
+#     the SARIF consumer (still published — the render is the only residual).
+#   - HOME may be unset when the job runs as root; scanner caches need a
+#     writable HOME. Set one in a pre-step: `##vso[task.setvariable
+#     variable=HOME]$(Agent.TempDirectory)`.
+#   - PyPI `semgrep` wheels can want a newer glibc than RHEL 9 (2.34) provides;
+#     pin an older semgrep (e.g. <=1.146.0) or run it via docker.
+#   - Keep `scanPath` at the Sources ROOT: finding `sourcepath` is recorded
+#     relative to scanPath, so scanning a subdirectory yields file-view links
+#     that don't resolve against the repo root.
+#   - A brand-new YAML pipeline blocks on Checkpoint.Authorization until its
+#     agent queue is authorized for it (UI prompt / pipelinePermissions API);
+#     authorize, then cancel + requeue (the pending build won't re-evaluate).
 #
 # Shape: the scan runs first and its exit code is CAPTURED, not raised —
 # artifacts and annotations always publish; the final "gate" step re-raises

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.1 — 2026-09-02
+
+**ADO Server live-verification + PR-thread URL fix.** The Azure DevOps *Server*
+pipeline was live-verified end to end on a real ADO Server 2022 (RHEL 9 agents,
+disconnected/US-Gov collection) against a synthetic-only throwaway repo — all
+five integration claims pass (logissue annotations, `uploadsummary`,
+CodeAnalysisLogs artifact, PR-thread active/closed via api-version=6.0, and the
+gate re-raising exit 0/1/3). This closes the first-class D4 Server target.
+
+- **Fix (`ci/azure_devops.py`):** the PR-thread REST URL was built from the raw
+  `SYSTEM_TEAMPROJECT`, so a project name containing a space (the norm on
+  Server) raised `http.client.InvalidURL` before the request was sent — posting
+  no thread *and* crashing the annotate step, contradicting its "never fails the
+  build" contract. The `{project}` segment now prefers `SYSTEM_TEAMPROJECTID`
+  (a GUID) and percent-encodes the fallback name, and a failed post degrades to
+  a `##vso` warning instead of propagating. Regression tests cover a spaced
+  project name, the GUID preference, and a raising opener.
+- **Template (`templates/security-council.yml`):** documented the Server deltas
+  found live — RHEL 9 `python3` is 3.9 (needs a 3.11+ venv on PATH), `HOME` may
+  be unset (scanner caches need one), PyPI semgrep can outrun RHEL 9's glibc
+  (pin ≤1.146.0 or use docker), keep `scanPath` at the Sources root (sourcepath
+  is scanPath-relative, so subdirs break file-view links), and new pipelines
+  block on Checkpoint.Authorization until the queue is authorized.
+
 ## 0.4.0 — 2026-09-01
 
 **Upgrading from 0.3.0:** no data migration; existing signed decisions,

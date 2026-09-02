@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import sys
+import urllib.parse
 import urllib.request
 from .. import model as _m
 from pathlib import Path
@@ -156,18 +157,33 @@ def post_pr_thread(payload: dict, env: dict | None = None, *,
     if missing:
         return {"posted": False, "reason": f"not a PR build (missing {', '.join(missing)})"}
     base = env["SYSTEM_TEAMFOUNDATIONCOLLECTIONURI"].rstrip("/")
-    url = (f"{base}/{env['SYSTEM_TEAMPROJECT']}/_apis/git/repositories/"
-           f"{env['BUILD_REPOSITORY_ID']}/pullRequests/"
+    # The {project} path segment accepts the project GUID or its name. On Server,
+    # project names routinely contain spaces (and other characters illegal in a
+    # URL path), which made http.client raise InvalidURL before the request was
+    # even sent — no thread posted AND the step crashed, violating the "never
+    # fails the build" contract below. Prefer the GUID (System.TeamProjectId,
+    # never needs escaping); fall back to a percent-encoded name.
+    project = env.get("SYSTEM_TEAMPROJECTID") or env["SYSTEM_TEAMPROJECT"]
+    url = (f"{base}/{urllib.parse.quote(project, safe='')}/_apis/git/repositories/"
+           f"{urllib.parse.quote(env['BUILD_REPOSITORY_ID'], safe='')}/pullRequests/"
            f"{env['SYSTEM_PULLREQUEST_PULLREQUESTID']}/threads?api-version={API_VERSION}")
     if dry_run:
         return {"posted": False, "reason": "dry run", "url": url, "payload": payload}
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode(), method="POST",
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {env['SYSTEM_ACCESSTOKEN']}"})
-    open_fn = opener or urllib.request.urlopen
-    with open_fn(req, timeout=30) as resp:                       # noqa: S310 - CI-internal URL
-        return {"posted": True, "url": url, "status": getattr(resp, "status", None)}
+    # A failed PR-thread post must NEVER fail the build (see the module
+    # docstring): the scan's own exit code is the gate and this annotation is
+    # best-effort. Any error — malformed URL, auth/permission rejection, a
+    # network blip — degrades to a structured result that main() surfaces as a
+    # ##vso warning rather than propagating out and failing the step.
+    try:
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode(), method="POST",
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {env['SYSTEM_ACCESSTOKEN']}"})
+        open_fn = opener or urllib.request.urlopen
+        with open_fn(req, timeout=30) as resp:                   # noqa: S310 - CI-internal URL
+            return {"posted": True, "url": url, "status": getattr(resp, "status", None)}
+    except Exception as e:                                       # noqa: BLE001 - never fail the build
+        return {"posted": False, "reason": f"post failed: {type(e).__name__}: {e}", "url": url}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -191,7 +207,13 @@ def main(argv: list[str] | None = None) -> int:
     if summary.is_file():
         print(uploadsummary_line(summary.resolve()))
     if args.post_pr_thread:
-        result = post_pr_thread(pr_thread_payload(rows, manifest), dry_run=args.dry_run)
+        try:
+            result = post_pr_thread(pr_thread_payload(rows, manifest), dry_run=args.dry_run)
+        except Exception as e:                                   # noqa: BLE001 - never fail the build
+            result = {"posted": False, "reason": f"post failed: {type(e).__name__}: {e}"}
+        if not result.get("posted") and str(result.get("reason", "")).startswith("post failed"):
+            print("##vso[task.logissue type=warning]"
+                  + _esc_msg("security-council: PR thread not posted — " + str(result["reason"])))
         print(f"security-council: PR thread {result}", file=sys.stderr)
     return 0
 
