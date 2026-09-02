@@ -548,6 +548,48 @@ analysis results fails the gate-unchanged test. **Live status: LIVE-VERIFIED 202
 CODEOWNERS + required review; documented residuals in docs/signing.md); ADO/GitLab templates
 unproven on real infrastructure; CKLB never opened in a live STIG Viewer.
 
+## 7.10c Release state — 0.4.1 (RELEASED 2026-09-02)
+
+**Released:** tag `v0.4.1` at `d3d9916`,
+https://github.com/Intellimetrics/security-council/releases/tag/v0.4.1 (notes =
+CHANGELOG 0.4.1 section). 785 tests, ruff clean.
+
+**Why 0.4.1:** the Azure DevOps **Server** pipeline was live-verified end to end
+on a real ADO Server 2022 (RHEL 9 agents, disconnected/US-Gov collection),
+executed by a coordinated Claude session on the maintainer's work machine
+against a synthetic-only throwaway repo (seedrepo as `fixture/`, package source
+as `clean/`; repo purged after, no PAT). All 5 claims PASS — **this closes the
+D4 first-class Server target** (it was never the Services proxy). See §7 item 6
+for the full per-claim record and the Server deltas.
+
+**The defect it fixes:** `post_pr_thread` built the PR-thread REST URL from the
+raw `SYSTEM_TEAMPROJECT`; a project name with a space (the Server norm) raised
+`http.client.InvalidURL` before sending — no thread AND the annotate step
+crashed, breaking its "never fails the build" contract. Fix: prefer
+`SYSTEM_TEAMPROJECTID` (GUID), percent-encode the fallback name, wrap the POST
+so a failed post degrades to a `##vso` warning; +4 regression tests (the old
+`"Sec"` fixture had no space so it could not catch it). Template header now
+documents the RHEL 9 / HOME / semgrep-glibc / scanPath-relative-sourcepath /
+Checkpoint.Authorization deltas.
+
+**Wheel rehearsal (§7.10 method, 2026-09-02):** built `security_council-0.4.1`,
+installed into a fresh venv OUTSIDE the checkout, exercised the surface. All
+green: `--version` → 0.4.1; the changed `ci.azure_devops` module against a real
+run dir with a spaced project + `--dry-run` produced a correctly percent-encoded
+URL (`.../My%20Project/_apis/...`) at exit 0; the **real degrade path** (a
+non-dry-run POST to an unreachable host) emitted a `##vso[task.logissue
+type=warning]` and returned exit 0 — the exact contract that was broken;
+`report --format md|html`, `doctor` all exit 0. No packaging or contract
+regressions.
+
+**Not a council round:** narrow, reproduced CI-plumbing defect fix with
+regression tests + a live-infra verification — a defect fix, not a design
+change (per the fix-directly / council-for-design split). No R-number.
+
+**Residual (unchanged):** SARIF-tab render on a disconnected Server (a
+third-party marketplace extension, not ours). Remaining Phase C: C1 GitLab, C3
+CKLB → live STIG Viewer.
+
 ## 7.10b Release state — 0.4.0 (RELEASED 2026-09-01)
 
 **Released:** tag `v0.4.0` at `5cd4728`,
