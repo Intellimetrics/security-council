@@ -552,7 +552,10 @@ unproven on real infrastructure; CKLB never opened in a live STIG Viewer.
 
 **Released:** tag `v0.4.1` at `d3d9916`,
 https://github.com/Intellimetrics/security-council/releases/tag/v0.4.1 (notes =
-CHANGELOG 0.4.1 section). 785 tests, ruff clean.
+CHANGELOG 0.4.1 section). 785 tests, ruff clean. **GitHub live-verify run
+33618231092 GREEN** on the release sha (clean-pass + detects-and-gates) — a
+symmetry check, since the GitHub Action path is unchanged in this release; the
+real live verification was the ADO Server run.
 
 **Why 0.4.1:** the Azure DevOps **Server** pipeline was live-verified end to end
 on a real ADO Server 2022 (RHEL 9 agents, disconnected/US-Gov collection),
